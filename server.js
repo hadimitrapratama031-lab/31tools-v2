@@ -373,28 +373,39 @@ app.get('/api/games/:id/download', requireUser, async (req, res) => {
     const game = await db.collection('games').findOne({ _id: new ObjectId(req.params.id) });
     if (!game) return res.status(404).json({ error: 'Game tidak ditemukan.' });
 
-    // Cek role user cukup untuk game ini
+    // Cek role user
     const myLevel   = ROLE_LEVEL[req.user.role] ?? 0;
     const gameLevel = ROLE_LEVEL[game.role]     ?? 0;
     if (myLevel < gameLevel) {
       return res.status(403).json({ error: `Game ini membutuhkan paket ${game.role}. Upgrade paket kamu dulu.` });
     }
 
-    // Tentukan URL download — pakai manifestUrl kalau ada, fallback ke zipUrl
-    const url = game.manifestUrl || game.zipUrl || null;
-    if (!url) {
+    const rawUrl = game.manifestUrl || game.zipUrl || null;
+    if (!rawUrl) {
       return res.status(404).json({ error: 'File download untuk game ini belum diatur admin. Hubungi admin.' });
     }
 
-    // Kalau manifestUrl dari hubcapmanifest, perlu Authorization header
-    // Kembalikan juga appId supaya client bisa pakai buat bypass
+    // Kalau manifestUrl mengarah ke hubcapmanifest /lua/ endpoint,
+    // GANTI ke /manifest/ yang return ZIP (berisi .lua + .manifest) —
+    // karena main.js Electron expect ZIP, bukan raw .lua file.
+    // /lua/{appId}      → file .lua mentah → GAGAL validasi ZIP di client
+    // /manifest/{appId} → file .zip berisi .lua + .manifest → BENAR
+    const isHubcap = rawUrl.includes('hubcapmanifest.com') || rawUrl.includes('hubcap');
+    let url = rawUrl;
+    if (isHubcap) {
+      // Normalkan: /api/v1/lua/{id} → /api/v1/manifest/{id}
+      url = rawUrl.replace(/\/api\/v1\/lua\//, '/api/v1/manifest/');
+    }
+
     res.json({
       url,
-      appId:    game.appId    || null,
-      steamAppId: game.appId  || null,
-      name:     game.name,
-      // Kalau perlu auth header ke hubcapmanifest, sertakan di sini
-      headers:  HUBCAP_API_KEY && url.includes('hubcap') ? { Authorization: `Bearer ${HUBCAP_API_KEY}` } : {}
+      appId:      game.appId     || null,
+      steamAppId: game.appId     || null,
+      name:       game.name,
+      // Sertakan Authorization header kalau URL dari hubcap
+      headers: isHubcap && HUBCAP_API_KEY
+        ? { Authorization: `Bearer ${HUBCAP_API_KEY}` }
+        : {}
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -748,7 +759,9 @@ app.get('/api/admin/appid-lookup/:appId', requireAdmin, async (req, res) => {
     result.sizeLabel = formatBytes(hc.sizeBytes);
     // Link manifest langsung ditampilkan ke admin kalau memang tersedia di hubcapmanifest,
     // biar bisa dicek/dibuka manual juga.
-    if (hc.hasManifest === true) result.manifestUrl = `${HUBCAP_BASE_URL}/api/v1/lua/${appId}`;
+    // Simpan sebagai /manifest/ (ZIP berisi .lua + .manifest), BUKAN /lua/ (file mentah)
+    // karena main.js Electron mengharapkan ZIP saat inject game ke Steam.
+    if (hc.hasManifest === true) result.manifestUrl = `${HUBCAP_BASE_URL}/api/v1/manifest/${appId}`;
     if (hc.error) result.warnings.push(hc.error);
     if (hc.configured && hc.hasManifest === false) result.warnings.push('Manifest untuk App ID ini belum tersedia di hubcapmanifest.');
     if (!hc.configured) result.warnings.push('HUBCAP_API_KEY belum diisi di .env — cek ketersediaan manifest & ukuran file dilewati.');
