@@ -595,22 +595,68 @@ app.get('/api/bypasses/:id/stream', async (req, res) => {
       return res.status(404).json({ error: 'Link bypass belum diatur admin. Hubungi admin untuk mengisi link file bypass.' });
     }
 
-    // Proxy rawUrl (GitHub / link lain)
+    // Proxy rawUrl (Google Drive / GitHub / link lain)
     const safeName = (bypass.name || 'bypass').replace(/[^a-z0-9_\-]/gi, '_');
+
+    // Resolve Google Drive share link → direct download link
+    let finalUrl = rawUrl;
+    const gdMatch = rawUrl.match(/drive\.google\.com\/(?:file\/d\/|open\?id=|uc\?.*id=)([a-zA-Z0-9_\-]+)/);
+    if (gdMatch) {
+      finalUrl = `https://drive.google.com/uc?export=download&id=${gdMatch[1]}&confirm=t`;
+    }
+
     try {
-      const upstream = await axios.get(rawUrl, {
+      const upstream = await axios.get(finalUrl, {
         responseType: 'stream',
-        timeout: 30000,
-        headers: { 'User-Agent': 'ThreeOneStore/1.0' },
-        maxRedirects: 10,
+        timeout: 0,           // tidak ada timeout — file bypass bisa besar
+        maxRedirects: 15,     // Google Drive butuh beberapa redirect
+        headers: {
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36',
+          'Accept': '*/*',
+        },
+        validateStatus: (s) => s < 400, // ikuti redirect 3xx tanpa throw
       });
-      res.setHeader('Content-Type', 'application/zip');
+
+      // Kalau Google Drive kirim halaman konfirmasi virus scan (HTML, bukan file)
+      // → coba lagi dengan param confirm yang berbeda
+      const ct = upstream.headers['content-type'] || '';
+      if (ct.includes('text/html')) {
+        upstream.data.destroy();
+        // Coba pakai URL alternatif dengan confirm token
+        const altUrl = finalUrl.includes('confirm=t')
+          ? finalUrl.replace('confirm=t', 'confirm=1')
+          : finalUrl + '&confirm=t';
+        const upstream2 = await axios.get(altUrl, {
+          responseType: 'stream',
+          timeout: 0,
+          maxRedirects: 15,
+          headers: {
+            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36',
+            'Accept': '*/*',
+          },
+        });
+        res.setHeader('Content-Type', 'application/octet-stream');
+        res.setHeader('Content-Disposition', `attachment; filename="${safeName}.zip"`);
+        if (upstream2.headers['content-length']) res.setHeader('Content-Length', upstream2.headers['content-length']);
+        upstream2.data.pipe(res);
+        upstream2.data.on('error', (err) => {
+          console.error('[BYPASS STREAM] upstream2 error:', err.message);
+          if (!res.headersSent) res.status(502).end();
+        });
+        return;
+      }
+
+      res.setHeader('Content-Type', 'application/octet-stream');
       res.setHeader('Content-Disposition', `attachment; filename="${safeName}.zip"`);
       if (upstream.headers['content-length']) res.setHeader('Content-Length', upstream.headers['content-length']);
       upstream.data.pipe(res);
-      upstream.data.on('error', () => { if (!res.headersSent) res.status(502).end(); });
+      upstream.data.on('error', (err) => {
+        console.error('[BYPASS STREAM] upstream error:', err.message);
+        if (!res.headersSent) res.status(502).end();
+      });
     } catch (e) {
-      if (!res.headersSent) res.status(502).json({ error: 'Gagal mengambil file bypass: ' + e.message });
+      console.error('[BYPASS STREAM] fetch error:', e.message, '| URL:', finalUrl);
+      if (!res.headersSent) res.status(502).json({ error: 'Gagal mengambil file bypass: ' + e.message + ' — Pastikan link yang diset admin bisa diakses publik.' });
     }
   } catch (e) {
     console.error('[BYPASS STREAM] Unexpected error:', e.message);
