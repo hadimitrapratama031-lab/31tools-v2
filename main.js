@@ -203,9 +203,10 @@ function downloadFileWithProgress(url, destPath, onProgress, redirectCount = 0, 
     }
 
     const client = url.startsWith('https') ? https : http;
-    // Gabungkan User-Agent default + extraHeaders (misal Authorization untuk hubcap)
+    // User-Agent browser supaya host seperti ryuu.lol tidak blokir (403 host_not_allowed)
     const reqHeaders = {
-      'User-Agent': 'NovaLauncher',
+      'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+      'Accept': '*/*',
       ...extraHeaders
     };
     const request = client.get(url, { headers: reqHeaders }, (response) => {
@@ -214,13 +215,18 @@ function downloadFileWithProgress(url, destPath, onProgress, redirectCount = 0, 
         response.resume();
         let location = response.headers.location;
         if (location.startsWith('/')) location = new URL(url).origin + location;
-        // Teruskan extraHeaders HANYA jika redirect ke domain yang sama
-        // (jangan kirim Bearer token server ke GitHub/GDrive/dll)
-        let redirectHeaders = {};
+        // Saat redirect ke domain lain, JANGAN teruskan Authorization header
+        // (Bearer token server kita tidak berlaku di GitHub/GDrive/dll dan akan kena 401)
+        let redirectHeaders = { ...extraHeaders };
         try {
           const origHost = new URL(url).hostname;
-          const newHost  = new URL(location.startsWith('/') ? url : location).hostname;
-          if (origHost === newHost) redirectHeaders = extraHeaders; // domain sama, aman diteruskan
+          const locFull  = location.startsWith('/') ? (new URL(url).origin + location) : location;
+          const newHost  = new URL(locFull).hostname;
+          if (origHost !== newHost) {
+            // Domain berbeda — hapus Authorization agar tidak dikirim ke host lain
+            delete redirectHeaders['Authorization'];
+            delete redirectHeaders['authorization'];
+          }
         } catch(e2) {}
         return resolve(downloadFileWithProgress(location, destPath, onProgress, redirectCount + 1, redirectHeaders));
       }

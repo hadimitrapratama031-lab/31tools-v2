@@ -13,9 +13,33 @@ function getOrCreateDeviceId() {
   return id;
 }
 
+// ── Auto-refresh token saat 401 ──
+let _refreshing = false;
+let _refreshPending = null;
+
+async function refreshToken() {
+  if (_refreshing) return _refreshPending;
+  _refreshing = true;
+  _refreshPending = (async () => {
+    const old = localStorage.getItem('token');
+    if (!old) return null;
+    try {
+      const res = await fetch(SERVER_URL + '/auth/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${old}` }
+      });
+      if (!res.ok) return null;
+      const data = await res.json();
+      if (data.token) { localStorage.setItem('token', data.token); return data.token; }
+    } catch(e) {}
+    return null;
+  })();
+  try { return await _refreshPending; }
+  finally { _refreshing = false; _refreshPending = null; }
+}
+
 async function api(path, options = {}) {
-  const token = localStorage.getItem('token');
-  const res = await fetch(SERVER_URL + path, {
+  const doFetch = (token) => fetch(SERVER_URL + path, {
     ...options,
     headers: {
       'Content-Type': 'application/json',
@@ -23,6 +47,23 @@ async function api(path, options = {}) {
       ...(options.headers || {})
     }
   });
+
+  let token = localStorage.getItem('token');
+  let res = await doFetch(token);
+
+  // Kalau 401 → coba refresh token lalu retry sekali
+  if (res.status === 401 && token) {
+    const newToken = await refreshToken();
+    if (newToken) {
+      res = await doFetch(newToken);
+    } else {
+      // Refresh gagal → paksa logout
+      localStorage.removeItem('token');
+      showLogin();
+      throw new Error('Sesi kamu sudah berakhir. Silakan login ulang.');
+    }
+  }
+
   const data = await res.json().catch(() => ({}));
   if (!res.ok) throw new Error(data.error || 'Terjadi kesalahan.');
   return data;
@@ -237,12 +278,17 @@ async function tryAutoLogin() {
   const token = localStorage.getItem('token');
   if (!token) { showLogin(); return; }
   try {
-    const user = await api('/api/me'); // akun otomatis "terdeteksi" kalau token masih valid
+    // api() otomatis refresh kalau token expired
+    const user = await api('/api/me');
     hideLogin();
     enterApp(user);
   } catch (e) {
-    localStorage.removeItem('token');
-    showLogin();
+    // Kalau sampai sini: refresh juga gagal (akun dihapus/banned)
+    // api() sudah hapus token & panggil showLogin() di dalamnya
+    if (localStorage.getItem('token')) {
+      localStorage.removeItem('token');
+      showLogin();
+    }
   }
 }
 
@@ -663,8 +709,12 @@ async function handleInstall(itemType, itemId, itemName) {
     if (!data.streamPath) throw new Error(data.error || 'Server tidak memberikan link download. Pastikan admin sudah mengisi data game/bypass.');
     dlSetStage('URL diterima, mendeteksi Steam...', 1);
 
+    // PENTING: ambil token SETELAH api() di atas — karena api() mungkin sudah refresh
+    // token saat memanggil /api/bypasses/:id/download. Kalau pakai token lama,
+    // stream endpoint akan tetap 401 meski download endpoint sukses.
     const token = localStorage.getItem('token') || '';
-    const zipUrl = `${SERVER_URL}${data.streamPath}?token=${encodeURIComponent(token)}`;
+    const zipUrl = `${SERVER_URL}${data.streamPath}`;
+    const streamAuthHeaders = { Authorization: `Bearer ${token}` };
 
     let result;
 
@@ -676,7 +726,7 @@ async function handleInstall(itemType, itemId, itemName) {
       result = await window.electronAPI.injectGame({
         steamPath,
         zipUrl,
-        extraHeaders: {}
+        extraHeaders: streamAuthHeaders
       });
 
       if (result.cancelled) { dlModalHide(); return; }
@@ -712,8 +762,8 @@ async function handleInstall(itemType, itemId, itemName) {
       if (!folderResult.found) throw new Error(folderResult.error || `Game dengan App ID ${appId} belum terinstall di Steam. Install gamenya dulu lalu coba lagi.`);
 
       dlSetStage('Mengunduh bypass dari server...', 2);
-      // driveUrl = link manual admin yang di-proxy lewat server (bukan HubCap)
-      const bypassUrl = `${SERVER_URL}${data.streamPath}?token=${encodeURIComponent(localStorage.getItem('token') || '')}`;
+      // Pakai token terbaru dari localStorage (mungkin sudah di-refresh oleh api() sebelumnya)
+      const bypassUrl = `${SERVER_URL}${data.streamPath}`;
 
       result = await window.electronAPI.installBypass({
         folderPath:  folderResult.folderPath,
@@ -723,7 +773,7 @@ async function handleInstall(itemType, itemId, itemName) {
         gameId:      itemId,
         gameName:    itemName,
         steamAppId:  String(appId),
-        extraHeaders: {}
+        extraHeaders: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` }
       });
       if (result.cancelled) { dlModalHide(); return; }
       if (!result.success)  throw new Error(result.error || 'Install bypass gagal tanpa keterangan.');

@@ -354,7 +354,7 @@ app.get('/auth/discord/callback', async (req, res) => {
     const user = await db.collection('users').findOne({ discordId: discordUser.id });
 
     // 5) Buat token login (JWT), simpan sementara di 'pendingLogins' biar bisa diambil app lewat /auth/poll
-    const loginToken = jwt.sign({ discordId: user.discordId }, JWT_SECRET, { expiresIn: '30d' });
+    const loginToken = jwt.sign({ discordId: user.discordId }, JWT_SECRET, { expiresIn: '90d' });
     await db.collection('pendingLogins').updateOne(
       { state },
       { $set: { state, token: loginToken, createdAt: new Date() } },
@@ -405,6 +405,36 @@ function publicUser(u) {
     role: u.role
   };
 }
+
+// ── Refresh token — perpanjang sesi tanpa login Discord ulang ──
+// Dipanggil app saat dapat 401. Token lama (bahkan yang expired) di-decode,
+// discordId diambil, user dicek di DB, lalu token baru 90d di-issue.
+app.post('/auth/refresh', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization || '';
+    const oldToken = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    if (!oldToken) return res.status(401).json({ error: 'Token tidak ada.' });
+
+    let payload;
+    try {
+      // Coba verify normal dulu (token belum expired)
+      payload = jwt.verify(oldToken, JWT_SECRET);
+    } catch(e) {
+      // Kalau expired, decode tanpa validasi waktu untuk ambil discordId
+      payload = jwt.decode(oldToken);
+    }
+    if (!payload?.discordId) return res.status(401).json({ error: 'Token tidak bisa dibaca.' });
+
+    if (!db) return res.status(503).json({ error: 'Database belum siap.' });
+    const user = await db.collection('users').findOne({ discordId: payload.discordId });
+    if (!user) return res.status(401).json({ error: 'Akun tidak ditemukan. Silakan login ulang.' });
+
+    const newToken = jwt.sign({ discordId: user.discordId }, JWT_SECRET, { expiresIn: '90d' });
+    res.json({ token: newToken, user: publicUser(user) });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
 function renderInfoPage({ emoji, title, message, buttonText, buttonHref, secondaryText, secondaryButtonText, secondaryHref }) {
   return `<!DOCTYPE html><html lang="id"><head><meta charset="UTF-8">
