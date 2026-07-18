@@ -177,8 +177,9 @@ function downloadFileWithProgress(url, destPath, onProgress, redirectCount = 0, 
     // jadi url yang sampai ke sini seharusnya selalu server sendiri. Allowlist ini jaga-jaga
     // supaya kalau suatu saat ada bug/kebocoran URL mentah, app tetap menolak download-nya
     // alih-alih diam-diam download dari host sembarangan.
+    const OWN_SERVER_HOST = '31tools-v2-production.up.railway.app'; // domain server sendiri — WAJIB, semua stream lewat sini
     const ALLOWED_DOWNLOAD_HOSTS = [
-      '31tools-v2-production.up.railway.app', // domain server sendiri — WAJIB, semua stream lewat sini
+      OWN_SERVER_HOST,
       'hubcapmanifest.com',                   // HubCap manifest API — untuk game inject
       'github.com',
       'raw.githubusercontent.com',
@@ -189,7 +190,7 @@ function downloadFileWithProgress(url, destPath, onProgress, redirectCount = 0, 
       'drive.google.com',
       'docs.google.com',
       'storage.googleapis.com',
-      'generator.ryuu.lol',
+      // generator.ryuu.lol sudah diproxy di server — client tidak download langsung ke ryuu
     ];
     try {
       const parsedUrl = new URL(url);
@@ -204,9 +205,21 @@ function downloadFileWithProgress(url, destPath, onProgress, redirectCount = 0, 
 
     const client = url.startsWith('https') ? https : http;
     // User-Agent browser supaya host seperti ryuu.lol tidak blokir (403 host_not_allowed)
+    // Referer juga WAJIB ditambahkan untuk host pihak ketiga: banyak file-hosting seperti
+    // ryuu.lol menerapkan proteksi hotlink (nolak request tanpa Referer dari domain mereka
+    // sendiri) dan akan balas 401/403 walau User-Agent sudah disamarkan jadi browser biasa.
+    // Referer HANYA ditambahkan kalau caller belum menyertakan sendiri di extraHeaders,
+    // dan HANYA untuk host selain server kita sendiri (server kita tidak butuh Referer).
+    const ownServerHost = OWN_SERVER_HOST;
+    const hasCustomReferer = Object.keys(extraHeaders).some(k => k.toLowerCase() === 'referer');
+    const currentHost = new URL(url).hostname.toLowerCase();
+    const autoReferer = (!hasCustomReferer && currentHost !== ownServerHost)
+      ? { Referer: new URL(url).origin + '/' }
+      : {};
     const reqHeaders = {
       'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
       'Accept': '*/*',
+      ...autoReferer,
       ...extraHeaders
     };
     const request = client.get(url, { headers: reqHeaders }, (response) => {
@@ -234,8 +247,15 @@ function downloadFileWithProgress(url, destPath, onProgress, redirectCount = 0, 
         response.resume();
         let errMsg401 = 'Sesi login kamu expired. Silakan logout dan login ulang.';
         try {
-          const host = new URL(url).hostname;
-          if (host.includes('hubcap')) errMsg401 = 'API Key HubCap tidak valid atau expired. Hubungi admin.';
+          const host = new URL(url).hostname.toLowerCase();
+          if (host.includes('hubcap')) {
+            errMsg401 = 'API Key HubCap tidak valid atau expired. Hubungi admin.';
+          } else if (host !== ownServerHost) {
+            // 401 dari host PIHAK KETIGA (misal ryuu.lol) bukan soal sesi login kita sendiri —
+            // biasanya link sudah kedaluwarsa atau situsnya menolak akses langsung/hotlink.
+            // Jangan salah nyalahin sesi login user di sini, itu menyesatkan.
+            errMsg401 = `Link file ditolak oleh server (401): ${host}. Kemungkinan link sudah kedaluwarsa atau diproteksi. Hubungi admin untuk ganti link.`;
+          }
         } catch(e2) {}
         return reject(new Error(errMsg401));
       }
