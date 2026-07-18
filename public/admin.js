@@ -327,6 +327,10 @@ function renderTableRows(type, rows) {
         <td>
           <div class="cell-name">${escapeHtml(item.name)}</div>
           ${item.description ? `<div class="cell-desc">${escapeHtml(item.description)}</div>` : ''}
+          <div style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap;">
+            ${item.sizeLabel ? `<span class="chip">💾 ${escapeHtml(item.sizeLabel)}</span>` : ''}
+            ${item.appId ? `<span class="chip">🆔 ${escapeHtml(item.appId)}</span>` : ''}
+          </div>
         </td>
         <td>${roleTagHtml(item.role)}</td>
         <td class="row-actions">
@@ -354,27 +358,49 @@ window.deleteItem = deleteItem;
 // ─── MODAL ───
 let editingContext = null;
 
+let lookupData = null; // hasil terakhir dari /api/admin/appid-lookup, dipakai pas Simpan
+
 function openItemModal(type, item) {
   editingContext = item ? { type, id: item._id } : { type, id: null };
-  document.getElementById('itemModalTitle').textContent = item
-    ? `Edit ${type === 'games' ? 'Game' : 'Bypass'}`
-    : `Tambah ${type === 'games' ? 'Game' : 'Bypass'}`;
+  lookupData = null;
+  const label = type === 'games' ? 'Game' : 'Bypass';
+  document.getElementById('itemModalTitle').textContent = item ? `Edit ${label}` : `Tambah ${label}`;
+  document.getElementById('itemModalSubtitle').textContent = type === 'games'
+    ? 'Cari lewat App ID Steam, atau isi manual di bawah.'
+    : 'Isi manual, atau pakai App ID Steam buat bantu auto-isi nama & cover.';
+
   document.getElementById('itemName').value = item?.name || '';
   document.getElementById('itemDescription').value = item?.description || '';
   document.getElementById('itemRole').value = item?.role || 'public';
   document.getElementById('itemImageUrl').value = item?.imageUrl || '';
+  document.getElementById('itemSizeLabel').value = item?.sizeLabel || '';
+  document.getElementById('itemAppId').value = item?.appId || '';
   document.getElementById('coverResults').innerHTML = '';
+  document.getElementById('appIdStatus').innerHTML = '';
+  document.getElementById('appIdPreview').style.display = 'none';
 
   // Checkbox "sekalian jadi Bypass" cuma relevan pas nambah GAME BARU (bukan edit, bukan pas di halaman Bypass)
   const alsoBypassRow = document.getElementById('alsoBypassRow');
   const alsoBypassCheckbox = document.getElementById('itemAlsoBypass');
+  const bypassContentRow = document.getElementById('bypassContentRow');
   const showAlsoBypass = (type === 'games' && !item);
   alsoBypassRow.style.display = showAlsoBypass ? 'block' : 'none';
   alsoBypassCheckbox.checked = false;
+  bypassContentRow.style.display = 'none';
+  document.getElementById('itemBypassContent').value = '';
+
+  // Field "Link/Catatan Bypass" kalau nambah/edit item LANGSUNG di halaman Bypass
+  const bypassOnlyRow = document.getElementById('bypassOnlyContentRow');
+  bypassOnlyRow.style.display = (type === 'bypasses') ? 'block' : 'none';
+  document.getElementById('itemBypassOnlyContent').value = item?.content || '';
 
   document.getElementById('itemModalBackdrop').style.display = 'flex';
 }
 window.openItemModal = openItemModal;
+
+document.getElementById('itemAlsoBypass').addEventListener('change', (e) => {
+  document.getElementById('bypassContentRow').style.display = e.target.checked ? 'block' : 'none';
+});
 
 function closeModal() {
   document.getElementById('itemModalBackdrop').style.display = 'none';
@@ -386,25 +412,95 @@ document.getElementById('itemModalBackdrop').addEventListener('click', e => {
   if (e.target === document.getElementById('itemModalBackdrop')) closeModal();
 });
 
+// ─── APP ID LOOKUP (hubcapmanifest + Steam) ───
+document.getElementById('btnLookupAppId').addEventListener('click', doAppIdLookup);
+document.getElementById('itemAppId').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doAppIdLookup(); } });
+
+async function doAppIdLookup() {
+  const appId = document.getElementById('itemAppId').value.trim();
+  const statusEl = document.getElementById('appIdStatus');
+  const previewEl = document.getElementById('appIdPreview');
+  if (!appId) { showToast('Isi App ID dulu.', 'error'); return; }
+
+  const btn = document.getElementById('btnLookupAppId');
+  btn.textContent = 'Mencari...'; btn.disabled = true;
+  statusEl.innerHTML = '<span style="color:var(--text-dim);">🔎 Mengambil data dari Steam &amp; hubcapmanifest...</span>';
+  previewEl.style.display = 'none';
+
+  try {
+    const data = await api(`/api/admin/appid-lookup/${encodeURIComponent(appId)}`);
+    lookupData = data;
+
+    // Auto-isi form (tetap bisa diedit manual setelahnya)
+    if (data.name) document.getElementById('itemName').value = data.name;
+    if (data.description) document.getElementById('itemDescription').value = data.description;
+    if (data.imageUrl) document.getElementById('itemImageUrl').value = data.imageUrl;
+    if (data.sizeLabel) document.getElementById('itemSizeLabel').value = data.sizeLabel;
+
+    // Preview card
+    if (data.name || data.imageUrl) {
+      previewEl.style.display = 'flex';
+      document.getElementById('appIdPreviewImg').src = data.imageUrl || '';
+      document.getElementById('appIdPreviewImg').style.display = data.imageUrl ? 'block' : 'none';
+      document.getElementById('appIdPreviewName').textContent = data.name || `App ID ${appId}`;
+      document.getElementById('appIdPreviewSize').textContent = 'Ukuran: ' + (data.sizeLabel || 'tidak diketahui');
+      const manifestText = data.hasManifest === true ? '✅ Tersedia' : data.hasManifest === false ? '❌ Belum tersedia' : '❔ Tidak diketahui';
+      document.getElementById('appIdPreviewManifest').textContent = 'Manifest: ' + manifestText;
+      document.getElementById('appIdPreviewManifest').className = 'chip ' + (data.hasManifest === true ? 'chip-ok' : data.hasManifest === false ? 'chip-bad' : '');
+      document.getElementById('appIdPreviewLink').href = data.storeUrl || '#';
+    }
+
+    statusEl.innerHTML = data.warnings?.length
+      ? `<span style="color:var(--yellow,#ffd76a);">⚠️ ${escapeHtml(data.warnings.join(' · '))}</span>`
+      : `<span style="color:var(--green,#4ade80);">✓ Data ditemukan &amp; berhasil diisi otomatis.</span>`;
+  } catch (e) {
+    statusEl.innerHTML = `<span style="color:var(--red);">✕ ${escapeHtml(e.message)}</span>`;
+  } finally {
+    btn.textContent = '🔎 Search'; btn.disabled = false;
+  }
+}
+
 document.getElementById('btnSaveItem').addEventListener('click', async () => {
+  const appId = document.getElementById('itemAppId').value.trim() || null;
   const body = {
     name:        document.getElementById('itemName').value.trim(),
     description: document.getElementById('itemDescription').value.trim(),
     role:        document.getElementById('itemRole').value,
-    imageUrl:    document.getElementById('itemImageUrl').value.trim() || null
+    imageUrl:    document.getElementById('itemImageUrl').value.trim() || null,
+    sizeLabel:   document.getElementById('itemSizeLabel').value.trim() || null,
+    appId,
+    storeUrl:    appId ? (lookupData?.storeUrl || `https://store.steampowered.com/app/${appId}/`) : null,
+    sizeBytes:   lookupData?.sizeBytes ?? null
   };
   if (!body.name) { showToast('Nama wajib diisi.', 'error'); return; }
+
+  const { type, id } = editingContext;
+  if (type === 'bypasses') {
+    body.content = document.getElementById('itemBypassOnlyContent').value.trim() || null;
+  }
+
   const alsoBypass = document.getElementById('itemAlsoBypass').checked;
   const btn = document.getElementById('btnSaveItem');
   btn.textContent = 'Menyimpan...'; btn.disabled = true;
   try {
-    const { type, id } = editingContext;
-    if (id) await api(`/api/admin/${type}/${id}`, { method: 'PUT',  body: JSON.stringify(body) });
-    else    await api(`/api/admin/${type}`,        { method: 'POST', body: JSON.stringify(body) });
+    let savedGame = null;
+    if (id) {
+      await api(`/api/admin/${type}/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+    } else {
+      savedGame = await api(`/api/admin/${type}`, { method: 'POST', body: JSON.stringify(body) });
+    }
 
-    // Kalau checkbox "sekalian jadi Bypass" dicentang, bikin entri Bypass juga pakai data yang sama
+    // Kalau checkbox "sekalian jadi Bypass" dicentang, bikin entri Bypass juga.
+    // Role, nama, deskripsi & cover SAMA PERSIS dengan Game di atas (jadi otomatis ikut role Game).
     if (!id && type === 'games' && alsoBypass) {
-      await api('/api/admin/bypasses', { method: 'POST', body: JSON.stringify(body) });
+      await api('/api/admin/bypasses', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...body,
+          content: document.getElementById('itemBypassContent').value.trim() || null,
+          gameId: savedGame?._id || null
+        })
+      });
     }
 
     closeModal();

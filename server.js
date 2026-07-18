@@ -90,6 +90,11 @@ const SERVER_URL = process.env.SERVER_URL || `http://localhost:${PORT}`;
 const JWT_SECRET = process.env.JWT_SECRET;
 const APP_NAME = process.env.APP_NAME || 'Nova Launcher';
 
+// hubcapmanifest.com — dipakai admin panel buat auto-isi info game (nama/foto/ukuran/link)
+// pas nambah Game, cukup dari App ID Steam-nya.
+const HUBCAP_BASE_URL = (process.env.HUBCAP_BASE_URL || 'https://hubcapmanifest.com').replace(/\/+$/, '');
+const HUBCAP_API_KEY = process.env.HUBCAP_API_KEY || '';
+
 // Urutan level role — dipakai buat cek "role X boleh akses item level berapa"
 const ROLE_LEVEL = { public: 0, gold: 1, platinum: 2 };
 
@@ -462,20 +467,34 @@ app.get('/api/admin/games', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/admin/games', requireAdmin, async (req, res) => {
-  const { name, description, imageUrl, role } = req.body;
+  const { name, description, imageUrl, role, appId, storeUrl, sizeBytes, sizeLabel } = req.body;
   if (!name || !ROLE_LEVEL.hasOwnProperty(role)) return res.status(400).json({ error: 'Nama & role wajib diisi dengan benar.' });
-  const doc = { name, description: description || '', imageUrl: imageUrl || null, role, createdAt: new Date() };
+  const doc = {
+    name,
+    description: description || '',
+    imageUrl: imageUrl || null,
+    role,
+    appId: appId ? String(appId) : null,
+    storeUrl: storeUrl || null,
+    sizeBytes: sizeBytes || null,
+    sizeLabel: sizeLabel || null,
+    createdAt: new Date()
+  };
   const result = await db.collection('games').insertOne(doc);
   res.json({ ...doc, _id: result.insertedId });
 });
 
 app.put('/api/admin/games/:id', requireAdmin, async (req, res) => {
   if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
-  const { name, description, imageUrl, role } = req.body;
+  const { name, description, imageUrl, role, appId, storeUrl, sizeBytes, sizeLabel } = req.body;
   const update = {};
   if (name !== undefined) update.name = name;
   if (description !== undefined) update.description = description;
   if (imageUrl !== undefined) update.imageUrl = imageUrl;
+  if (appId !== undefined) update.appId = appId ? String(appId) : null;
+  if (storeUrl !== undefined) update.storeUrl = storeUrl || null;
+  if (sizeBytes !== undefined) update.sizeBytes = sizeBytes || null;
+  if (sizeLabel !== undefined) update.sizeLabel = sizeLabel || null;
   if (role !== undefined) {
     if (!ROLE_LEVEL.hasOwnProperty(role)) return res.status(400).json({ error: 'Role tidak valid.' });
     update.role = role;
@@ -499,20 +518,31 @@ app.get('/api/admin/bypasses', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/admin/bypasses', requireAdmin, async (req, res) => {
-  const { name, description, imageUrl, role } = req.body;
+  const { name, description, imageUrl, role, content, appId, gameId } = req.body;
   if (!name || !ROLE_LEVEL.hasOwnProperty(role)) return res.status(400).json({ error: 'Nama & role wajib diisi dengan benar.' });
-  const doc = { name, description: description || '', imageUrl: imageUrl || null, role, createdAt: new Date() };
+  const doc = {
+    name,
+    description: description || '',
+    imageUrl: imageUrl || null,
+    role, // NOTE: role bypass SELALU ikut role game asalnya (di-set sama oleh admin.js saat "Sekalian jadi Bypass")
+    content: content || null, // link/catatan cara pakai bypass-nya, opsional
+    appId: appId ? String(appId) : null,
+    gameId: (gameId && ObjectId.isValid(gameId)) ? gameId : null,
+    createdAt: new Date()
+  };
   const result = await db.collection('bypasses').insertOne(doc);
   res.json({ ...doc, _id: result.insertedId });
 });
 
 app.put('/api/admin/bypasses/:id', requireAdmin, async (req, res) => {
   if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
-  const { name, description, imageUrl, role } = req.body;
+  const { name, description, imageUrl, role, content, appId } = req.body;
   const update = {};
   if (name !== undefined) update.name = name;
   if (description !== undefined) update.description = description;
   if (imageUrl !== undefined) update.imageUrl = imageUrl;
+  if (content !== undefined) update.content = content || null;
+  if (appId !== undefined) update.appId = appId ? String(appId) : null;
   if (role !== undefined) {
     if (!ROLE_LEVEL.hasOwnProperty(role)) return res.status(400).json({ error: 'Role tidak valid.' });
     update.role = role;
@@ -545,6 +575,109 @@ app.put('/api/admin/users/:discordId/role', requireAdmin, async (req, res) => {
   if (!ROLE_LEVEL.hasOwnProperty(role)) return res.status(400).json({ error: 'Role tidak valid.' });
   await db.collection('users').updateOne({ discordId: req.params.discordId }, { $set: { role } });
   res.json({ success: true });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// ADMIN — APP ID LOOKUP (Steam + hubcapmanifest), dipakai pas nambah Game
+// ══════════════════════════════════════════════════════════════════════════
+// Alurnya:
+//  1. Ambil info dasar (nama, foto, link store, deskripsi singkat) dari Steam Store API
+//     pakai App ID yang diketik admin — ini publik, gak butuh API key.
+//  2. Cek ke hubcapmanifest apakah manifest buat App ID itu TERSEDIA, sekalian ambil
+//     ukuran filenya dari header response (Content-Length), TANPA download isinya
+//     (pakai HEAD dulu, fallback GET stream yang langsung di-stop begitu header masuk)
+//     — supaya gak boros kuota harian API key hubcapmanifest.
+function formatBytes(bytes) {
+  if (!bytes || isNaN(bytes)) return null;
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  let i = 0, val = Number(bytes);
+  while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
+  return `${val.toFixed(val >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+// Cek manifest hubcapmanifest tanpa full-download (HEAD, fallback GET-stream-abort)
+async function checkHubcapManifest(appId) {
+  if (!HUBCAP_API_KEY) return { configured: false, hasManifest: null, sizeBytes: null };
+  const url = `${HUBCAP_BASE_URL}/api/v1/lua/${encodeURIComponent(appId)}`;
+  const headers = { Authorization: `Bearer ${HUBCAP_API_KEY}` };
+
+  try {
+    const headRes = await axios.head(url, { headers, timeout: 10000, validateStatus: () => true });
+    if (headRes.status === 200) {
+      const len = headRes.headers['content-length'];
+      return { configured: true, hasManifest: true, sizeBytes: len ? Number(len) : null };
+    }
+    if (headRes.status === 404) return { configured: true, hasManifest: false, sizeBytes: null };
+    // status lain (mis. 401/403/429) -> lempar biar ditangani di bawah sebagai "tidak diketahui"
+    if (headRes.status >= 400) return { configured: true, hasManifest: null, sizeBytes: null, error: `hubcapmanifest: HTTP ${headRes.status}` };
+  } catch (e) {
+    // Sebagian server tidak mendukung HEAD -> fallback GET stream, langsung distop begitu header nongol
+    try {
+      const getRes = await axios.get(url, { headers, timeout: 10000, responseType: 'stream', validateStatus: () => true });
+      const status = getRes.status;
+      const len = getRes.headers['content-length'];
+      getRes.data.destroy(); // stop koneksi secepatnya, jangan tarik seluruh body
+      if (status === 200) return { configured: true, hasManifest: true, sizeBytes: len ? Number(len) : null };
+      if (status === 404) return { configured: true, hasManifest: false, sizeBytes: null };
+      return { configured: true, hasManifest: null, sizeBytes: null, error: `hubcapmanifest: HTTP ${status}` };
+    } catch (e2) {
+      return { configured: true, hasManifest: null, sizeBytes: null, error: 'hubcapmanifest: gagal dihubungi' };
+    }
+  }
+  return { configured: true, hasManifest: null, sizeBytes: null };
+}
+
+app.get('/api/admin/appid-lookup/:appId', requireAdmin, async (req, res) => {
+  const appId = String(req.params.appId).trim();
+  if (!/^\d+$/.test(appId)) return res.status(400).json({ error: 'App ID harus berupa angka (App ID Steam).' });
+
+  const result = {
+    appId,
+    name: null,
+    description: null,
+    imageUrl: null,
+    storeUrl: `https://store.steampowered.com/app/${appId}/`,
+    sizeBytes: null,
+    sizeLabel: null,
+    hasManifest: null,
+    hubcapConfigured: !!HUBCAP_API_KEY,
+    warnings: []
+  };
+
+  // 1) Steam Store API (publik)
+  try {
+    const steamRes = await axios.get('https://store.steampowered.com/api/appdetails', {
+      params: { appids: appId, l: 'english' },
+      timeout: 10000
+    });
+    const entry = steamRes.data?.[appId];
+    if (entry?.success && entry.data) {
+      const d = entry.data;
+      result.name = d.name || null;
+      result.imageUrl = d.header_image || null;
+      result.description = (d.short_description || '').slice(0, 300) || null;
+    } else {
+      result.warnings.push('App ID tidak ditemukan di Steam Store.');
+    }
+  } catch (e) {
+    result.warnings.push('Gagal mengambil data dari Steam Store.');
+  }
+
+  // 2) hubcapmanifest — cek ketersediaan manifest & ukuran file
+  try {
+    const hc = await checkHubcapManifest(appId);
+    result.hubcapConfigured = hc.configured;
+    result.hasManifest = hc.hasManifest;
+    result.sizeBytes = hc.sizeBytes;
+    result.sizeLabel = formatBytes(hc.sizeBytes);
+    if (hc.error) result.warnings.push(hc.error);
+    if (hc.configured && hc.hasManifest === false) result.warnings.push('Manifest untuk App ID ini belum tersedia di hubcapmanifest.');
+    if (!hc.configured) result.warnings.push('HUBCAP_API_KEY belum diisi di .env — cek ketersediaan manifest & ukuran file dilewati.');
+  } catch (e) {
+    result.warnings.push('Gagal mengecek hubcapmanifest.');
+  }
+
+  res.json(result);
 });
 
 // ══════════════════════════════════════════════════════════════════════════

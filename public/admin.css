@@ -523,6 +523,51 @@ textarea.form-input { resize: vertical; min-height: 72px; }
 .cover-results img:hover { border-color: var(--violet); transform: scale(1.05); }
 .cover-results img.selected { border-color: var(--violet); }
 
+/* ─── MODAL: App ID lookup / bypass toggle (fitur hubcapmanifest) ─── */
+.modal-lg { width: 560px; }
+.modal-subtitle { font-size: 12px; color: var(--text-faint); margin-top: 4px; font-weight: 500; }
+.modal-divider {
+  display: flex; align-items: center; gap: 10px;
+  margin: 4px 0 18px; color: var(--text-faint); font-size: 11px; font-weight: 700;
+  text-transform: uppercase; letter-spacing: .06em;
+}
+.modal-divider::before, .modal-divider::after { content: ''; flex: 1; height: 1px; background: var(--line); }
+.form-row { display: flex; gap: 14px; }
+.form-row .form-group { margin-bottom: 18px; }
+
+#appIdSection {
+  background: rgba(123,92,255,.06); border: 1px solid rgba(123,92,255,.22);
+  border-radius: var(--radius-md); padding: 16px; margin-bottom: 20px;
+}
+.appid-status { margin-top: 10px; font-size: 12px; min-height: 16px; line-height: 1.5; }
+.appid-preview {
+  display: flex; gap: 14px; align-items: center; margin-top: 14px;
+  padding: 12px; border-radius: var(--radius-sm);
+  background: rgba(255,255,255,.03); border: 1px solid var(--line);
+}
+.appid-preview-img { width: 92px; height: 43px; object-fit: cover; border-radius: 6px; flex-shrink: 0; background: var(--navy-700); }
+.appid-preview-info { min-width: 0; flex: 1; }
+.appid-preview-name { font-size: 13.5px; font-weight: 700; margin-bottom: 6px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.appid-preview-meta { display: flex; gap: 8px; flex-wrap: wrap; margin-bottom: 6px; }
+.appid-preview-link { font-size: 11.5px; color: var(--violet); text-decoration: none; font-weight: 600; }
+.appid-preview-link:hover { text-decoration: underline; }
+
+.chip {
+  display: inline-block; padding: 3px 9px; border-radius: 999px; font-size: 11px; font-weight: 700;
+  background: rgba(255,255,255,.06); border: 1px solid var(--line); color: var(--text-dim);
+}
+.chip-ok  { background: rgba(74,222,128,.14); border-color: rgba(74,222,128,.3); color: #4ade80; }
+.chip-bad { background: rgba(248,113,113,.14); border-color: rgba(248,113,113,.3); color: #f87171; }
+
+.bypass-toggle {
+  display: flex; align-items: flex-start; gap: 10px; cursor: pointer;
+  font-size: 13px; color: var(--text-dim); font-weight: 600;
+  background: rgba(255,255,255,.03); border: 1px solid var(--line); border-radius: var(--radius-sm);
+  padding: 12px 14px;
+}
+.bypass-toggle input { margin-top: 2px; }
+.bypass-toggle-sub { font-size: 11.5px; font-weight: 400; color: var(--text-faint); margin-top: 4px; line-height: 1.5; }
+
 /* ─── TOAST ─── */
 .toast-container { position: fixed; bottom: 24px; right: 24px; z-index: 200; display: flex; flex-direction: column; gap: 10px; }
 .toast {

@@ -274,41 +274,93 @@
 
 <!-- MODAL -->
 <div class="modal-backdrop" id="itemModalBackdrop" style="display:none;">
-  <div class="modal">
+  <div class="modal modal-lg">
     <div class="modal-header">
-      <div class="modal-title" id="itemModalTitle">Tambah Game</div>
+      <div>
+        <div class="modal-title" id="itemModalTitle">Tambah Game</div>
+        <div class="modal-subtitle" id="itemModalSubtitle">Cari lewat App ID Steam, atau isi manual di bawah.</div>
+      </div>
       <button class="modal-close" id="btnModalClose">✕</button>
     </div>
     <div class="modal-body">
-      <div class="form-group">
-        <label class="form-label">Nama</label>
-        <input class="form-input" type="text" id="itemName" placeholder="Nama game atau bypass">
+
+      <!-- APP ID LOOKUP (hubcapmanifest + Steam) -->
+      <div class="form-group" id="appIdSection">
+        <label class="form-label">App ID Steam <span style="color:var(--text-faint);font-weight:400;">(opsional — biar auto keisi)</span></label>
+        <div class="cover-row">
+          <input class="form-input" type="text" inputmode="numeric" id="itemAppId" placeholder="Contoh: 400" style="margin:0;">
+          <button class="btn btn-primary" id="btnLookupAppId" style="flex-shrink:0;">🔎 Search</button>
+        </div>
+        <div id="appIdStatus" class="appid-status"></div>
+
+        <div class="appid-preview" id="appIdPreview" style="display:none;">
+          <img id="appIdPreviewImg" class="appid-preview-img" alt="">
+          <div class="appid-preview-info">
+            <div class="appid-preview-name" id="appIdPreviewName">—</div>
+            <div class="appid-preview-meta">
+              <span class="chip" id="appIdPreviewSize">Ukuran: —</span>
+              <span class="chip" id="appIdPreviewManifest">Manifest: —</span>
+            </div>
+            <a class="appid-preview-link" id="appIdPreviewLink" href="#" target="_blank" rel="noopener">Lihat di Steam Store ↗</a>
+          </div>
+        </div>
       </div>
+
+      <div class="modal-divider"><span>Detail Item</span></div>
+
+      <div class="form-row">
+        <div class="form-group" style="flex:1;">
+          <label class="form-label">Nama</label>
+          <input class="form-input" type="text" id="itemName" placeholder="Nama game atau bypass">
+        </div>
+        <div class="form-group" style="width:170px;">
+          <label class="form-label">Role Minimum</label>
+          <select class="form-input" id="itemRole" style="cursor:pointer;">
+            <option value="public">🌐 Public</option>
+            <option value="gold">🥇 Gold</option>
+            <option value="platinum">💎 Platinum</option>
+          </select>
+        </div>
+      </div>
+
       <div class="form-group">
         <label class="form-label">Deskripsi <span style="color:var(--text-faint);font-weight:400;">(opsional)</span></label>
         <textarea class="form-input" id="itemDescription" rows="3" placeholder="Deskripsi singkat..."></textarea>
       </div>
-      <div class="form-group">
-        <label class="form-label">Role Minimum</label>
-        <select class="form-input" id="itemRole" style="cursor:pointer;">
-          <option value="public">🌐 Public</option>
-          <option value="gold">🥇 Gold</option>
-          <option value="platinum">💎 Platinum</option>
-        </select>
-      </div>
-      <div class="form-group">
-        <label class="form-label">Cover Art</label>
-        <div class="cover-row">
-          <input class="form-input" type="text" id="itemImageUrl" placeholder="https://..." style="margin:0;">
-          <button class="btn btn-secondary" id="btnSearchCover" style="flex-shrink:0;">🔍 Cari</button>
+
+      <div class="form-row">
+        <div class="form-group" style="flex:1;">
+          <label class="form-label">Cover Art</label>
+          <div class="cover-row">
+            <input class="form-input" type="text" id="itemImageUrl" placeholder="https://..." style="margin:0;">
+            <button class="btn btn-secondary" id="btnSearchCover" style="flex-shrink:0;">🖼️ Cari</button>
+          </div>
+          <div class="cover-results" id="coverResults"></div>
         </div>
-        <div class="cover-results" id="coverResults"></div>
+        <div class="form-group" style="width:170px;">
+          <label class="form-label">Ukuran File</label>
+          <input class="form-input" type="text" id="itemSizeLabel" placeholder="Auto / manual">
+        </div>
       </div>
+
       <div class="form-group" id="alsoBypassRow" style="display:none;">
-        <label style="display:flex;align-items:center;gap:9px;cursor:pointer;font-size:13px;color:var(--text-dim);font-weight:600;">
+        <label class="bypass-toggle">
           <input type="checkbox" id="itemAlsoBypass" style="width:16px;height:16px;margin:0;accent-color:#7b5cff;">
-          Sekalian tambahkan sebagai Bypass juga (pakai nama, deskripsi, role, & cover yang sama)
+          <span>
+            🛡️ Sekalian tambahkan sebagai <b>Bypass</b>
+            <div class="bypass-toggle-sub">Nama, deskripsi, cover, &amp; role otomatis sama dengan Game di atas — kalau Role Game-nya <b>Public</b>, Bypass-nya juga otomatis <b>Public</b>.</div>
+          </span>
         </label>
+        <div class="form-group" id="bypassContentRow" style="display:none;margin-top:10px;">
+          <label class="form-label">Link / Catatan Bypass <span style="color:var(--text-faint);font-weight:400;">(opsional)</span></label>
+          <textarea class="form-input" id="itemBypassContent" rows="2" placeholder="Link download bypass, atau catatan cara pakai..."></textarea>
+        </div>
+      </div>
+
+      <!-- Field khusus dipakai kalau nambah item langsung di halaman Bypass -->
+      <div class="form-group" id="bypassOnlyContentRow" style="display:none;">
+        <label class="form-label">Link / Catatan Bypass <span style="color:var(--text-faint);font-weight:400;">(opsional)</span></label>
+        <textarea class="form-input" id="itemBypassOnlyContent" rows="2" placeholder="Link download bypass, atau catatan cara pakai..."></textarea>
       </div>
     </div>
     <div class="modal-footer">
