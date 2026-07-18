@@ -151,6 +151,7 @@ function wireNavigation() {
   if (els.logoutLink) {
     els.logoutLink.addEventListener('click', (e) => {
       e.preventDefault();
+      if (_autoRefreshTimer) clearInterval(_autoRefreshTimer);
       localStorage.removeItem('token');
       location.reload();
     });
@@ -262,6 +263,29 @@ function enterApp(user) {
   showPage('dashboard'); // halaman utama selalu yang pertama muncul
   loadGames();
   loadBypasses();
+  startAutoRefresh(); // ← polling berkala supaya game/bypass baru dari admin langsung muncul
+}
+
+// ── AUTO REFRESH — supaya game/bypass yang baru ditambahkan admin langsung
+// muncul di app TANPA perlu restart. Poll setiap 15 detik + refresh instan
+// begitu window app di-fokus lagi (misal user habis buka admin panel lalu balik).
+let _autoRefreshTimer = null;
+function startAutoRefresh() {
+  if (_autoRefreshTimer) clearInterval(_autoRefreshTimer);
+  _autoRefreshTimer = setInterval(async () => {
+    if (!currentUser) return;
+    await loadGames();
+    await loadBypasses();
+    applySearchAndFilters(); // supaya search/filter yang lagi aktif tidak ke-reset
+  }, 15000); // tiap 15 detik
+
+  // Refresh instan begitu app kembali difokuskan (alt-tab balik ke app)
+  window.addEventListener('focus', async () => {
+    if (!currentUser) return;
+    await loadGames();
+    await loadBypasses();
+    applySearchAndFilters();
+  });
 }
 
 const ROLE_BADGE_ICON = { public: '🌐', gold: '🥇', platinum: '💎' };
@@ -385,22 +409,25 @@ async function loadGames() {
 }
 
 // ── SEARCH ──
+function applySearchAndFilters() {
+  if (!els.searchInput) return;
+  const q = els.searchInput.value.trim().toLowerCase();
+  const filtered = q ? allGames.filter(g => g.name.toLowerCase().includes(q)) : allGames;
+  renderGrid(els.dashNewGrid, filtered);
+  if (document.getElementById(PAGE_IDS.games)?.style.display !== 'none') {
+    const roleFiltered = activeGamesRoleFilter === 'all' ? filtered : filtered.filter(g => g.role === activeGamesRoleFilter);
+    renderGrid(els.gamesOnlyGrid, roleFiltered);
+  }
+  if (document.getElementById(PAGE_IDS.bypasses)?.style.display !== 'none') {
+    const filteredBypasses = q ? allBypasses.filter(b => b.name.toLowerCase().includes(q)) : allBypasses;
+    const roleFilteredBypasses = activeBypassesRoleFilter === 'all' ? filteredBypasses : filteredBypasses.filter(b => b.role === activeBypassesRoleFilter);
+    renderBypassGrid(els.bypassesGrid, roleFilteredBypasses);
+  }
+}
+
 function wireSearch() {
   if (!els.searchInput) return;
-  els.searchInput.addEventListener('input', () => {
-    const q = els.searchInput.value.trim().toLowerCase();
-    const filtered = q ? allGames.filter(g => g.name.toLowerCase().includes(q)) : allGames;
-    renderGrid(els.dashNewGrid, filtered);
-    if (document.getElementById(PAGE_IDS.games)?.style.display !== 'none') {
-      const roleFiltered = activeGamesRoleFilter === 'all' ? filtered : filtered.filter(g => g.role === activeGamesRoleFilter);
-      renderGrid(els.gamesOnlyGrid, roleFiltered);
-    }
-    if (document.getElementById(PAGE_IDS.bypasses)?.style.display !== 'none') {
-      const filteredBypasses = q ? allBypasses.filter(b => b.name.toLowerCase().includes(q)) : allBypasses;
-      const roleFilteredBypasses = activeBypassesRoleFilter === 'all' ? filteredBypasses : filteredBypasses.filter(b => b.role === activeBypassesRoleFilter);
-      renderBypassGrid(els.bypassesGrid, roleFilteredBypasses);
-    }
-  });
+  els.searchInput.addEventListener('input', applySearchAndFilters);
 }
 
 // ══════════════════════════════════════════════════════════════
@@ -620,9 +647,11 @@ async function handleInstall(itemType, itemId, itemName) {
   dlSetStage('Menghubungkan ke server...', 0);
 
   try {
-    // Step 1 — Ambil URL
+    // Step 1 — Ambil metadata (cek role, dsb). Server TIDAK lagi mengirim URL
+    // HubCap mentah — file-nya diambil lewat streamPath (proxy dari server sendiri),
+    // supaya API key HubCap tidak pernah tersimpan/lewat di Electron app.
     const data = await api(`/api/${isGame ? 'games' : 'bypasses'}/${itemId}/download`);
-    if (!data.url) throw new Error(data.error || 'Server tidak memberikan URL download. Pastikan admin sudah mengisi Manifest URL di data game.');
+    if (!data.streamPath) throw new Error(data.error || 'Server tidak memberikan link download. Pastikan admin sudah mengisi Manifest URL di data game.');
     dlSetStage('URL diterima, mendeteksi Steam...', 1);
 
     // Step 2 — Cek Steam
@@ -630,11 +659,15 @@ async function handleInstall(itemType, itemId, itemName) {
     if (!steamPath) throw new Error('Steam tidak ditemukan di PC ini. Pastikan Steam sudah terinstall dan pernah dijalankan.');
     dlSetStage('Mengunduh file...', 1);
 
+    // Bangun URL stream lengkap ke server sendiri (bukan ke hubcapmanifest.com langsung)
+    const token = localStorage.getItem('token') || '';
+    const zipUrl = `${SERVER_URL}${data.streamPath}?token=${encodeURIComponent(token)}`;
+
     let result;
 
     if (isGame) {
-      // Step 3 — Download + inject
-      result = await window.electronAPI.injectGame({ steamPath, zipUrl: data.url, extraHeaders: data.headers || {} });
+      // Step 3 — Download (lewat proxy server) + inject
+      result = await window.electronAPI.injectGame({ steamPath, zipUrl, extraHeaders: {} });
       if (result.cancelled) { dlModalHide(); return; }
       if (!result.success) throw new Error(result.error || 'Inject game gagal tanpa keterangan.');
 
@@ -656,7 +689,7 @@ async function handleInstall(itemType, itemId, itemName) {
       if (!appId) throw new Error('App ID tidak ditemukan pada data bypass ini. Hubungi admin untuk perbaikan.');
       dlSetStage(`Mencari folder game (App ID: ${appId})...`, 2);
 
-      result = await window.electronAPI.installBypass({ steamPath, appId: String(appId), zipUrl: data.url, extraHeaders: data.headers || {} });
+      result = await window.electronAPI.installBypass({ steamPath, appId: String(appId), zipUrl, extraHeaders: {} });
       if (result.cancelled) { dlModalHide(); return; }
       if (!result.success) throw new Error(result.error || 'Install bypass gagal tanpa keterangan.');
 

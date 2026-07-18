@@ -93,7 +93,93 @@ const APP_NAME = process.env.APP_NAME || 'Nova Launcher';
 // hubcapmanifest.com — dipakai admin panel buat auto-isi info game (nama/foto/ukuran/link)
 // pas nambah Game, cukup dari App ID Steam-nya.
 const HUBCAP_BASE_URL = (process.env.HUBCAP_BASE_URL || 'https://hubcapmanifest.com').replace(/\/+$/, '');
-const HUBCAP_API_KEY = process.env.HUBCAP_API_KEY || '';
+
+// Rotasi API key HubCap — dukung sampai 4 key sekaligus (opsional, isi kalau ada lebih dari 1).
+// Kalau salah satu key kena rate limit (429) atau ditolak (401/403), otomatis pindah ke key berikutnya.
+let HUBCAP_API_KEYS = [
+  process.env.HUBCAP_API_KEY,
+  process.env.HUBCAP_API_KEY_2,
+  process.env.HUBCAP_API_KEY_3,
+  process.env.HUBCAP_API_KEY_4,
+].filter(Boolean);
+const HUBCAP_API_KEY = HUBCAP_API_KEYS[0] || ''; // dipertahankan untuk kompatibilitas kode lama
+
+let hubcapKeyIndex = 0;
+const HUBCAP_COOLDOWN_MS = 60 * 1000; // 1 menit cooldown per key yang kena limit
+const hubcapKeyCooldown = {}; // { index: timestampMs kapan boleh dipakai lagi }
+
+function getHubcapApiKey() {
+  const total = HUBCAP_API_KEYS.length;
+  if (total === 0) return '';
+  for (let i = 0; i < total; i++) {
+    const idx = (hubcapKeyIndex + i) % total;
+    const cooldownUntil = hubcapKeyCooldown[idx] || 0;
+    if (Date.now() >= cooldownUntil) { hubcapKeyIndex = idx; return HUBCAP_API_KEYS[idx]; }
+  }
+  return HUBCAP_API_KEYS[0]; // semua lagi cooldown, tetap coba key pertama sebagai fallback
+}
+function markHubcapKeyLimited() {
+  if (HUBCAP_API_KEYS.length === 0) return;
+  hubcapKeyCooldown[hubcapKeyIndex] = Date.now() + HUBCAP_COOLDOWN_MS;
+  hubcapKeyIndex = (hubcapKeyIndex + 1) % HUBCAP_API_KEYS.length;
+}
+
+// ── PROXY STREAM dari HubCap → client ──
+// PENTING: server yang men-download dari HubCap (pakai axios + Bearer key), lalu
+// meneruskan (pipe) hasilnya langsung ke client — BUKAN client yang fetch langsung
+// ke hubcapmanifest.com. Ini krusial karena:
+//  1. API key HubCap tidak pernah terekspos ke Electron app / localStorage.
+//  2. axios di server jauh lebih reliable menghadapi redirect/header hubcap
+//     dibanding raw https.get di proses Electron.
+//  3. Dukung rotasi otomatis ke key lain kalau satu key kena rate limit.
+// Endpoint yang dipakai WAJIB /api/v1/manifest/{appId} (ZIP berisi .lua + .manifest),
+// BUKAN /api/v1/lua/{appId} (cuma file .lua mentah, bakal gagal validasi ZIP di client).
+async function streamHubcapManifest(appId, res, filenameHint) {
+  if (HUBCAP_API_KEYS.length === 0) {
+    return res.status(500).json({ error: 'HUBCAP_API_KEY belum diisi di server (.env). Hubungi admin.' });
+  }
+  const url = `${HUBCAP_BASE_URL}/api/v1/manifest/${appId}`;
+  let hubcapRes = null;
+  let lastError = null;
+
+  for (let attempt = 0; attempt < HUBCAP_API_KEYS.length; attempt++) {
+    const apiKey = getHubcapApiKey();
+    try {
+      hubcapRes = await axios.get(url, {
+        headers: { Authorization: `Bearer ${apiKey}` },
+        responseType: 'stream',
+        timeout: 0, // file bisa besar, jangan timeout
+        maxRedirects: 10
+      });
+      break; // sukses
+    } catch (e) {
+      lastError = e;
+      if (e.response) {
+        const s = e.response.status;
+        if (s === 429 || s === 401 || s === 403) {
+          markHubcapKeyLimited();
+          if (attempt < HUBCAP_API_KEYS.length - 1) continue; // coba key berikutnya
+        }
+      }
+      break; // error lain, atau sudah habis semua key
+    }
+  }
+
+  if (!hubcapRes) {
+    if (lastError?.response) {
+      const s = lastError.response.status;
+      if (s === 429) return res.status(429).json({ error: 'Semua API key HubCap sedang rate limited, coba lagi sebentar lagi.' });
+      if (s === 401 || s === 403) return res.status(401).json({ error: 'API Key HubCap tidak valid/ditolak. Hubungi admin.' });
+      if (s === 404) return res.status(404).json({ error: `Manifest untuk App ID ${appId} tidak ditemukan di HubCap.` });
+    }
+    return res.status(500).json({ error: 'Gagal terhubung ke HubCap: ' + (lastError?.message || 'unknown error') });
+  }
+
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="${(filenameHint || 'file').replace(/[^a-z0-9]/gi, '_')}.zip"`);
+  if (hubcapRes.headers['content-length']) res.setHeader('Content-Length', hubcapRes.headers['content-length']);
+  hubcapRes.data.pipe(res);
+}
 
 // Urutan level role — dipakai buat cek "role X boleh akses item level berapa"
 const ROLE_LEVEL = { public: 0, gold: 1, platinum: 2 };
@@ -364,9 +450,10 @@ app.get('/api/games', requireUser, async (req, res) => {
   }
 });
 
-// ── DOWNLOAD: kembalikan URL zip/manifest untuk di-inject ke Steam ──
-// Dipanggil app saat user tekan "Download" pada kartu game.
-// Cek role dulu — user hanya boleh download game yang sesuai level paketnya.
+// ── DOWNLOAD (metadata): cek role & kembalikan info untuk mulai proses inject.
+// TIDAK lagi mengirim URL HubCap mentah + API key ke client (rawan & kadang gagal
+// karena Electron fetch langsung ke HubCap tidak sereliable axios di server).
+// File-nya sendiri diambil lewat /api/games/:id/stream (proxy dari server).
 app.get('/api/games/:id/download', requireUser, async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
@@ -385,34 +472,57 @@ app.get('/api/games/:id/download', requireUser, async (req, res) => {
       return res.status(404).json({ error: 'File download untuk game ini belum diatur admin. Hubungi admin.' });
     }
 
-    // Kalau manifestUrl mengarah ke hubcapmanifest /lua/ endpoint,
-    // GANTI ke /manifest/ yang return ZIP (berisi .lua + .manifest) —
-    // karena main.js Electron expect ZIP, bukan raw .lua file.
-    // /lua/{appId}      → file .lua mentah → GAGAL validasi ZIP di client
-    // /manifest/{appId} → file .zip berisi .lua + .manifest → BENAR
-    const isHubcap = rawUrl.includes('hubcapmanifest.com') || rawUrl.includes('hubcap');
-    let url = rawUrl;
-    if (isHubcap) {
-      // Normalkan: /api/v1/lua/{id} → /api/v1/manifest/{id}
-      url = rawUrl.replace(/\/api\/v1\/lua\//, '/api/v1/manifest/');
-    }
-
     res.json({
-      url,
-      appId:      game.appId     || null,
-      steamAppId: game.appId     || null,
-      name:       game.name,
-      // Sertakan Authorization header kalau URL dari hubcap
-      headers: isHubcap && HUBCAP_API_KEY
-        ? { Authorization: `Bearer ${HUBCAP_API_KEY}` }
-        : {}
+      streamPath: `/api/games/${req.params.id}/stream`, // client download lewat sini (proxy server)
+      appId:      game.appId || null,
+      steamAppId: game.appId || null,
+      name:       game.name
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });
 
+// ── STREAM (proxy): server yang download dari HubCap, lalu diteruskan ke client.
+// Auth pakai token JWT yang sama (query ?token=... karena Electron http/https client
+// tidak bisa kirim custom header lewat main.js dengan mudah untuk semua kasus redirect,
+// jadi paling aman & simpel lewat query string yang HANYA dipakai untuk request ini).
+app.get('/api/games/:id/stream', async (req, res) => {
+  try {
+    const token = req.query.token || (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (!token) return res.status(401).json({ error: 'Login diperlukan.' });
+    let payload;
+    try { payload = jwt.verify(token, JWT_SECRET); } catch { return res.status(401).json({ error: 'Sesi tidak valid, silakan login ulang.' }); }
+
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+    const game = await db.collection('games').findOne({ _id: new ObjectId(req.params.id) });
+    if (!game) return res.status(404).json({ error: 'Game tidak ditemukan.' });
+
+    const user = await db.collection('users').findOne({ discordId: payload.discordId });
+    if (!user) return res.status(401).json({ error: 'User tidak ditemukan.' });
+
+    const myLevel   = ROLE_LEVEL[user.role] ?? 0;
+    const gameLevel = ROLE_LEVEL[game.role] ?? 0;
+    if (myLevel < gameLevel) return res.status(403).json({ error: `Game ini membutuhkan paket ${game.role}.` });
+
+    const rawUrl = game.manifestUrl || game.zipUrl || null;
+    if (!rawUrl) return res.status(404).json({ error: 'File download belum diatur admin.' });
+
+    const isHubcap = rawUrl.includes('hubcapmanifest.com') || rawUrl.includes('hubcap');
+    if (isHubcap) {
+      if (!game.appId) return res.status(400).json({ error: 'App ID game ini belum diisi admin — tidak bisa ambil manifest dari HubCap.' });
+      return await streamHubcapManifest(game.appId, res, game.name);
+    }
+
+    // URL non-hubcap (misal link GitHub Release) — redirect langsung, tanpa proxy
+    return res.redirect(rawUrl);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ── DOWNLOAD BYPASS ──
+// ── DOWNLOAD BYPASS (metadata) ──
 app.get('/api/bypasses/:id/download', requireUser, async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
@@ -431,11 +541,46 @@ app.get('/api/bypasses/:id/download', requireUser, async (req, res) => {
     }
 
     res.json({
-      url,
+      streamPath: `/api/bypasses/${req.params.id}/stream`,
       appId:      bypass.appId      || bypass.steamAppId || null,
       steamAppId: bypass.steamAppId || bypass.appId      || null,
       name:       bypass.name
     });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── STREAM BYPASS (proxy) ──
+app.get('/api/bypasses/:id/stream', async (req, res) => {
+  try {
+    const token = req.query.token || (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    if (!token) return res.status(401).json({ error: 'Login diperlukan.' });
+    let payload;
+    try { payload = jwt.verify(token, JWT_SECRET); } catch { return res.status(401).json({ error: 'Sesi tidak valid, silakan login ulang.' }); }
+
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+    const bypass = await db.collection('bypasses').findOne({ _id: new ObjectId(req.params.id) });
+    if (!bypass) return res.status(404).json({ error: 'Bypass tidak ditemukan.' });
+
+    const user = await db.collection('users').findOne({ discordId: payload.discordId });
+    if (!user) return res.status(401).json({ error: 'User tidak ditemukan.' });
+
+    const myLevel     = ROLE_LEVEL[user.role]   ?? 0;
+    const bypassLevel = ROLE_LEVEL[bypass.role] ?? 0;
+    if (myLevel < bypassLevel) return res.status(403).json({ error: `Bypass ini membutuhkan paket ${bypass.role}.` });
+
+    const rawUrl = bypass.zipUrl || bypass.link || null;
+    if (!rawUrl) return res.status(404).json({ error: 'File bypass belum diatur admin.' });
+
+    const isHubcap = rawUrl.includes('hubcapmanifest.com') || rawUrl.includes('hubcap');
+    if (isHubcap) {
+      const appId = bypass.appId || bypass.steamAppId;
+      if (!appId) return res.status(400).json({ error: 'App ID bypass ini belum diisi admin.' });
+      return await streamHubcapManifest(appId, res, bypass.name);
+    }
+
+    return res.redirect(rawUrl);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
