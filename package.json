@@ -1,6 +1,6 @@
 {
   "name": "nova-launcher",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Nova Launcher - desktop app + backend + admin web (project baru dari 0)",
   "main": "main.js",
   "engines": {

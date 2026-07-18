@@ -9,7 +9,71 @@ const fs = require('fs');
 const { execSync, exec } = require('child_process');
 const http = require('http');
 const https = require('https');
-const extractZip = require('extract-zip');
+// extractZip — implementasi native tanpa dependency external
+// Menggunakan PowerShell Expand-Archive (tersedia di Windows 10+) sebagai fallback utama
+// dan manual ZIP extraction via Node zlib sebagai alternatif
+const { execSync: _execSync } = require('child_process');
+async function extractZip(zipPath, { dir }) {
+  const fs2 = require('fs');
+  const path2 = require('path');
+  if (!fs2.existsSync(dir)) fs2.mkdirSync(dir, { recursive: true });
+  
+  try {
+    // Windows: pakai PowerShell Expand-Archive (zero dependency, tersedia Windows 10+)
+    const safeSrc  = zipPath.replace(/'/g, "''");
+    const safeDest = dir.replace(/'/g, "''");
+    _execSync(
+      `powershell -NoProfile -NonInteractive -Command "Expand-Archive -LiteralPath '${safeSrc}' -DestinationPath '${safeDest}' -Force"`,
+      { windowsHide: true, timeout: 120000 }
+    );
+    return;
+  } catch(e1) {
+    // Fallback: manual unzip pakai yauzl-style reading lewat Buffer + zlib
+    // Baca ZIP file manual
+    const buf = fs2.readFileSync(zipPath);
+    const entries = parseZip(buf);
+    for (const entry of entries) {
+      if (entry.name.endsWith('/')) {
+        fs2.mkdirSync(path2.join(dir, entry.name), { recursive: true });
+        continue;
+      }
+      const outPath = path2.join(dir, entry.name);
+      fs2.mkdirSync(path2.dirname(outPath), { recursive: true });
+      fs2.writeFileSync(outPath, entry.data);
+    }
+  }
+}
+
+function parseZip(buf) {
+  const zlib2 = require('zlib');
+  const entries = [];
+  let i = 0;
+  while (i < buf.length - 4) {
+    // Local file header signature = 0x04034b50
+    if (buf[i]===0x50 && buf[i+1]===0x4B && buf[i+2]===0x03 && buf[i+3]===0x04) {
+      const compression  = buf.readUInt16LE(i + 8);
+      const compSize     = buf.readUInt32LE(i + 18);
+      const fnLen        = buf.readUInt16LE(i + 26);
+      const extraLen     = buf.readUInt16LE(i + 28);
+      const name         = buf.slice(i + 30, i + 30 + fnLen).toString('utf8');
+      const dataStart    = i + 30 + fnLen + extraLen;
+      const compData     = buf.slice(dataStart, dataStart + compSize);
+      let data;
+      if (compression === 0) {
+        data = compData; // stored
+      } else if (compression === 8) {
+        data = zlib2.inflateRawSync(compData); // deflate
+      } else {
+        i++; continue; // skip unknown
+      }
+      entries.push({ name, data });
+      i = dataStart + compSize;
+    } else {
+      i++;
+    }
+  }
+  return entries;
+}
 
 let mainWindow;
 

@@ -351,9 +351,8 @@ async function loadBypasses() {
     }
 
     // Kalau lagi buka halaman Bypass, refresh juga isinya (tetap ikut filter role yang lagi aktif)
-    if (document.getElementById(PAGE_IDS.bypasses)?.style.display !== 'none') {
-      applyBypassesRoleFilter();
-    }
+    // Selalu apply filter supaya bypassesGrid terisi sejak awal
+    applyBypassesRoleFilter();
   } catch (e) {
     const msg = `<div style="color:#ff6b81;font-size:13px;">Gagal memuat bypass: ${escapeHtml(e.message)}</div>`;
     if (els.bypassesGrid) els.bypassesGrid.innerHTML = msg;
@@ -370,16 +369,18 @@ async function loadGames() {
       if (badge) badge.textContent = games.length;
     }
 
+    // Render ke dashboard grid
     renderGrid(els.dashNewGrid, games);
     renderGrid(els.dashSaleGrid, [...games].reverse());
 
-    // Kalau lagi buka halaman Games, refresh juga isinya (tetap ikut filter role yang lagi aktif)
-    if (document.getElementById(PAGE_IDS.games)?.style.display !== 'none') {
-      applyGamesRoleFilter();
-    }
+    // Selalu render ke gamesOnlyGrid juga (bukan cuma cek display) supaya
+    // grid sudah terisi walau user belum pernah buka halaman Games
+    applyGamesRoleFilter();
+
   } catch (e) {
     const msg = `<div style="color:#ff6b81;font-size:13px;">Gagal memuat game: ${escapeHtml(e.message)}</div>`;
     if (els.dashNewGrid) els.dashNewGrid.innerHTML = msg;
+    if (els.gamesOnlyGrid) els.gamesOnlyGrid.innerHTML = msg;
   }
 }
 
