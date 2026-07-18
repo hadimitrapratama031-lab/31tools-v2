@@ -171,6 +171,34 @@ let activeDownloadFile = null;
 function downloadFileWithProgress(url, destPath, onProgress, redirectCount = 0, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     if (redirectCount > 10) return reject(new Error('Terlalu banyak redirect'));
+
+    // SECURITY: hanya izinkan download dari domain-domain terpercaya. Semua file game/bypass
+    // di app ini SUDAH lewat proxy server sendiri (/api/games/:id/stream, /api/bypasses/:id/stream),
+    // jadi url yang sampai ke sini seharusnya selalu server sendiri. Allowlist ini jaga-jaga
+    // supaya kalau suatu saat ada bug/kebocoran URL mentah, app tetap menolak download-nya
+    // alih-alih diam-diam download dari host sembarangan.
+    const ALLOWED_DOWNLOAD_HOSTS = [
+      '31tools-v2-production.up.railway.app', // domain server sendiri — WAJIB, semua stream lewat sini
+      'github.com',
+      'raw.githubusercontent.com',
+      'objects.githubusercontent.com',
+      'release-assets.githubusercontent.com',
+      'cdn.discordapp.com',
+      'media.discordapp.net',
+      'drive.google.com',
+      'storage.googleapis.com',
+    ];
+    try {
+      const parsedUrl = new URL(url);
+      const host = parsedUrl.hostname.toLowerCase();
+      const allowed = ALLOWED_DOWNLOAD_HOSTS.some(h => host === h || host.endsWith('.' + h));
+      if (!allowed) {
+        return reject(new Error(`Download ditolak: host "${host}" tidak ada dalam daftar terpercaya.`));
+      }
+    } catch (urlErr) {
+      return reject(new Error('URL download tidak valid: ' + url));
+    }
+
     const client = url.startsWith('https') ? https : http;
     // Gabungkan User-Agent default + extraHeaders (misal Authorization untuk hubcap)
     const reqHeaders = {

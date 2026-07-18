@@ -314,6 +314,35 @@
         </div>
       </div>
 
+      <!-- Field khusus dipakai kalau nambah item langsung di halaman Bypass (link SELALU manual, bukan dari hubcap).
+           Diposisikan di ATAS (field pertama form), karena App ID krusial untuk menentukan folder extract di PC user. -->
+      <div id="bypassOnlyContentRow" style="display:none;">
+        <!-- App ID untuk bypass — menentukan folder extract di PC user (steamapps/common/<gamedir>) -->
+        <div class="form-group">
+          <label class="form-label">App ID Steam <span style="color:var(--text-faint);font-weight:400;">— wajib diisi agar bypass bisa di-extract ke folder game yang benar</span></label>
+          <div style="display:flex;gap:8px;align-items:center;">
+            <input class="form-input" type="text" inputmode="numeric" id="itemBypassAppId" placeholder="Contoh: 400" style="flex:1;margin:0;" oninput="onBypassAppIdInput()">
+            <button type="button" class="btn btn-secondary" onclick="lookupBypassAppId()" style="white-space:nowrap;">🔎 Cari Info</button>
+          </div>
+          <div id="bypassAppIdStatus" style="margin-top:6px;font-size:12px;min-height:18px;"></div>
+          <!-- Preview nama + gambar dari Steam — auto-fill saat App ID dimasukkan -->
+          <div id="bypassAppIdPreview" style="display:none;margin-top:8px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;display:none;gap:10px;align-items:center;">
+            <img id="bypassAppIdPreviewImg" style="width:60px;height:40px;object-fit:cover;border-radius:5px;" alt="">
+            <div>
+              <div id="bypassAppIdPreviewName" style="font-weight:600;font-size:13px;"></div>
+              <a id="bypassAppIdPreviewLink" href="#" target="_blank" style="font-size:11px;color:var(--text-dim);">Lihat di Steam Store ↗</a>
+            </div>
+          </div>
+        </div>
+
+        <!-- Link ZIP bypass — diisi manual admin, tidak pernah ditampilkan ke user (server proxy) -->
+        <div class="form-group">
+          <label class="form-label">Link ZIP Bypass <span style="color:var(--text-faint);font-weight:400;">— GitHub / link zip kamu, tidak akan terlihat dari sisi user</span></label>
+          <input class="form-input" type="text" id="itemBypassOnlyContent" placeholder="https://github.com/.../releases/download/.../bypass.zip">
+          <div style="margin-top:4px;font-size:11.5px;color:var(--text-faint);">Link ini akan di-proxy oleh server saat user download — user hanya mengakses <code>/api/bypasses/:id/stream</code>, bukan link aslinya.</div>
+        </div>
+      </div>
+
       <div class="modal-divider"><span>Detail Item</span></div>
 
       <div class="form-row">
@@ -362,34 +391,6 @@
         <div class="form-group" id="bypassContentRow" style="display:none;margin-top:10px;">
           <label class="form-label">Link Bypass</label>
           <input class="form-input" type="text" id="itemBypassContent" placeholder="https://link-bypass-kamu...">
-        </div>
-      </div>
-
-      <!-- Field khusus dipakai kalau nambah item langsung di halaman Bypass (link SELALU manual, bukan dari hubcap) -->
-      <div id="bypassOnlyContentRow" style="display:none;">
-        <!-- App ID untuk bypass — menentukan folder extract di PC user (steamapps/common/<gamedir>) -->
-        <div class="form-group">
-          <label class="form-label">App ID Steam <span style="color:var(--text-faint);font-weight:400;">— wajib diisi agar bypass bisa di-extract ke folder game yang benar</span></label>
-          <div style="display:flex;gap:8px;align-items:center;">
-            <input class="form-input" type="text" inputmode="numeric" id="itemBypassAppId" placeholder="Contoh: 400" style="flex:1;margin:0;" oninput="onBypassAppIdInput()">
-            <button type="button" class="btn btn-secondary" onclick="lookupBypassAppId()" style="white-space:nowrap;">🔎 Cari Info</button>
-          </div>
-          <div id="bypassAppIdStatus" style="margin-top:6px;font-size:12px;min-height:18px;"></div>
-          <!-- Preview nama + gambar dari Steam — auto-fill saat App ID dimasukkan -->
-          <div id="bypassAppIdPreview" style="display:none;margin-top:8px;background:var(--surface);border:1px solid var(--border);border-radius:8px;padding:10px;display:none;gap:10px;align-items:center;">
-            <img id="bypassAppIdPreviewImg" style="width:60px;height:40px;object-fit:cover;border-radius:5px;" alt="">
-            <div>
-              <div id="bypassAppIdPreviewName" style="font-weight:600;font-size:13px;"></div>
-              <a id="bypassAppIdPreviewLink" href="#" target="_blank" style="font-size:11px;color:var(--text-dim);">Lihat di Steam Store ↗</a>
-            </div>
-          </div>
-        </div>
-
-        <!-- Link ZIP bypass — diisi manual admin, tidak pernah ditampilkan ke user (server proxy) -->
-        <div class="form-group">
-          <label class="form-label">Link ZIP Bypass <span style="color:var(--text-faint);font-weight:400;">— GitHub / link zip kamu, tidak akan terlihat dari sisi user</span></label>
-          <input class="form-input" type="text" id="itemBypassOnlyContent" placeholder="https://github.com/.../releases/download/.../bypass.zip">
-          <div style="margin-top:4px;font-size:11.5px;color:var(--text-faint);">Link ini akan di-proxy oleh server saat user download — user hanya mengakses <code>/api/bypasses/:id/stream</code>, bukan link aslinya.</div>
         </div>
       </div>
     </div>

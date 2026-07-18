@@ -447,7 +447,16 @@ app.get('/api/games', requireUser, async (req, res) => {
       .find({})
       .sort({ createdAt: -1 })
       .toArray();
-    res.json(games);
+    // PENTING: JANGAN kirim manifestUrl/zipUrl mentah ke client — link asli hanya
+    // boleh diketahui server (dipakai proxy di /stream). Kalau field ini bocor ke
+    // client, Electron app bisa (sengaja/tidak) langsung shell.openExternal() ke
+    // link asli alih-alih lewat proxy stream yang sudah dicek role & di-log.
+    res.json(games.map(g => ({
+      _id: g._id, name: g.name, description: g.description || '',
+      imageUrl: g.imageUrl || '', role: g.role || 'public',
+      sizeLabel: g.sizeLabel || '', appId: g.appId || null,
+      isOnline: g.isOnline !== false, createdAt: g.createdAt || null,
+    })));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -619,7 +628,18 @@ app.get('/api/bypasses', requireUser, async (req, res) => {
       .find({})
       .sort({ createdAt: -1 })
       .toArray();
-    res.json(bypasses);
+    // PENTING: JANGAN kirim zipUrl/link mentah ke client sama sekali — kalau bocor,
+    // tombol di app bisa (salah) langsung shell.openExternal() ke link aslinya
+    // alih-alih download lewat proxy /api/bypasses/:id/stream yang sudah dicek role.
+    // Ini juga PENYEBAB bug "tombol buka link" yang dilaporkan sebelumnya.
+    res.json(bypasses.map(b => ({
+      _id: b._id, name: b.name, description: b.description || '',
+      imageUrl: b.imageUrl || '', role: b.role || 'public',
+      sizeLabel: b.sizeLabel || '',
+      appId: b.appId || b.steamAppId || null,
+      steamAppId: b.steamAppId || b.appId || null,
+      isOnline: b.isOnline !== false, createdAt: b.createdAt || null,
+    })));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

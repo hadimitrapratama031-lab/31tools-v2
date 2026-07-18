@@ -356,9 +356,7 @@ function renderBypassCard(item) {
           ${roleBadgeHtml(item.role, true)}
           ${locked
             ? `<button class="dl-btn locked-btn" disabled title="Butuh paket ${escapeHtml(item.role)}">🔒 Upgrade ke ${escapeHtml(item.role)}</button>`
-            : `<button class="dl-btn" data-id="${item._id}" data-name="${escapeHtml(item.name)}" data-link="${escapeHtml(item.link || '')}">
-                 ${item.link ? 'Buka Link' : 'Pakai'}
-               </button>`
+            : `<button class="dl-btn" data-id="${item._id}" data-name="${escapeHtml(item.name)}">Install</button>`
           }
         </div>
       </div>
@@ -370,15 +368,11 @@ function renderBypassGrid(container, bypasses) {
   container.innerHTML = bypasses.length
     ? bypasses.map(renderBypassCard).join('')
     : `<div style="color:#8577a3;font-size:13px;padding:10px 4px;">Belum ada bypass.</div>`;
+  // Bypass diinstall dengan cara yang SAMA seperti game — download lewat proxy server
+  // (handleInstall), auto-detect folder game via App ID, lalu extract ke folder tersebut.
+  // TIDAK ADA lagi tombol "Buka Link" / shell.openExternal ke link mentah.
   container.querySelectorAll('.dl-btn:not(.locked-btn)').forEach(btn => {
-    btn.addEventListener('click', () => {
-      handleInstall('bypass', btn.dataset.id, btn.dataset.name);
-      const link = btn.dataset.link;
-      if (link) {
-        const openExternal = window.electronAPI?.openExternal || (url => window.open(url, '_blank'));
-        openExternal(link);
-      }
-    });
+    btn.addEventListener('click', () => handleInstall('bypass', btn.dataset.id, btn.dataset.name));
   });
 }
 
