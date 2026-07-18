@@ -402,12 +402,274 @@ function wireSearch() {
   });
 }
 
+// ══════════════════════════════════════════════════════════════
+// PROGRESS MODAL — download + install UI
+// ══════════════════════════════════════════════════════════════
+
+let _dlModal = null;
+let _dlLastInstallArgs = null; // untuk retry
+
+function getDlModal() {
+  if (_dlModal) return _dlModal;
+
+  const overlay = document.createElement('div');
+  overlay.className = 'dl-overlay';
+  overlay.id = 'dlOverlay';
+  overlay.innerHTML = `
+    <div class="dl-card">
+      <div class="dl-header">
+        <div class="dl-icon" id="dlIcon">⬇️</div>
+        <div>
+          <div class="dl-title" id="dlTitle">Mengunduh...</div>
+          <div class="dl-subtitle" id="dlSubtitle">Mohon tunggu sebentar</div>
+        </div>
+      </div>
+
+      <!-- Step indicators: 1=Koneksi 2=Download 3=Ekstrak 4=Install -->
+      <div class="dl-steps">
+        <div class="dl-step" id="dlStep1"></div>
+        <div class="dl-step" id="dlStep2"></div>
+        <div class="dl-step" id="dlStep3"></div>
+        <div class="dl-step" id="dlStep4"></div>
+      </div>
+
+      <div class="dl-stage">
+        <span class="dl-stage-dot" id="dlStageDot"></span>
+        <span id="dlStageText">Menginisialisasi...</span>
+      </div>
+
+      <div class="dl-bar-track">
+        <div class="dl-bar-fill indeterminate" id="dlBarFill"></div>
+      </div>
+
+      <div class="dl-stats">
+        <div id="dlStatsLeft">—</div>
+        <div id="dlStatsRight">—</div>
+      </div>
+
+      <div class="dl-error-box" id="dlErrorBox">
+        <div class="dl-error-title">⚠️ Terjadi Kesalahan</div>
+        <div id="dlErrorMsg"></div>
+      </div>
+
+      <div class="dl-success-box" id="dlSuccessBox">
+        <div id="dlSuccessMsg"></div>
+      </div>
+
+      <div class="dl-actions">
+        <button class="dl-btn dl-btn-cancel" id="dlBtnCancel">Batalkan</button>
+        <button class="dl-btn dl-btn-retry" id="dlBtnRetry">↺ Coba Lagi</button>
+        <button class="dl-btn dl-btn-primary" id="dlBtnClose">✓ Selesai</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+
+  document.getElementById('dlBtnCancel').addEventListener('click', async () => {
+    await window.electronAPI.cancelDownload().catch(() => {});
+    dlModalHide();
+  });
+  document.getElementById('dlBtnClose').addEventListener('click', dlModalHide);
+  document.getElementById('dlBtnRetry').addEventListener('click', () => {
+    if (_dlLastInstallArgs) {
+      dlModalHide();
+      setTimeout(() => handleInstall(..._dlLastInstallArgs), 180);
+    }
+  });
+
+  _dlModal = {
+    overlay,
+    icon:        overlay.querySelector('#dlIcon'),
+    title:       overlay.querySelector('#dlTitle'),
+    subtitle:    overlay.querySelector('#dlSubtitle'),
+    stageDot:    overlay.querySelector('#dlStageDot'),
+    stageText:   overlay.querySelector('#dlStageText'),
+    barFill:     overlay.querySelector('#dlBarFill'),
+    statsLeft:   overlay.querySelector('#dlStatsLeft'),
+    statsRight:  overlay.querySelector('#dlStatsRight'),
+    errorBox:    overlay.querySelector('#dlErrorBox'),
+    errorMsg:    overlay.querySelector('#dlErrorMsg'),
+    successBox:  overlay.querySelector('#dlSuccessBox'),
+    successMsg:  overlay.querySelector('#dlSuccessMsg'),
+    btnCancel:   overlay.querySelector('#dlBtnCancel'),
+    btnRetry:    overlay.querySelector('#dlBtnRetry'),
+    btnClose:    overlay.querySelector('#dlBtnClose'),
+    steps:       [1,2,3,4].map(i => overlay.querySelector(`#dlStep${i}`)),
+  };
+  return _dlModal;
+}
+
+function dlModalShow(title, subtitle = 'Mohon tunggu sebentar', icon = '⬇️') {
+  const m = getDlModal();
+  m.title.textContent    = title;
+  m.subtitle.textContent = subtitle;
+  m.icon.textContent     = icon;
+  m.icon.className       = 'dl-icon';
+  m.stageDot.className   = 'dl-stage-dot';
+  m.barFill.className    = 'dl-bar-fill indeterminate';
+  m.barFill.style.width  = '0%';
+  m.errorBox.className   = 'dl-error-box';
+  m.successBox.className = 'dl-success-box';
+  m.btnRetry.className   = 'dl-btn dl-btn-retry';
+  m.btnClose.className   = 'dl-btn dl-btn-primary';
+  m.btnCancel.style.display = 'inline-block';
+  m.statsLeft.textContent   = '—';
+  m.statsRight.textContent  = '—';
+  m.steps.forEach(s => s.className = 'dl-step');
+  m.overlay.classList.add('show');
+}
+
+function dlModalHide() {
+  const m = getDlModal();
+  m.overlay.classList.remove('show');
+}
+
+function dlSetStage(text, stepDone = 0, isError = false) {
+  const m = getDlModal();
+  m.stageText.textContent = text;
+  m.stageDot.className = 'dl-stage-dot' + (isError ? ' fail' : stepDone >= 4 ? ' done' : '');
+  m.steps.forEach((s, i) => {
+    if (i < stepDone) s.className = 'dl-step done';
+    else if (i === stepDone && !isError) s.className = 'dl-step active';
+    else if (i === stepDone && isError) s.className = 'dl-step error';
+  });
+}
+
+function dlSetProgress(downloaded, total) {
+  const m = getDlModal();
+  if (total > 0) {
+    const pct = Math.min(100, Math.round((downloaded / total) * 100));
+    m.barFill.className   = 'dl-bar-fill';
+    m.barFill.style.width = pct + '%';
+    m.statsLeft.textContent  = `${pct}%`;
+    m.statsRight.textContent = `${fmtBytes(downloaded)} / ${fmtBytes(total)}`;
+  } else {
+    m.barFill.className = 'dl-bar-fill indeterminate';
+    m.statsLeft.textContent  = fmtBytes(downloaded);
+    m.statsRight.textContent = 'Ukuran tidak diketahui';
+  }
+}
+
+function dlSetSuccess(msg, detailMsg = '') {
+  const m = getDlModal();
+  m.icon.textContent   = '✅';
+  m.icon.className     = 'dl-icon success';
+  m.subtitle.textContent = 'Proses selesai';
+  m.barFill.className  = 'dl-bar-fill success';
+  m.barFill.style.width = '100%';
+  m.stageDot.className = 'dl-stage-dot done';
+  m.steps.forEach(s => s.className = 'dl-step done');
+  m.stageText.textContent = msg;
+  m.statsLeft.textContent  = '100%';
+  m.btnCancel.style.display = 'none';
+  m.btnClose.className = 'dl-btn dl-btn-primary show';
+  if (detailMsg) {
+    m.successBox.className = 'dl-success-box show';
+    m.successMsg.textContent = detailMsg;
+  }
+}
+
+function dlSetError(errMsg) {
+  const m = getDlModal();
+  m.icon.textContent   = '❌';
+  m.icon.className     = 'dl-icon error';
+  m.subtitle.textContent = 'Proses gagal';
+  m.barFill.className  = 'dl-bar-fill error';
+  m.stageDot.className = 'dl-stage-dot fail';
+  m.stageText.textContent = 'Gagal';
+  m.btnCancel.style.display = 'none';
+  m.btnRetry.className = 'dl-btn dl-btn-retry show';
+  m.errorBox.className = 'dl-error-box show';
+  m.errorMsg.textContent = errMsg;
+}
+
+function fmtBytes(bytes) {
+  if (bytes < 1024) return bytes + ' B';
+  if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+  return (bytes / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+// ── Daftarkan listener progress dari main process (sekali saja) ──
+let _progressListenerSet = false;
+function ensureProgressListener() {
+  if (_progressListenerSet) return;
+  _progressListenerSet = true;
+  window.electronAPI.onDownloadProgress(({ downloaded, total }) => {
+    dlSetProgress(downloaded, total);
+  });
+}
+
 // ── INSTALL -> catat ke histori ──
 async function handleInstall(itemType, itemId, itemName) {
+  _dlLastInstallArgs = [itemType, itemId, itemName];
+  ensureProgressListener();
+
+  const isGame = itemType === 'game';
+  dlModalShow(
+    itemName,
+    isGame ? 'Inject game ke Steam' : 'Install bypass ke folder game',
+    isGame ? '🎮' : '🛡️'
+  );
+  dlSetStage('Menghubungkan ke server...', 0);
+
   try {
-    await api('/api/history', { method: 'POST', body: JSON.stringify({ itemType, itemId }) });
+    // Step 1 — Ambil URL
+    const data = await api(`/api/${isGame ? 'games' : 'bypasses'}/${itemId}/download`);
+    if (!data.url) throw new Error('Server tidak memberikan URL download. Coba lagi nanti.');
+    dlSetStage('URL diterima, mendeteksi Steam...', 1);
+
+    // Step 2 — Cek Steam
+    const steamPath = await window.electronAPI.getSteamPath();
+    if (!steamPath) throw new Error('Steam tidak ditemukan di PC ini. Pastikan Steam sudah terinstall dan pernah dijalankan.');
+    dlSetStage('Mengunduh file...', 1);
+
+    let result;
+
+    if (isGame) {
+      // Step 3 — Download + inject
+      result = await window.electronAPI.injectGame({ steamPath, zipUrl: data.url });
+      if (result.cancelled) { dlModalHide(); return; }
+      if (!result.success) throw new Error(result.error || 'Inject game gagal tanpa keterangan.');
+
+      dlSetStage('Menyimpan ke histori...', 3);
+      await api('/api/history', {
+        method: 'POST',
+        body: JSON.stringify({ itemType, itemId, extractedFiles: result.extractedFiles || [], steamPath })
+      });
+
+      dlSetSuccess(
+        'Inject berhasil!',
+        `${result.extractedFiles?.length || 0} file berhasil dipasang.
+⚠️ Restart Steam agar perubahan aktif.`
+      );
+
+    } else {
+      // Bypass
+      const appId = data.steamAppId || data.appId;
+      if (!appId) throw new Error('App ID tidak ditemukan pada data bypass ini. Hubungi admin untuk perbaikan.');
+      dlSetStage(`Mencari folder game (App ID: ${appId})...`, 2);
+
+      result = await window.electronAPI.installBypass({ steamPath, appId: String(appId), zipUrl: data.url });
+      if (result.cancelled) { dlModalHide(); return; }
+      if (!result.success) throw new Error(result.error || 'Install bypass gagal tanpa keterangan.');
+
+      dlSetStage('Menyimpan ke histori...', 3);
+      await api('/api/history', {
+        method: 'POST',
+        body: JSON.stringify({ itemType, itemId, extractedFiles: result.extractedFiles || [], folderPath: result.folderPath || null })
+      });
+
+      dlSetSuccess(
+        'Bypass berhasil dipasang!',
+        `📁 Diekstrak ke:
+${result.folderPath || '—'}`
+      );
+    }
+
+    loadHistori();
+
   } catch (e) {
-    alert('Gagal mencatat histori: ' + e.message);
+    dlSetError(e.message);
   }
 }
 
