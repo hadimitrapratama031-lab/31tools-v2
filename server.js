@@ -583,7 +583,26 @@ app.get('/api/bypasses/:id/stream', async (req, res) => {
       return await streamHubcapManifest(appId, res, bypass.name);
     }
 
-    return res.redirect(rawUrl);
+    // PROXY download — stream file dari rawUrl (GitHub / link apapun) ke client
+    // tanpa expose URL aslinya ke Electron app. Client hanya tahu /api/bypasses/:id/stream.
+    const safeName = (bypass.name || 'bypass').replace(/[^a-z0-9_\-]/gi, '_');
+    try {
+      const upstream = await axios.get(rawUrl, {
+        responseType: 'stream',
+        timeout: 30000,
+        headers: { 'User-Agent': 'ThreeOneStore/1.0' },
+        maxRedirects: 10,
+      });
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename="${safeName}.zip"`);
+      if (upstream.headers['content-length']) {
+        res.setHeader('Content-Length', upstream.headers['content-length']);
+      }
+      upstream.data.pipe(res);
+      upstream.data.on('error', () => { if (!res.headersSent) res.status(502).end(); });
+    } catch (e) {
+      if (!res.headersSent) res.status(502).json({ error: 'Gagal mengambil file bypass: ' + e.message });
+    }
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -753,14 +772,16 @@ app.get('/api/admin/bypasses', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/admin/bypasses', requireAdmin, async (req, res) => {
-  const { name, description, imageUrl, role, link, gameId } = req.body;
+  const { name, description, imageUrl, role, link, zipUrl, appId, gameId } = req.body;
   if (!name || !ROLE_LEVEL.hasOwnProperty(role)) return res.status(400).json({ error: 'Nama & role wajib diisi dengan benar.' });
   const doc = {
     name,
     description: description || '',
     imageUrl: imageUrl || null,
-    role, // NOTE: role bypass SELALU ikut role game asalnya (di-set sama oleh admin.js saat "Sekalian jadi Bypass")
-    link: link || null, // link bypass — SELALU diisi manual oleh admin, TIDAK diambil dari hubcapmanifest
+    role,
+    link:   link   || null, // legacy field — link manual dari admin
+    zipUrl: zipUrl || link || null, // URL ZIP bypass (bisa GitHub dll) — di-proxy server, tidak pernah ke client
+    appId:  appId  || null, // Steam App ID — menentukan folder extract tujuan di PC user
     gameId: (gameId && ObjectId.isValid(gameId)) ? gameId : null,
     createdAt: new Date()
   };
@@ -770,12 +791,14 @@ app.post('/api/admin/bypasses', requireAdmin, async (req, res) => {
 
 app.put('/api/admin/bypasses/:id', requireAdmin, async (req, res) => {
   if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
-  const { name, description, imageUrl, role, link } = req.body;
+  const { name, description, imageUrl, role, link, zipUrl, appId } = req.body;
   const update = {};
-  if (name !== undefined) update.name = name;
+  if (name        !== undefined) update.name        = name;
   if (description !== undefined) update.description = description;
-  if (imageUrl !== undefined) update.imageUrl = imageUrl;
-  if (link !== undefined) update.link = link || null;
+  if (imageUrl    !== undefined) update.imageUrl    = imageUrl;
+  if (link        !== undefined) update.link        = link   || null;
+  if (zipUrl      !== undefined) update.zipUrl      = zipUrl || link || null;
+  if (appId       !== undefined) update.appId       = appId  || null;
   if (role !== undefined) {
     if (!ROLE_LEVEL.hasOwnProperty(role)) return res.status(400).json({ error: 'Role tidak valid.' });
     update.role = role;

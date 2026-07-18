@@ -426,7 +426,15 @@ function openItemModal(type, item) {
   // Field "Link Bypass" kalau nambah/edit item LANGSUNG di halaman Bypass — SELALU diisi manual
   const bypassOnlyRow = document.getElementById('bypassOnlyContentRow');
   bypassOnlyRow.style.display = (type === 'bypasses') ? 'block' : 'none';
-  document.getElementById('itemBypassOnlyContent').value = item?.link || '';
+  document.getElementById('itemBypassOnlyContent').value = item?.zipUrl || item?.link || '';
+  document.getElementById('itemBypassAppId').value = item?.appId || '';
+  document.getElementById('bypassAppIdStatus').innerHTML = '';
+  const prevEl = document.getElementById('bypassAppIdPreview');
+  if (prevEl) prevEl.style.display = 'none';
+  // Pre-fill preview kalau edit bypass yang sudah punya data
+  if (type === 'bypasses' && item?.appId && item?.imageUrl) {
+    showBypassPreview(item.name, item.imageUrl, item.appId);
+  }
 
   document.getElementById('itemModalBackdrop').style.display = 'flex';
 }
@@ -525,7 +533,9 @@ document.getElementById('btnSaveItem').addEventListener('click', async () => {
     body.sizeBytes = lookupData?.sizeBytes ?? null;
   } else {
     // Halaman Bypass: link SELALU manual dari admin, tidak ada urusan sama hubcap/App ID.
-    body.link = document.getElementById('itemBypassOnlyContent').value.trim() || null;
+    body.zipUrl = document.getElementById('itemBypassOnlyContent').value.trim() || null;
+    body.link   = body.zipUrl; // backward compat
+    body.appId  = document.getElementById('itemBypassAppId').value.trim() || null;
   }
 
   const alsoBypass = document.getElementById('itemAlsoBypass').checked;
@@ -680,4 +690,67 @@ async function renderHistory() {
   } catch (e) {
     table.innerHTML = `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">⚠️</span>Gagal memuat: ${escapeHtml(e.message)}</td></tr>`;
   }
+}
+// ─── BYPASS: App ID auto-search (nama + cover dari Steam, tanpa hubcap manifest) ───
+
+let _bypassLookupTimeout = null;
+
+// Dipanggil saat admin ketik di field App ID bypass (debounce 800ms)
+function onBypassAppIdInput() {
+  clearTimeout(_bypassLookupTimeout);
+  const appId = (document.getElementById('itemBypassAppId')?.value || '').trim();
+  if (/^\d{4,}$/.test(appId)) {
+    _bypassLookupTimeout = setTimeout(() => lookupBypassAppId(), 800);
+  }
+}
+
+// Auto-fill nama game + cover dari Steam menggunakan App ID — tanpa manifest/HubCap
+async function lookupBypassAppId() {
+  const appIdEl  = document.getElementById('itemBypassAppId');
+  const statusEl = document.getElementById('bypassAppIdStatus');
+  const appId    = (appIdEl?.value || '').trim();
+
+  if (!appId) { showToast('Isi App ID dulu.', 'error'); return; }
+  if (!/^\d+$/.test(appId)) { showToast('App ID harus berupa angka.', 'error'); return; }
+
+  statusEl.innerHTML = '<span style="color:var(--text-dim);">🔎 Mengambil info dari Steam...</span>';
+
+  try {
+    // Pakai endpoint appid-lookup yang sudah ada — kita abaikan bagian manifest-nya,
+    // yang kita pakai cuma name + imageUrl dari Steam Store.
+    const data = await api(`/api/admin/appid-lookup/${encodeURIComponent(appId)}`);
+
+    if (!data.name) {
+      statusEl.innerHTML = '<span style="color:var(--danger);">⚠️ App ID tidak ditemukan di Steam.</span>';
+      return;
+    }
+
+    statusEl.innerHTML = `<span style="color:var(--success);">✅ ${escapeHtml(data.name)}</span>`;
+
+    // Auto-fill nama kalau field nama masih kosong (tidak overwrite kalau sudah diisi)
+    const nameEl = document.getElementById('itemName');
+    if (nameEl && !nameEl.value.trim()) nameEl.value = data.name;
+
+    // Auto-fill cover kalau field imageUrl masih kosong
+    const imgEl = document.getElementById('itemImageUrl');
+    if (imgEl && !imgEl.value.trim() && data.imageUrl) imgEl.value = data.imageUrl;
+
+    showBypassPreview(data.name, data.imageUrl, appId, data.storeUrl);
+  } catch (e) {
+    statusEl.innerHTML = `<span style="color:var(--danger);">❌ ${escapeHtml(e.message)}</span>`;
+  }
+}
+
+function showBypassPreview(name, imageUrl, appId, storeUrl) {
+  const previewEl = document.getElementById('bypassAppIdPreview');
+  if (!previewEl) return;
+  const imgEl  = document.getElementById('bypassAppIdPreviewImg');
+  const nameEl = document.getElementById('bypassAppIdPreviewName');
+  const linkEl = document.getElementById('bypassAppIdPreviewLink');
+
+  if (imgEl)  { imgEl.src = imageUrl || ''; imgEl.style.display = imageUrl ? 'block' : 'none'; }
+  if (nameEl) nameEl.textContent = name || `App ID ${appId}`;
+  if (linkEl) { linkEl.href = storeUrl || `https://store.steampowered.com/app/${appId}/`; }
+
+  previewEl.style.display = 'flex';
 }
