@@ -1,0 +1,54 @@
+{
+  "name": "nova-launcher",
+  "version": "1.0.0",
+  "description": "Nova Launcher - desktop app + backend + admin web (project baru dari 0)",
+  "main": "main.js",
+  "engines": {
+    "node": "20.x"
+  },
+  "scripts": {
+    "start": "node server.js",
+    "server": "node server.js",
+    "app": "electron .",
+    "dev": "concurrently \"npm run server\" \"npm run app\"",
+    "build": "electron-builder --win"
+  },
+  "build": {
+    "appId": "com.31tools.app",
+    "productName": "31 Tools",
+    "win": {
+      "target": "nsis",
+      "icon": "app/icon.ico"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "app/icon.ico",
+      "uninstallerIcon": "app/icon.ico"
+    },
+    "files": [
+      "app/**/*",
+      "main.js",
+      "preload.js",
+      "package.json"
+    ],
+    "extraMetadata": {
+      "main": "main.js"
+    }
+  },
+  "dependencies": {
+    "axios": "^1.7.7",
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "jsonwebtoken": "^9.0.2",
+    "mongodb": "^6.9.0",
+    "nanoid": "^3.3.7",
+    "tweetnacl": "^1.0.3"
+  },
+  "devDependencies": {
+    "electron": "^32.0.0",
+    "electron-builder": "^24.13.3",
+    "concurrently": "^8.2.2"
+  }
+}

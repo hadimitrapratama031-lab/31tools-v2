@@ -1,0 +1,318 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Nova Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="admin.css">
+</head>
+<body>
+
+<div class="bg-canvas">
+  <div class="bg-orb bg-orb-1"></div>
+  <div class="bg-orb bg-orb-2"></div>
+  <div class="bg-orb bg-orb-3"></div>
+  <div class="bg-grid"></div>
+</div>
+
+<!-- LOGIN -->
+<div class="login-wrap" id="loginWrap">
+  <div class="login-card">
+    <div class="login-logo">A</div>
+    <h1>Nova Admin</h1>
+    <p>Masukkan password admin untuk mengakses panel.</p>
+    <input class="login-input" type="password" id="adminPassword" placeholder="Password admin" autocomplete="current-password">
+    <button class="btn btn-primary btn-block" id="btnAdminLogin">Masuk</button>
+    <div class="login-error" id="loginError"></div>
+  </div>
+</div>
+
+<!-- SHELL -->
+<div class="shell" id="shell" style="display:none;">
+  <aside class="sidebar">
+    <div class="brand">
+      <div class="brand-mark">A</div>
+      <div>
+        <div class="brand-name">Nova Admin</div>
+        <div class="brand-sub">Management Panel</div>
+      </div>
+    </div>
+    <div class="nav-section">
+      <span class="nav-label">Menu Utama</span>
+      <nav class="nav">
+        <button class="nav-item" data-page="dashboard">
+          <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg></span>
+          Dashboard
+        </button>
+        <button class="nav-item active" data-page="games">
+          <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M11 4H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2v-5M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg></span>
+          Game
+        </button>
+        <button class="nav-item" data-page="bypasses">
+          <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg></span>
+          Bypass
+        </button>
+        <button class="nav-item" data-page="users">
+          <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg></span>
+          Users
+        </button>
+        <button class="nav-item" data-page="history">
+          <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></span>
+          Histori
+        </button>
+      </nav>
+    </div>
+    <div class="sidebar-footer">
+      <div class="sidebar-user">
+        <div class="sidebar-avatar">A</div>
+        <div>
+          <div class="sidebar-user-name">Administrator</div>
+          <div class="sidebar-user-role">Super Admin</div>
+        </div>
+      </div>
+      <button class="btn-logout" id="btnAdminLogout">⏻ &nbsp;Keluar</button>
+    </div>
+  </aside>
+
+  <main class="main">
+    <div class="topbar">
+      <div>
+        <div class="topbar-breadcrumb" id="topbarBreadcrumb">Pages / Game</div>
+        <div class="topbar-title" id="pageTitle">Game</div>
+      </div>
+      <div class="topbar-right">
+        <div class="topbar-search">
+          <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" placeholder="Ketik untuk mencari...">
+        </div>
+        <button class="btn btn-primary" id="btnAddItem" style="display:none;">+ Tambah</button>
+      </div>
+    </div>
+
+    <!-- DASHBOARD PAGE -->
+    <section class="page" id="pageDashboard">
+      <div class="stat-grid">
+        <div class="stat-card">
+          <div class="stat-card-glow" style="background:#7b5cff;"></div>
+          <div class="stat-card-label">
+            <span class="stat-card-icon" style="background:rgba(123,92,255,.2);">
+              <svg fill="none" viewBox="0 0 24 24" stroke="#a78bfa" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg>
+            </span>
+            Total Users
+          </div>
+          <div class="stat-card-value" id="dashStatUsers">—</div>
+          <div class="stat-card-sub"><span class="badge-up">↑</span>&nbsp;Login hari ini:&nbsp;<b id="dashStatLogins">—</b></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-glow" style="background:#e64bb8;"></div>
+          <div class="stat-card-label">
+            <span class="stat-card-icon" style="background:rgba(230,75,184,.2);">
+              <svg fill="none" viewBox="0 0 24 24" stroke="#f0abdc" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M14.752 11.168l-3.197-2.132A1 1 0 0010 9.87v4.263a1 1 0 001.555.832l3.197-2.132a1 1 0 000-1.664z"/><path stroke-linecap="round" stroke-linejoin="round" d="M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
+            </span>
+            Total Game
+          </div>
+          <div class="stat-card-value" id="dashStatGames">—</div>
+          <div class="stat-card-sub">Bypass:&nbsp;<b id="dashStatBypasses">—</b></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-glow" style="background:#ffd76a;"></div>
+          <div class="stat-card-label">
+            <span class="stat-card-icon" style="background:rgba(255,215,106,.15);">
+              <svg fill="none" viewBox="0 0 24 24" stroke="#ffd76a" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg>
+            </span>
+            Gold Aktif
+          </div>
+          <div class="stat-card-value" id="dashStatGold">—</div>
+          <div class="stat-card-sub">Platinum:&nbsp;<b id="dashStatPlat">—</b></div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-card-glow" style="background:#3dd9f5;"></div>
+          <div class="stat-card-label">
+            <span class="stat-card-icon" style="background:rgba(61,217,245,.15);">
+              <svg fill="none" viewBox="0 0 24 24" stroke="#3dd9f5" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+            </span>
+            Total Install
+          </div>
+          <div class="stat-card-value" id="dashStatInstalls">—</div>
+          <div class="stat-card-sub">Minggu ini:&nbsp;<b id="dashStatWeek">—</b>&nbsp;login</div>
+        </div>
+      </div>
+
+      <div class="dash-grid">
+        <div style="display:flex;flex-direction:column;gap:16px;">
+          <div class="welcome-banner">
+            <div>
+              <h2>Selamat datang, Admin! 👋</h2>
+              <p>Pantau semua aktivitas dan kelola konten dari sini.</p>
+              <button class="btn btn-secondary btn-sm" onclick="loadPage('games')" style="margin-top:4px;">→ Kelola Game</button>
+            </div>
+            <div class="welcome-jellyfish">🎮</div>
+            <div class="welcome-banner-orb"></div>
+          </div>
+          <div class="card">
+            <div class="card-header">
+              <div>
+                <div class="card-title">📈 Login 7 Hari Terakhir</div>
+                <div class="card-sub" id="dashChartSub">—</div>
+              </div>
+            </div>
+            <div class="card-body"><canvas id="dashLoginChart" height="130"></canvas></div>
+          </div>
+        </div>
+
+        <div style="display:flex;flex-direction:column;gap:16px;">
+          <div class="card">
+            <div class="card-header"><div class="card-title">🎯 Distribusi Role</div></div>
+            <div class="card-body">
+              <div class="donut-wrap">
+                <div class="donut-ring">
+                  <svg viewBox="0 0 120 120">
+                    <circle cx="60" cy="60" r="48" fill="none" stroke="rgba(255,255,255,.06)" stroke-width="16"/>
+                    <circle id="donutPublic" cx="60" cy="60" r="48" fill="none" stroke="#5a587a" stroke-width="16" stroke-dasharray="0 302" stroke-linecap="round"/>
+                    <circle id="donutGold"   cx="60" cy="60" r="48" fill="none" stroke="#ffd76a" stroke-width="16" stroke-dasharray="0 302" stroke-dashoffset="0" stroke-linecap="round"/>
+                    <circle id="donutPlat"   cx="60" cy="60" r="48" fill="none" stroke="#a78bfa" stroke-width="16" stroke-dasharray="0 302" stroke-dashoffset="0" stroke-linecap="round"/>
+                  </svg>
+                  <div class="donut-center">
+                    <div class="donut-pct" id="donutPct">—</div>
+                    <div class="donut-label">Premium</div>
+                  </div>
+                </div>
+                <div class="donut-legend">
+                  <div class="donut-leg-item"><span><span class="donut-leg-dot" style="background:#5a587a;"></span>Public</span><b id="donutLegPublic">—</b></div>
+                  <div class="donut-leg-item"><span><span class="donut-leg-dot" style="background:#ffd76a;"></span>Gold</span><b id="donutLegGold">—</b></div>
+                  <div class="donut-leg-item"><span><span class="donut-leg-dot" style="background:#a78bfa;"></span>Platinum</span><b id="donutLegPlat">—</b></div>
+                </div>
+              </div>
+            </div>
+          </div>
+          <div class="card">
+            <div class="card-header"><div class="card-title">⚡ Aktivitas Terbaru</div></div>
+            <div class="card-body" style="padding-top:8px;">
+              <div class="activity-list" id="dashActivity">
+                <div class="activity-item"><span style="color:var(--text-faint);font-size:12.5px;">Memuat...</span></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="mini-stats">
+        <div class="mini-stat">
+          <div class="mini-stat-label"><span class="mini-stat-dot" style="background:#7b5cff;"></span>Paket Aktif</div>
+          <div class="mini-stat-value" id="miniActivePackage">—</div>
+        </div>
+        <div class="mini-stat">
+          <div class="mini-stat-label"><span class="mini-stat-dot" style="background:#e64bb8;"></span>Install Total</div>
+          <div class="mini-stat-value" id="miniInstallTotal">—</div>
+        </div>
+        <div class="mini-stat">
+          <div class="mini-stat-label"><span class="mini-stat-dot" style="background:#ffd76a;"></span>Total Game</div>
+          <div class="mini-stat-value" id="miniTotalGames">—</div>
+        </div>
+        <div class="mini-stat">
+          <div class="mini-stat-label"><span class="mini-stat-dot" style="background:#3dd9f5;"></span>Total Bypass</div>
+          <div class="mini-stat-value" id="miniTotalBypasses">—</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- GAMES PAGE -->
+    <section class="page active" id="pageGames">
+      <div class="table-wrap">
+        <div class="table-toolbar">
+          <div class="table-toolbar-title">🎮 Daftar Game</div>
+          <div class="table-search">
+            <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="searchGames" placeholder="Cari game...">
+          </div>
+        </div>
+        <table id="tableGames"></table>
+      </div>
+    </section>
+
+    <!-- BYPASSES PAGE -->
+    <section class="page" id="pageBypasses">
+      <div class="table-wrap">
+        <div class="table-toolbar">
+          <div class="table-toolbar-title">🛡️ Daftar Bypass</div>
+          <div class="table-search">
+            <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="searchBypasses" placeholder="Cari bypass...">
+          </div>
+        </div>
+        <table id="tableBypasses"></table>
+      </div>
+    </section>
+
+    <!-- USERS PAGE -->
+    <section class="page" id="pageUsers">
+      <div class="table-wrap">
+        <div class="table-toolbar">
+          <div class="table-toolbar-title">👤 Manajemen Users</div>
+          <div class="table-search">
+            <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="searchUsers" placeholder="Cari user...">
+          </div>
+        </div>
+        <table id="tableUsers"></table>
+      </div>
+    </section>
+
+    <!-- HISTORY PAGE -->
+    <section class="page" id="pageHistory">
+      <div class="table-wrap">
+        <div class="table-toolbar">
+          <div class="table-toolbar-title">📜 Histori Aktivitas</div>
+        </div>
+        <table id="tableHistory"></table>
+      </div>
+    </section>
+  </main>
+</div>
+
+<!-- MODAL -->
+<div class="modal-backdrop" id="itemModalBackdrop" style="display:none;">
+  <div class="modal">
+    <div class="modal-header">
+      <div class="modal-title" id="itemModalTitle">Tambah Game</div>
+      <button class="modal-close" id="btnModalClose">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Nama</label>
+        <input class="form-input" type="text" id="itemName" placeholder="Nama game atau bypass">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Deskripsi <span style="color:var(--text-faint);font-weight:400;">(opsional)</span></label>
+        <textarea class="form-input" id="itemDescription" rows="3" placeholder="Deskripsi singkat..."></textarea>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Role Minimum</label>
+        <select class="form-input" id="itemRole" style="cursor:pointer;">
+          <option value="public">🌐 Public</option>
+          <option value="gold">🥇 Gold</option>
+          <option value="platinum">💎 Platinum</option>
+        </select>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Cover Art</label>
+        <div class="cover-row">
+          <input class="form-input" type="text" id="itemImageUrl" placeholder="https://..." style="margin:0;">
+          <button class="btn btn-secondary" id="btnSearchCover" style="flex-shrink:0;">🔍 Cari</button>
+        </div>
+        <div class="cover-results" id="coverResults"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="btnCancelItem">Batal</button>
+      <button class="btn btn-primary" id="btnSaveItem">Simpan</button>
+    </div>
+  </div>
+</div>
+
+<div class="toast-container" id="toastContainer"></div>
+<script src="admin.js"></script>
+</body>
+</html>
