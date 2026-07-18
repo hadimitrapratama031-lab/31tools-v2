@@ -548,14 +548,17 @@ app.get('/api/bypasses/:id/download', requireUser, async (req, res) => {
     }
 
     const url = bypass.zipUrl || bypass.link || null;
-    if (!url) {
-      return res.status(404).json({ error: 'File bypass belum diatur admin. Hubungi admin.' });
+    const appId = bypass.appId || bypass.steamAppId || null;
+
+    // Bypass valid kalau: punya zipUrl/link ATAU punya appId (→ HubCap)
+    if (!url && !appId) {
+      return res.status(404).json({ error: 'Bypass ini belum diatur admin. Isi App ID atau Link ZIP di admin panel.' });
     }
 
     res.json({
       streamPath: `/api/bypasses/${req.params.id}/stream`,
-      appId:      bypass.appId      || bypass.steamAppId || null,
-      steamAppId: bypass.steamAppId || bypass.appId      || null,
+      appId:      appId,
+      steamAppId: appId,
       name:       bypass.name
     });
   } catch (e) {
@@ -583,14 +586,19 @@ app.get('/api/bypasses/:id/stream', async (req, res) => {
     if (myLevel < bypassLevel) return res.status(403).json({ error: `Bypass ini membutuhkan paket ${bypass.role}.` });
 
     const rawUrl = bypass.zipUrl || bypass.link || null;
-    if (!rawUrl) return res.status(404).json({ error: 'File bypass belum diatur admin.' });
 
-    const isHubcap = rawUrl.includes('hubcapmanifest.com') || rawUrl.includes('hubcap');
+    // ── ROUTING PRIORITY ──
+    // 1. Kalau bypass punya appId → pakai HubCap manifest (rawUrl tidak diperlukan)
+    // 2. Kalau tidak ada appId tapi ada rawUrl → proxy rawUrl langsung
+    // 3. Tidak ada keduanya → error
+    const appId = bypass.appId || bypass.steamAppId || null;
+    const isHubcap = appId && (!rawUrl || rawUrl.includes('hubcapmanifest.com') || rawUrl.includes('hubcap'));
+
     if (isHubcap) {
-      const appId = bypass.appId || bypass.steamAppId;
-      if (!appId) return res.status(400).json({ error: 'App ID bypass ini belum diisi admin.' });
       return await streamHubcapManifest(appId, res, bypass.name);
     }
+
+    if (!rawUrl) return res.status(404).json({ error: 'File bypass belum diatur admin. Isi App ID atau Link ZIP di admin panel.' });
 
     // PROXY download — stream file dari rawUrl (GitHub / link apapun) ke client
     // tanpa expose URL aslinya ke Electron app. Client hanya tahu /api/bypasses/:id/stream.

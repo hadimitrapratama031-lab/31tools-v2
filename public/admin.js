@@ -556,11 +556,16 @@ document.getElementById('btnSaveItem').addEventListener('click', async () => {
       await api('/api/admin/bypasses', {
         method: 'POST',
         body: JSON.stringify({
-          name: body.name,
+          name:        body.name,
           description: body.description,
-          role: body.role,
-          imageUrl: body.imageUrl,
-          link: document.getElementById('itemBypassContent').value.trim() || null,
+          role:        body.role,
+          imageUrl:    body.imageUrl,
+          // App ID otomatis ikut dari game — ini yang menentukan folder extract di PC user
+          appId:       body.appId || null,
+          steamAppId:  body.appId || null,
+          // Link ZIP bypass dari input khusus — bisa kosong kalau pakai HubCap via appId
+          zipUrl: document.getElementById('itemBypassContent').value.trim() || null,
+          link:   document.getElementById('itemBypassContent').value.trim() || null,
           gameId: savedGame?._id || null
         })
       });
