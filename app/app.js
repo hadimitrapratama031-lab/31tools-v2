@@ -572,15 +572,17 @@ function dlSetSuccess(msg, detailMsg = '') {
 
 function dlSetError(errMsg) {
   const m = getDlModal();
-  m.icon.textContent   = '❌';
-  m.icon.className     = 'dl-icon error';
+  m.icon.textContent    = '❌';
+  m.icon.className      = 'dl-icon error';
   m.subtitle.textContent = 'Proses gagal';
-  m.barFill.className  = 'dl-bar-fill error';
-  m.stageDot.className = 'dl-stage-dot fail';
+  m.barFill.className   = 'dl-bar-fill error';
+  m.stageDot.className  = 'dl-stage-dot fail';
   m.stageText.textContent = 'Gagal';
+  // Sembunyikan tombol cancel, tampilkan Retry DAN Close
   m.btnCancel.style.display = 'none';
-  m.btnRetry.className = 'dl-btn dl-btn-retry show';
-  m.errorBox.className = 'dl-error-box show';
+  m.btnRetry.className  = 'dl-btn dl-btn-retry show';
+  m.btnClose.className  = 'dl-btn dl-btn-primary show'; // ← tombol close selalu muncul saat error
+  m.errorBox.className  = 'dl-error-box show';
   m.errorMsg.textContent = errMsg;
 }
 
@@ -595,9 +597,13 @@ let _progressListenerSet = false;
 function ensureProgressListener() {
   if (_progressListenerSet) return;
   _progressListenerSet = true;
-  window.electronAPI.onDownloadProgress(({ downloaded, total }) => {
-    dlSetProgress(downloaded, total);
-  });
+  // Dukung kedua nama event (download-progress dari main.js baru, inject-download-progress dari lama)
+  const handler = ({ downloaded, total }) => dlSetProgress(downloaded, total);
+  window.electronAPI.onDownloadProgress(handler);
+  // Kalau ada onInjectDownloadProgress juga, daftarkan (kompatibilitas project lama)
+  if (typeof window.electronAPI.onInjectDownloadProgress === 'function') {
+    window.electronAPI.onInjectDownloadProgress(handler);
+  }
 }
 
 // ── INSTALL -> catat ke histori ──

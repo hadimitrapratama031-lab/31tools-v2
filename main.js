@@ -96,26 +96,6 @@ function createWindow() {
 }
 
 app.whenReady().then(() => {
-
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') app.quit();
-});
-
-// ── IPC: kontrol window custom title bar ──
-ipcMain.on('window-minimize', () => mainWindow?.minimize());
-ipcMain.on('window-close', () => mainWindow?.close());
-ipcMain.on('window-maximize', () => {
-  if (!mainWindow) return;
-  if (mainWindow.isMaximized()) mainWindow.unmaximize();
-  else mainWindow.maximize();
-});
-
-// ── IPC: buka link di browser default (dipakai buat login Discord) ──
-// Login Discord SENGAJA dibuka di browser luar, bukan di dalam app — Discord
-// sering nge-block OAuth yang jalan di dalam embedded webview/browser custom.
-ipcMain.on('open-external', (event, url) => {
-  shell.openExternal(url);
-});
   createWindow();
   app.on('activate', () => {
     if (BrowserWindow.getAllWindows().length === 0) createWindow();
@@ -192,17 +172,31 @@ function downloadFileWithProgress(url, destPath, onProgress, redirectCount = 0, 
   return new Promise((resolve, reject) => {
     if (redirectCount > 10) return reject(new Error('Terlalu banyak redirect'));
     const client = url.startsWith('https') ? https : http;
-    const reqHeaders = { 'User-Agent': 'NovaLauncher', ...extraHeaders };
+    // Gabungkan User-Agent default + extraHeaders (misal Authorization untuk hubcap)
+    const reqHeaders = {
+      'User-Agent': 'NovaLauncher',
+      ...extraHeaders
+    };
     const request = client.get(url, { headers: reqHeaders }, (response) => {
+      // Handle redirect
       if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
         response.resume();
         let location = response.headers.location;
         if (location.startsWith('/')) location = new URL(url).origin + location;
+        // Teruskan extraHeaders ke redirect juga (penting untuk hubcap auth)
         return resolve(downloadFileWithProgress(location, destPath, onProgress, redirectCount + 1, extraHeaders));
+      }
+      if (response.statusCode === 401) {
+        response.resume();
+        return reject(new Error('Akses ditolak server (401) — token hubcap mungkin expired. Hubungi admin.'));
+      }
+      if (response.statusCode === 403) {
+        response.resume();
+        return reject(new Error('Tidak punya izin download file ini (403). Pastikan paket kamu sesuai.'));
       }
       if (response.statusCode !== 200) {
         response.resume();
-        return reject(new Error('Download gagal, status ' + response.statusCode));
+        return reject(new Error(`Download gagal, server mengembalikan status ${response.statusCode}`));
       }
       const total = parseInt(response.headers['content-length'] || '0', 10);
       let downloaded = 0;
@@ -211,15 +205,28 @@ function downloadFileWithProgress(url, destPath, onProgress, redirectCount = 0, 
       response.on('data', (chunk) => {
         downloaded += chunk.length;
         if (onProgress) onProgress(downloaded, total);
+        // Kirim ke renderer — pakai KEDUA nama event agar kompatibel
         mainWindow?.webContents.send('download-progress', { downloaded, total });
+        mainWindow?.webContents.send('inject-download-progress', { downloaded, total });
       });
       response.pipe(file);
-      file.on('finish', () => { activeDownloadRequest = null; activeDownloadFile = null; file.close(resolve); });
-      file.on('error', (err) => { activeDownloadRequest = null; activeDownloadFile = null; file.close(); fs.unlink(destPath, () => {}); reject(err); });
+      file.on('finish', () => {
+        activeDownloadRequest = null;
+        activeDownloadFile = null;
+        file.close(resolve);
+      });
+      file.on('error', (err) => {
+        activeDownloadRequest = null;
+        activeDownloadFile = null;
+        file.close();
+        fs.unlink(destPath, () => {});
+        reject(err);
+      });
     });
     activeDownloadRequest = request;
     request.on('error', (err) => {
-      activeDownloadRequest = null; activeDownloadFile = null;
+      activeDownloadRequest = null;
+      activeDownloadFile = null;
       fs.unlink(destPath, () => {});
       reject(err.message === 'CANCELLED' ? new Error('CANCELLED') : err);
     });
@@ -239,7 +246,7 @@ ipcMain.handle('inject-game', async (event, { steamPath, zipUrl, extraHeaders })
   const tempZip = path.join(app.getPath('temp'), 'inject_' + Date.now() + '.zip');
   const tempDir = path.join(app.getPath('temp'), 'inject_extract_' + Date.now());
   try {
-    // Download
+    // Download — teruskan extraHeaders (termasuk Authorization untuk hubcap)
     await downloadFileWithProgress(zipUrl, tempZip, null, 0, extraHeaders || {});
 
     // Validasi ZIP signature
