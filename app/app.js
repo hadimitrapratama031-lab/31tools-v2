@@ -671,7 +671,14 @@ async function handleInstall(itemType, itemId, itemName) {
     if (isGame) {
       const steamPath = await window.electronAPI.getSteamPath();
       if (!steamPath) throw new Error('Steam tidak ditemukan di PC ini. Pastikan Steam sudah terinstall dan pernah dijalankan.');
-      dlSetStage('Mengunduh file...', 1);
+
+      dlSetStage('Mengunduh & meng-inject file...', 1);
+      result = await window.electronAPI.injectGame({
+        steamPath,
+        zipUrl,
+        extraHeaders: {}
+      });
+
       if (result.cancelled) { dlModalHide(); return; }
       if (!result.success) throw new Error(result.error || 'Inject game gagal tanpa keterangan.');
 

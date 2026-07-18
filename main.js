@@ -179,6 +179,7 @@ function downloadFileWithProgress(url, destPath, onProgress, redirectCount = 0, 
     // alih-alih diam-diam download dari host sembarangan.
     const ALLOWED_DOWNLOAD_HOSTS = [
       '31tools-v2-production.up.railway.app', // domain server sendiri — WAJIB, semua stream lewat sini
+      'hubcapmanifest.com',                   // HubCap manifest API — untuk game inject
       'github.com',
       'raw.githubusercontent.com',
       'objects.githubusercontent.com',
@@ -186,7 +187,9 @@ function downloadFileWithProgress(url, destPath, onProgress, redirectCount = 0, 
       'cdn.discordapp.com',
       'media.discordapp.net',
       'drive.google.com',
+      'docs.google.com',
       'storage.googleapis.com',
+      'generator.ryuu.lol',
     ];
     try {
       const parsedUrl = new URL(url);
@@ -211,12 +214,24 @@ function downloadFileWithProgress(url, destPath, onProgress, redirectCount = 0, 
         response.resume();
         let location = response.headers.location;
         if (location.startsWith('/')) location = new URL(url).origin + location;
-        // Teruskan extraHeaders ke redirect juga (penting untuk hubcap auth)
-        return resolve(downloadFileWithProgress(location, destPath, onProgress, redirectCount + 1, extraHeaders));
+        // Teruskan extraHeaders HANYA jika redirect ke domain yang sama
+        // (jangan kirim Bearer token server ke GitHub/GDrive/dll)
+        let redirectHeaders = {};
+        try {
+          const origHost = new URL(url).hostname;
+          const newHost  = new URL(location.startsWith('/') ? url : location).hostname;
+          if (origHost === newHost) redirectHeaders = extraHeaders; // domain sama, aman diteruskan
+        } catch(e2) {}
+        return resolve(downloadFileWithProgress(location, destPath, onProgress, redirectCount + 1, redirectHeaders));
       }
       if (response.statusCode === 401) {
         response.resume();
-        return reject(new Error('Akses ditolak server (401) — token hubcap mungkin expired. Hubungi admin.'));
+        let errMsg401 = 'Sesi login kamu expired. Silakan logout dan login ulang.';
+        try {
+          const host = new URL(url).hostname;
+          if (host.includes('hubcap')) errMsg401 = 'API Key HubCap tidak valid atau expired. Hubungi admin.';
+        } catch(e2) {}
+        return reject(new Error(errMsg401));
       }
       if (response.statusCode === 403) {
         response.resume();
