@@ -688,46 +688,44 @@ async function handleInstall(itemType, itemId, itemName) {
       );
 
     } else {
-      // ── BYPASS INSTALL — pola sama dengan referensi main.js ──
-      // 1. Ambil appId dari server
-      // 2. Cari folderPath via find-game-folder-by-appid (bukan di dalam install-bypass)
-      // 3. Kirim folderPath + driveUrl (stream URL) ke install-bypass
+      // ── BYPASS INSTALL ──
+      // 1. Cari folder game di steamapps via appId (target extract)
+      // 2. Download file dari link manual yang admin set (streamPath — bukan HubCap)
+      // 3. Extract ke folder game tersebut
 
       const appId = data.steamAppId || data.appId;
-      if (!appId) throw new Error('App ID tidak ditemukan pada bypass ini. Hubungi admin untuk mengisi App ID di data bypass.');
+      if (!appId) throw new Error('App ID belum diisi admin pada bypass ini. Hubungi admin.');
 
-      dlSetStage(`Mendeteksi Steam...`, 1);
+      dlSetStage('Mendeteksi Steam...', 1);
       const steamPath = await window.electronAPI.getSteamPath();
-      if (!steamPath) throw new Error('Steam tidak ditemukan di PC ini. Pastikan Steam sudah terinstall.');
+      if (!steamPath) throw new Error('Steam tidak ditemukan. Pastikan Steam sudah terinstall.');
 
       dlSetStage(`Mencari folder game (App ID: ${appId})...`, 2);
       const folderResult = await window.electronAPI.findGameFolderByAppId({ steamPath, appId: String(appId) });
-      if (!folderResult.found) throw new Error(folderResult.error || `Game dengan App ID ${appId} belum terinstall di Steam. Install gamenya dulu.`);
+      if (!folderResult.found) throw new Error(folderResult.error || `Game dengan App ID ${appId} belum terinstall di Steam. Install gamenya dulu lalu coba lagi.`);
 
-      dlSetStage('Mengunduh bypass...', 2);
-      // driveUrl = URL stream dari server sendiri (proxy — bukan URL HubCap langsung)
-      const token = localStorage.getItem('token') || '';
-      const driveUrl = `${SERVER_URL}${data.streamPath}?token=${encodeURIComponent(token)}`;
+      dlSetStage('Mengunduh bypass dari server...', 2);
+      // driveUrl = link manual admin yang di-proxy lewat server (bukan HubCap)
+      const bypassUrl = `${SERVER_URL}${data.streamPath}?token=${encodeURIComponent(localStorage.getItem('token') || '')}`;
 
       result = await window.electronAPI.installBypass({
-        folderPath: folderResult.folderPath,
-        driveUrl,
-        userId: currentUser?.discordId || currentUser?.userId || '',
-        deviceId: getOrCreateDeviceId(),
-        gameId: itemId,
-        gameName: itemName,
-        steamAppId: String(appId),
+        folderPath:  folderResult.folderPath,
+        driveUrl:    bypassUrl,
+        userId:      currentUser?.discordId || currentUser?.userId || '',
+        deviceId:    getOrCreateDeviceId(),
+        gameId:      itemId,
+        gameName:    itemName,
+        steamAppId:  String(appId),
         extraHeaders: {}
       });
       if (result.cancelled) { dlModalHide(); return; }
-      if (!result.success) throw new Error(result.error || 'Install bypass gagal tanpa keterangan.');
+      if (!result.success)  throw new Error(result.error || 'Install bypass gagal tanpa keterangan.');
 
       dlSetStage('Menyimpan ke histori...', 3);
       await api('/api/history', {
         method: 'POST',
         body: JSON.stringify({
-          itemType,
-          itemId,
+          itemType, itemId,
           extractedFiles: result.extractedFiles || [],
           folderPath: result.folderPath || null
         })
@@ -735,7 +733,10 @@ async function handleInstall(itemType, itemId, itemName) {
 
       dlSetSuccess(
         'Bypass berhasil dipasang!',
-        `📁 Diekstrak ke:\n${result.folderPath || '—'}\n\n${result.extractedFiles?.length || 0} file berhasil dipasang.`
+        `📁 Diekstrak ke:
+${result.folderPath || '—'}
+
+${result.extractedFiles?.length || 0} file berhasil dipasang.`
       );
     }
 

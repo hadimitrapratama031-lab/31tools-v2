@@ -552,10 +552,13 @@ app.get('/api/bypasses/:id/download', requireUser, async (req, res) => {
       return res.status(404).json({ error: 'File bypass belum diatur admin. Hubungi admin.' });
     }
 
+    // Kembalikan appId ke client — dipakai untuk findGameFolderByAppId
+    // (cari folder game di steamapps sebagai target extract).
+    // Stream tetap dari link manual admin (bukan HubCap).
     res.json({
       streamPath: `/api/bypasses/${req.params.id}/stream`,
+      steamAppId: bypass.steamAppId || bypass.appId || null,
       appId:      bypass.appId      || bypass.steamAppId || null,
-      steamAppId: bypass.steamAppId || bypass.appId      || null,
       name:       bypass.name
     });
   } catch (e) {
@@ -581,80 +584,15 @@ app.get('/api/bypasses/:id/stream', async (req, res) => {
     const bypassLevel = ROLE_LEVEL[bypass.role] ?? 0;
     if (myLevel < bypassLevel) return res.status(403).json({ error: `Bypass ini membutuhkan paket ${bypass.role}.` });
 
-    const appId  = bypass.appId || bypass.steamAppId || null;
     const rawUrl = bypass.zipUrl || bypass.link || null;
 
     // ── ROUTING ──
-    // Priority 1: punya appId → HubCap (sama persis pola game inject di referensi)
-    // Priority 2: punya rawUrl → proxy langsung
-    // Priority 3: tidak ada keduanya → error jelas
-
-    if (appId) {
-      // HubCap manifest — pola sama persis dengan referensi server.js (inject-game)
-      const url = `${HUBCAP_BASE_URL}/api/v1/manifest/${appId}`;
-      let hubcapRes = null;
-      let lastError = null;
-
-      for (let attempt = 0; attempt < Math.max(HUBCAP_API_KEYS.length, 1); attempt++) {
-        const apiKey = getHubcapApiKey();
-        if (!apiKey) break;
-        try {
-          hubcapRes = await axios.get(url, {
-            headers: { 'Authorization': `Bearer ${apiKey}` },
-            responseType: 'stream',
-            timeout: 0,
-            maxRedirects: 10
-          });
-          break;
-        } catch (e) {
-          lastError = e;
-          console.error(`[BYPASS STREAM] HubCap attempt ${attempt + 1} gagal (appId=${appId}):`, e.response?.status, e.message);
-          if (e.response) {
-            const s = e.response.status;
-            if (s === 429 || s === 401 || s === 403) {
-              markHubcapKeyLimited();
-              if (attempt < HUBCAP_API_KEYS.length - 1) continue;
-            }
-          }
-          break;
-        }
-      }
-
-      if (!hubcapRes) {
-        const s = lastError?.response?.status;
-        if (s === 429) return res.status(429).json({ error: 'HubCap rate limit, coba lagi sebentar.' });
-        if (s === 401 || s === 403) return res.status(401).json({ error: 'HubCap API Key tidak valid. Hubungi admin.' });
-        if (s === 404) return res.status(404).json({ error: `Manifest App ID ${appId} tidak ditemukan di HubCap.` });
-        return res.status(502).json({ error: 'Gagal terhubung ke HubCap: ' + (lastError?.message || 'unknown') });
-      }
-
-      // Cek content-type sebelum pipe — kalau HubCap kirim JSON error (bukan ZIP), tangkap dulu
-      const ct = hubcapRes.headers['content-type'] || '';
-      if (ct.includes('application/json') || ct.includes('text/')) {
-        // Kumpulkan body dulu untuk baca pesan error
-        let body = '';
-        hubcapRes.data.on('data', chunk => { body += chunk.toString(); });
-        hubcapRes.data.on('end', () => {
-          console.error('[BYPASS STREAM] HubCap kirim non-ZIP response:', body.slice(0, 200));
-          if (!res.headersSent) res.status(502).json({ error: 'HubCap tidak mengembalikan file ZIP. Mungkin App ID salah atau belum tersedia.' });
-        });
-        return;
-      }
-
-      const safeName = (bypass.name || 'bypass').replace(/[^a-z0-9_\-]/gi, '_');
-      res.setHeader('Content-Type', 'application/zip');
-      res.setHeader('Content-Disposition', `attachment; filename="${safeName}.zip"`);
-      if (hubcapRes.headers['content-length']) res.setHeader('Content-Length', hubcapRes.headers['content-length']);
-      hubcapRes.data.pipe(res);
-      hubcapRes.data.on('error', (streamErr) => {
-        console.error('[BYPASS STREAM] Stream error dari HubCap:', streamErr.message);
-        if (!res.headersSent) res.status(502).json({ error: 'Stream HubCap terputus: ' + streamErr.message });
-      });
-      return;
-    }
+    // Bypass SELALU pakai link (zipUrl/link) yang admin set secara manual —
+    // TIDAK menggunakan HubCap sama sekali. HubCap hanya untuk game (inject Steam).
+    // Bypass adalah file patch/crack yang link-nya diset admin, bukan manifest Steam.
 
     if (!rawUrl) {
-      return res.status(404).json({ error: 'Bypass belum dikonfigurasi. Hubungi admin untuk mengisi App ID atau Link ZIP.' });
+      return res.status(404).json({ error: 'Link bypass belum diatur admin. Hubungi admin untuk mengisi link file bypass.' });
     }
 
     // Proxy rawUrl (GitHub / link lain)
