@@ -295,21 +295,34 @@ function roleBadgeHtml(role, inline = false) {
   return `<span class="${cls} ${role}">${icon} ${escapeHtml(role)}</span>`;
 }
 
+// ── Cek apakah role user cukup buat akses item ini ──
+const CLIENT_ROLE_LEVEL = { public: 0, gold: 1, platinum: 2, admin: 3 };
+function hasAccess(itemRole) {
+  const myLevel   = CLIENT_ROLE_LEVEL[currentUser?.role] ?? 0;
+  const itemLevel = CLIENT_ROLE_LEVEL[itemRole] ?? 0;
+  return myLevel >= itemLevel;
+}
+
 // ── RENDER KARTU GAME ──
 function renderGameCard(item) {
   const art = item.imageUrl
     ? `background-image:url('${item.imageUrl}');background-size:cover;background-position:center;`
     : '';
+  const locked = !hasAccess(item.role);
   return `
-    <div class="game-card">
+    <div class="game-card${locked ? ' locked' : ''}">
       <div class="game-art" style="${art}">
         ${roleBadgeHtml(item.role)}
+        ${locked ? `<div class="lock-overlay">🔒</div>` : ''}
       </div>
       <div class="game-info">
         <h4 title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</h4>
         <div class="game-meta">
           ${roleBadgeHtml(item.role, true)}
-          <button class="dl-btn" data-id="${item._id}" data-name="${escapeHtml(item.name)}">Download</button>
+          ${locked
+            ? `<button class="dl-btn locked-btn" disabled title="Butuh paket ${escapeHtml(item.role)}">🔒 Upgrade ke ${escapeHtml(item.role)}</button>`
+            : `<button class="dl-btn" data-id="${item._id}" data-name="${escapeHtml(item.name)}">Download</button>`
+          }
         </div>
       </div>
     </div>`;
@@ -319,8 +332,8 @@ function renderGrid(container, games) {
   if (!container) return;
   container.innerHTML = games.length
     ? games.map(renderGameCard).join('')
-    : `<div style="color:#8577a3;font-size:13px;padding:10px 4px;">Belum ada game yang tersedia untuk paket kamu.</div>`;
-  container.querySelectorAll('.dl-btn').forEach(btn => {
+    : `<div style="color:#8577a3;font-size:13px;padding:10px 4px;">Belum ada game.</div>`;
+  container.querySelectorAll('.dl-btn:not(.locked-btn)').forEach(btn => {
     btn.addEventListener('click', () => handleInstall('game', btn.dataset.id, btn.dataset.name));
   });
 }
@@ -330,18 +343,23 @@ function renderBypassCard(item) {
   const art = item.imageUrl
     ? `background-image:url('${item.imageUrl}');background-size:cover;background-position:center;`
     : '';
+  const locked = !hasAccess(item.role);
   return `
-    <div class="game-card">
+    <div class="game-card${locked ? ' locked' : ''}">
       <div class="game-art" style="${art}">
         ${roleBadgeHtml(item.role)}
+        ${locked ? `<div class="lock-overlay">🔒</div>` : ''}
       </div>
       <div class="game-info">
         <h4 title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</h4>
         <div class="game-meta">
           ${roleBadgeHtml(item.role, true)}
-          <button class="dl-btn" data-id="${item._id}" data-name="${escapeHtml(item.name)}" data-link="${escapeHtml(item.link || '')}">
-            ${item.link ? 'Buka Link' : 'Pakai'}
-          </button>
+          ${locked
+            ? `<button class="dl-btn locked-btn" disabled title="Butuh paket ${escapeHtml(item.role)}">🔒 Upgrade ke ${escapeHtml(item.role)}</button>`
+            : `<button class="dl-btn" data-id="${item._id}" data-name="${escapeHtml(item.name)}" data-link="${escapeHtml(item.link || '')}">
+                 ${item.link ? 'Buka Link' : 'Pakai'}
+               </button>`
+          }
         </div>
       </div>
     </div>`;
@@ -351,8 +369,8 @@ function renderBypassGrid(container, bypasses) {
   if (!container) return;
   container.innerHTML = bypasses.length
     ? bypasses.map(renderBypassCard).join('')
-    : `<div style="color:#8577a3;font-size:13px;padding:10px 4px;">Belum ada bypass yang tersedia untuk paket kamu.</div>`;
-  container.querySelectorAll('.dl-btn').forEach(btn => {
+    : `<div style="color:#8577a3;font-size:13px;padding:10px 4px;">Belum ada bypass.</div>`;
+  container.querySelectorAll('.dl-btn:not(.locked-btn)').forEach(btn => {
     btn.addEventListener('click', () => {
       handleInstall('bypass', btn.dataset.id, btn.dataset.name);
       const link = btn.dataset.link;

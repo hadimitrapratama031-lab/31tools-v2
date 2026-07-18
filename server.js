@@ -438,10 +438,13 @@ function renderInfoPage({ emoji, title, message, buttonText, buttonHref, seconda
 // ══════════════════════════════════════════════════════════════════════════
 app.get('/api/games', requireUser, async (req, res) => {
   try {
-    const myLevel = ROLE_LEVEL[req.user.role] ?? 0;
-    const allowedRoles = Object.keys(ROLE_LEVEL).filter(r => ROLE_LEVEL[r] <= myLevel);
+    // SEBELUMNYA: filter hanya game yang role-nya <= role user, jadi game
+    // yang butuh paket lebih tinggi TIDAK KELIHATAN SAMA SEKALI.
+    // SEKARANG: semua game tetap ditampilkan (biar user tahu game itu ada &
+    // termotivasi upgrade), tapi akses/download tetap dicek & diblokir server
+    // di /api/games/:id/download dan /api/games/:id/stream seperti biasa.
     const games = await db.collection('games')
-      .find({ role: { $in: allowedRoles } })
+      .find({})
       .sort({ createdAt: -1 })
       .toArray();
     res.json(games);
@@ -591,10 +594,10 @@ app.get('/api/bypasses/:id/stream', async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════
 app.get('/api/bypasses', requireUser, async (req, res) => {
   try {
-    const myLevel = ROLE_LEVEL[req.user.role] ?? 0;
-    const allowedRoles = Object.keys(ROLE_LEVEL).filter(r => ROLE_LEVEL[r] <= myLevel);
+    // Sama seperti /api/games — semua bypass tetap ditampilkan, akses tetap
+    // dicek & diblokir server di /api/bypasses/:id/download & /stream.
     const bypasses = await db.collection('bypasses')
-      .find({ role: { $in: allowedRoles } })
+      .find({})
       .sort({ createdAt: -1 })
       .toArray();
     res.json(bypasses);
@@ -678,6 +681,14 @@ app.post('/api/admin/login', (req, res) => {
   }
   const token = jwt.sign({ role: 'admin' }, JWT_SECRET, { expiresIn: '7d' });
   res.json({ token });
+});
+
+// ── Verifikasi token admin — dipanggil admin.js pas halaman di-refresh, supaya
+// tahu pasti token di localStorage MASIH valid sebelum nampilin dashboard.
+// Tanpa ini, token yang sudah expired/invalid tetap nampilin shell tapi semua
+// datanya gagal load (401 di semua request) — kelihatan kayak "stuck".
+app.get('/api/admin/verify', requireAdmin, (req, res) => {
+  res.json({ success: true });
 });
 
 // ══════════════════════════════════════════════════════════════════════════

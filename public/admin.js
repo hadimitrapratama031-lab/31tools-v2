@@ -72,7 +72,32 @@ function showShell() {
   loadPage('games');
 }
 
-if (localStorage.getItem('adminToken')) showShell();
+// ── Cek sesi saat halaman di-refresh/dibuka ──
+// SEBELUMNYA: langsung showShell() kalau ada token di localStorage, TANPA verifikasi
+// ke server dulu. Kalau tokennya sudah expired/invalid, shell tetap muncul tapi SEMUA
+// data gagal load (401 di setiap request) — kelihatan "stuck", dan satu-satunya jalan
+// keluar cuma logout manual lalu login lagi.
+// SEKARANG: verifikasi dulu ke /api/admin/verify. Valid → showShell(). Tidak valid →
+// hapus token & tetap di layar login (bersih, tidak nyangkut setengah-jalan).
+async function restoreSession() {
+  const token = localStorage.getItem('adminToken');
+  if (!token) return; // tidak ada token, tetap di layar login (default)
+
+  const loginWrap = document.getElementById('loginWrap');
+  const errEl = document.getElementById('loginError');
+  loginWrap.style.opacity = '0.5'; // kasih tanda lagi mengecek sesi
+
+  try {
+    await api('/api/admin/verify');
+    loginWrap.style.opacity = '';
+    showShell();
+  } catch (e) {
+    localStorage.removeItem('adminToken');
+    loginWrap.style.opacity = '';
+    if (errEl) errEl.textContent = 'Sesi kamu berakhir, silakan login lagi.';
+  }
+}
+restoreSession();
 
 // ─── NAVIGASI ───
 const PAGE_META = {
