@@ -58,6 +58,7 @@ function grabElements() {
   els.profileRole  = document.querySelector('.sidebar .profile .role');
   els.navLinks     = Array.from(document.querySelectorAll('nav.menu a[data-page]'));
   els.gamesNavLink = document.querySelector('nav.menu a[data-page="games"]');
+  els.bypassesNavLink = document.querySelector('nav.menu a[data-page="bypasses"]');
   els.logoutLink   = document.getElementById('navLogout');
   els.topbarH2     = document.querySelector('.topbar h2');
   els.searchInput  = document.querySelector('.search input');
@@ -65,8 +66,10 @@ function grabElements() {
   els.dashSaleGrid   = document.getElementById('dashSaleGrid');
   els.dashNewGrid    = document.getElementById('dashNewGrid');
   els.gamesOnlyGrid  = document.getElementById('gamesOnlyGrid');
+  els.bypassesGrid   = document.getElementById('bypassesGrid');
   els.historiListPage = document.getElementById('historiListPage');
   els.gamesRoleFilter = document.getElementById('gamesRoleFilter');
+  els.bypassesRoleFilter = document.getElementById('bypassesRoleFilter');
 }
 
 // ── FILTER ROLE DI HALAMAN GAMES ──
@@ -91,11 +94,33 @@ function wireGamesRoleFilter() {
   });
 }
 
+// ── FILTER ROLE DI HALAMAN BYPASS ──
+let activeBypassesRoleFilter = 'all';
+
+function applyBypassesRoleFilter() {
+  const filtered = activeBypassesRoleFilter === 'all'
+    ? allBypasses
+    : allBypasses.filter(b => b.role === activeBypassesRoleFilter);
+  renderBypassGrid(els.bypassesGrid, filtered);
+}
+
+function wireBypassesRoleFilter() {
+  if (!els.bypassesRoleFilter) return;
+  els.bypassesRoleFilter.addEventListener('click', (e) => {
+    const btn = e.target.closest('.role-filter-tab');
+    if (!btn) return;
+    els.bypassesRoleFilter.querySelectorAll('.role-filter-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeBypassesRoleFilter = btn.dataset.role;
+    applyBypassesRoleFilter();
+  });
+}
+
 // ── NAVIGASI ANTAR HALAMAN ──
 const PAGE_IDS = {
   dashboard: 'pageDashboard',
   games: 'pageGames',
-  favorites: 'pageFavorites',
+  bypasses: 'pageBypasses',
   store: 'pageStore',
   histori: 'pageHistori',
   setting: 'pageSetting'
@@ -112,6 +137,7 @@ function showPage(pageName) {
   els.navLinks.forEach(a => a.classList.toggle('active', a.dataset.page === pageName));
 
   if (pageName === 'games') applyGamesRoleFilter();
+  if (pageName === 'bypasses') applyBypassesRoleFilter();
   if (pageName === 'histori') { loadHistori(); }
 }
 
@@ -222,6 +248,7 @@ async function tryAutoLogin() {
 // ── MASUK APP ──
 let currentUser = null;
 let allGames = [];
+let allBypasses = [];
 
 function enterApp(user) {
   currentUser = user;
@@ -234,6 +261,7 @@ function enterApp(user) {
 
   showPage('dashboard'); // halaman utama selalu yang pertama muncul
   loadGames();
+  loadBypasses();
 }
 
 const ROLE_BADGE_ICON = { public: '🌐', gold: '🥇', platinum: '💎' };
@@ -273,6 +301,65 @@ function renderGrid(container, games) {
   });
 }
 
+// ── RENDER KARTU BYPASS ──
+function renderBypassCard(item) {
+  const art = item.imageUrl
+    ? `background-image:url('${item.imageUrl}');background-size:cover;background-position:center;`
+    : '';
+  return `
+    <div class="game-card">
+      <div class="game-art" style="${art}">
+        ${roleBadgeHtml(item.role)}
+      </div>
+      <div class="game-info">
+        <h4 title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</h4>
+        <div class="game-meta">
+          ${roleBadgeHtml(item.role, true)}
+          <button class="dl-btn" data-id="${item._id}" data-name="${escapeHtml(item.name)}" data-link="${escapeHtml(item.link || '')}">
+            ${item.link ? 'Buka Link' : 'Pakai'}
+          </button>
+        </div>
+      </div>
+    </div>`;
+}
+
+function renderBypassGrid(container, bypasses) {
+  if (!container) return;
+  container.innerHTML = bypasses.length
+    ? bypasses.map(renderBypassCard).join('')
+    : `<div style="color:#8577a3;font-size:13px;padding:10px 4px;">Belum ada bypass yang tersedia untuk paket kamu.</div>`;
+  container.querySelectorAll('.dl-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      handleInstall('bypass', btn.dataset.id, btn.dataset.name);
+      const link = btn.dataset.link;
+      if (link) {
+        const openExternal = window.electronAPI?.openExternal || (url => window.open(url, '_blank'));
+        openExternal(link);
+      }
+    });
+  });
+}
+
+async function loadBypasses() {
+  try {
+    const bypasses = await api('/api/bypasses'); // list bypass 100% ikut role & isi database server
+    allBypasses = bypasses;
+
+    if (els.bypassesNavLink) {
+      const badge = els.bypassesNavLink.querySelector('.badge');
+      if (badge) badge.textContent = bypasses.length;
+    }
+
+    // Kalau lagi buka halaman Bypass, refresh juga isinya (tetap ikut filter role yang lagi aktif)
+    if (document.getElementById(PAGE_IDS.bypasses)?.style.display !== 'none') {
+      applyBypassesRoleFilter();
+    }
+  } catch (e) {
+    const msg = `<div style="color:#ff6b81;font-size:13px;">Gagal memuat bypass: ${escapeHtml(e.message)}</div>`;
+    if (els.bypassesGrid) els.bypassesGrid.innerHTML = msg;
+  }
+}
+
 async function loadGames() {
   try {
     const games = await api('/api/games'); // list game 100% ikut role & isi database server
@@ -306,6 +393,11 @@ function wireSearch() {
     if (document.getElementById(PAGE_IDS.games)?.style.display !== 'none') {
       const roleFiltered = activeGamesRoleFilter === 'all' ? filtered : filtered.filter(g => g.role === activeGamesRoleFilter);
       renderGrid(els.gamesOnlyGrid, roleFiltered);
+    }
+    if (document.getElementById(PAGE_IDS.bypasses)?.style.display !== 'none') {
+      const filteredBypasses = q ? allBypasses.filter(b => b.name.toLowerCase().includes(q)) : allBypasses;
+      const roleFilteredBypasses = activeBypassesRoleFilter === 'all' ? filteredBypasses : filteredBypasses.filter(b => b.role === activeBypassesRoleFilter);
+      renderBypassGrid(els.bypassesGrid, roleFilteredBypasses);
     }
   });
 }
@@ -376,6 +468,7 @@ document.addEventListener('DOMContentLoaded', () => {
   wireNavigation();
   wireSearch();
   wireGamesRoleFilter();
+  wireBypassesRoleFilter();
   loadConfig();
   tryAutoLogin();
 });

@@ -330,6 +330,7 @@ function renderTableRows(type, rows) {
           <div style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap;">
             ${item.sizeLabel ? `<span class="chip">💾 ${escapeHtml(item.sizeLabel)}</span>` : ''}
             ${item.appId ? `<span class="chip">🆔 ${escapeHtml(item.appId)}</span>` : ''}
+            ${item.link ? `<span class="chip chip-ok">🔗 Ada link</span>` : ''}
           </div>
         </td>
         <td>${roleTagHtml(item.role)}</td>
@@ -367,7 +368,7 @@ function openItemModal(type, item) {
   document.getElementById('itemModalTitle').textContent = item ? `Edit ${label}` : `Tambah ${label}`;
   document.getElementById('itemModalSubtitle').textContent = type === 'games'
     ? 'Cari lewat App ID Steam, atau isi manual di bawah.'
-    : 'Isi manual, atau pakai App ID Steam buat bantu auto-isi nama & cover.';
+    : 'Isi manual — link bypass selalu dari kamu sendiri, hubcapmanifest cuma dipakai di halaman Game.';
 
   document.getElementById('itemName').value = item?.name || '';
   document.getElementById('itemDescription').value = item?.description || '';
@@ -375,9 +376,17 @@ function openItemModal(type, item) {
   document.getElementById('itemImageUrl').value = item?.imageUrl || '';
   document.getElementById('itemSizeLabel').value = item?.sizeLabel || '';
   document.getElementById('itemAppId').value = item?.appId || '';
+  document.getElementById('itemManifestUrl').value = item?.manifestUrl || '';
   document.getElementById('coverResults').innerHTML = '';
   document.getElementById('appIdStatus').innerHTML = '';
   document.getElementById('appIdPreview').style.display = 'none';
+
+  // hubcapmanifest (App ID search + link manifest) CUMA relevan di halaman Game — di Bypass, link selalu manual.
+  const appIdSection = document.getElementById('appIdSection');
+  appIdSection.style.display = (type === 'games') ? 'block' : 'none';
+  const manifestUrlRow = document.getElementById('manifestUrlRow');
+  manifestUrlRow.style.display = (type === 'games' && item?.manifestUrl) ? 'block' : 'none';
+  document.getElementById('btnOpenManifestUrl').href = item?.manifestUrl || '#';
 
   // Checkbox "sekalian jadi Bypass" cuma relevan pas nambah GAME BARU (bukan edit, bukan pas di halaman Bypass)
   const alsoBypassRow = document.getElementById('alsoBypassRow');
@@ -389,10 +398,10 @@ function openItemModal(type, item) {
   bypassContentRow.style.display = 'none';
   document.getElementById('itemBypassContent').value = '';
 
-  // Field "Link/Catatan Bypass" kalau nambah/edit item LANGSUNG di halaman Bypass
+  // Field "Link Bypass" kalau nambah/edit item LANGSUNG di halaman Bypass — SELALU diisi manual
   const bypassOnlyRow = document.getElementById('bypassOnlyContentRow');
   bypassOnlyRow.style.display = (type === 'bypasses') ? 'block' : 'none';
-  document.getElementById('itemBypassOnlyContent').value = item?.content || '';
+  document.getElementById('itemBypassOnlyContent').value = item?.link || '';
 
   document.getElementById('itemModalBackdrop').style.display = 'flex';
 }
@@ -412,7 +421,7 @@ document.getElementById('itemModalBackdrop').addEventListener('click', e => {
   if (e.target === document.getElementById('itemModalBackdrop')) closeModal();
 });
 
-// ─── APP ID LOOKUP (hubcapmanifest + Steam) ───
+// ─── APP ID LOOKUP (hubcapmanifest + Steam) — HANYA dipakai di halaman Game ───
 document.getElementById('btnLookupAppId').addEventListener('click', doAppIdLookup);
 document.getElementById('itemAppId').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doAppIdLookup(); } });
 
@@ -420,12 +429,14 @@ async function doAppIdLookup() {
   const appId = document.getElementById('itemAppId').value.trim();
   const statusEl = document.getElementById('appIdStatus');
   const previewEl = document.getElementById('appIdPreview');
+  const manifestUrlRow = document.getElementById('manifestUrlRow');
   if (!appId) { showToast('Isi App ID dulu.', 'error'); return; }
 
   const btn = document.getElementById('btnLookupAppId');
   btn.textContent = 'Mencari...'; btn.disabled = true;
   statusEl.innerHTML = '<span style="color:var(--text-dim);">🔎 Mengambil data dari Steam &amp; hubcapmanifest...</span>';
   previewEl.style.display = 'none';
+  manifestUrlRow.style.display = 'none';
 
   try {
     const data = await api(`/api/admin/appid-lookup/${encodeURIComponent(appId)}`);
@@ -436,6 +447,15 @@ async function doAppIdLookup() {
     if (data.description) document.getElementById('itemDescription').value = data.description;
     if (data.imageUrl) document.getElementById('itemImageUrl').value = data.imageUrl;
     if (data.sizeLabel) document.getElementById('itemSizeLabel').value = data.sizeLabel;
+
+    // Link manifest — otomatis muncul kalau ADA di hubcapmanifest, biar bisa dicek/dibuka manual
+    if (data.manifestUrl) {
+      document.getElementById('itemManifestUrl').value = data.manifestUrl;
+      document.getElementById('btnOpenManifestUrl').href = data.manifestUrl;
+      manifestUrlRow.style.display = 'block';
+    } else {
+      document.getElementById('itemManifestUrl').value = '';
+    }
 
     // Preview card
     if (data.name || data.imageUrl) {
@@ -461,22 +481,26 @@ async function doAppIdLookup() {
 }
 
 document.getElementById('btnSaveItem').addEventListener('click', async () => {
-  const appId = document.getElementById('itemAppId').value.trim() || null;
+  const { type, id } = editingContext;
+  const appId = type === 'games' ? (document.getElementById('itemAppId').value.trim() || null) : null;
+
   const body = {
     name:        document.getElementById('itemName').value.trim(),
     description: document.getElementById('itemDescription').value.trim(),
     role:        document.getElementById('itemRole').value,
     imageUrl:    document.getElementById('itemImageUrl').value.trim() || null,
-    sizeLabel:   document.getElementById('itemSizeLabel').value.trim() || null,
-    appId,
-    storeUrl:    appId ? (lookupData?.storeUrl || `https://store.steampowered.com/app/${appId}/`) : null,
-    sizeBytes:   lookupData?.sizeBytes ?? null
+    sizeLabel:   document.getElementById('itemSizeLabel').value.trim() || null
   };
   if (!body.name) { showToast('Nama wajib diisi.', 'error'); return; }
 
-  const { type, id } = editingContext;
-  if (type === 'bypasses') {
-    body.content = document.getElementById('itemBypassOnlyContent').value.trim() || null;
+  if (type === 'games') {
+    body.appId = appId;
+    body.storeUrl = appId ? (lookupData?.storeUrl || `https://store.steampowered.com/app/${appId}/`) : null;
+    body.manifestUrl = document.getElementById('itemManifestUrl').value.trim() || null;
+    body.sizeBytes = lookupData?.sizeBytes ?? null;
+  } else {
+    // Halaman Bypass: link SELALU manual dari admin, tidak ada urusan sama hubcap/App ID.
+    body.link = document.getElementById('itemBypassOnlyContent').value.trim() || null;
   }
 
   const alsoBypass = document.getElementById('itemAlsoBypass').checked;
@@ -491,13 +515,17 @@ document.getElementById('btnSaveItem').addEventListener('click', async () => {
     }
 
     // Kalau checkbox "sekalian jadi Bypass" dicentang, bikin entri Bypass juga.
-    // Role, nama, deskripsi & cover SAMA PERSIS dengan Game di atas (jadi otomatis ikut role Game).
+    // Role, nama, deskripsi & cover SAMA PERSIS dengan Game di atas (jadi otomatis ikut role Game),
+    // tapi LINK bypass-nya tetap dari input "Link Bypass" yang admin isi sendiri (bukan dari hubcap).
     if (!id && type === 'games' && alsoBypass) {
       await api('/api/admin/bypasses', {
         method: 'POST',
         body: JSON.stringify({
-          ...body,
-          content: document.getElementById('itemBypassContent').value.trim() || null,
+          name: body.name,
+          description: body.description,
+          role: body.role,
+          imageUrl: body.imageUrl,
+          link: document.getElementById('itemBypassContent').value.trim() || null,
           gameId: savedGame?._id || null
         })
       });

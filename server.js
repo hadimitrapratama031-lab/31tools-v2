@@ -467,7 +467,7 @@ app.get('/api/admin/games', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/admin/games', requireAdmin, async (req, res) => {
-  const { name, description, imageUrl, role, appId, storeUrl, sizeBytes, sizeLabel } = req.body;
+  const { name, description, imageUrl, role, appId, storeUrl, manifestUrl, sizeBytes, sizeLabel } = req.body;
   if (!name || !ROLE_LEVEL.hasOwnProperty(role)) return res.status(400).json({ error: 'Nama & role wajib diisi dengan benar.' });
   const doc = {
     name,
@@ -476,6 +476,7 @@ app.post('/api/admin/games', requireAdmin, async (req, res) => {
     role,
     appId: appId ? String(appId) : null,
     storeUrl: storeUrl || null,
+    manifestUrl: manifestUrl || null,
     sizeBytes: sizeBytes || null,
     sizeLabel: sizeLabel || null,
     createdAt: new Date()
@@ -486,13 +487,14 @@ app.post('/api/admin/games', requireAdmin, async (req, res) => {
 
 app.put('/api/admin/games/:id', requireAdmin, async (req, res) => {
   if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
-  const { name, description, imageUrl, role, appId, storeUrl, sizeBytes, sizeLabel } = req.body;
+  const { name, description, imageUrl, role, appId, storeUrl, manifestUrl, sizeBytes, sizeLabel } = req.body;
   const update = {};
   if (name !== undefined) update.name = name;
   if (description !== undefined) update.description = description;
   if (imageUrl !== undefined) update.imageUrl = imageUrl;
   if (appId !== undefined) update.appId = appId ? String(appId) : null;
   if (storeUrl !== undefined) update.storeUrl = storeUrl || null;
+  if (manifestUrl !== undefined) update.manifestUrl = manifestUrl || null;
   if (sizeBytes !== undefined) update.sizeBytes = sizeBytes || null;
   if (sizeLabel !== undefined) update.sizeLabel = sizeLabel || null;
   if (role !== undefined) {
@@ -518,15 +520,14 @@ app.get('/api/admin/bypasses', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/admin/bypasses', requireAdmin, async (req, res) => {
-  const { name, description, imageUrl, role, content, appId, gameId } = req.body;
+  const { name, description, imageUrl, role, link, gameId } = req.body;
   if (!name || !ROLE_LEVEL.hasOwnProperty(role)) return res.status(400).json({ error: 'Nama & role wajib diisi dengan benar.' });
   const doc = {
     name,
     description: description || '',
     imageUrl: imageUrl || null,
     role, // NOTE: role bypass SELALU ikut role game asalnya (di-set sama oleh admin.js saat "Sekalian jadi Bypass")
-    content: content || null, // link/catatan cara pakai bypass-nya, opsional
-    appId: appId ? String(appId) : null,
+    link: link || null, // link bypass — SELALU diisi manual oleh admin, TIDAK diambil dari hubcapmanifest
     gameId: (gameId && ObjectId.isValid(gameId)) ? gameId : null,
     createdAt: new Date()
   };
@@ -536,13 +537,12 @@ app.post('/api/admin/bypasses', requireAdmin, async (req, res) => {
 
 app.put('/api/admin/bypasses/:id', requireAdmin, async (req, res) => {
   if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
-  const { name, description, imageUrl, role, content, appId } = req.body;
+  const { name, description, imageUrl, role, link } = req.body;
   const update = {};
   if (name !== undefined) update.name = name;
   if (description !== undefined) update.description = description;
   if (imageUrl !== undefined) update.imageUrl = imageUrl;
-  if (content !== undefined) update.content = content || null;
-  if (appId !== undefined) update.appId = appId ? String(appId) : null;
+  if (link !== undefined) update.link = link || null;
   if (role !== undefined) {
     if (!ROLE_LEVEL.hasOwnProperty(role)) return res.status(400).json({ error: 'Role tidak valid.' });
     update.role = role;
@@ -595,12 +595,18 @@ function formatBytes(bytes) {
   return `${val.toFixed(val >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
 }
 
-// Cek manifest hubcapmanifest tanpa full-download (HEAD, fallback GET-stream-abort)
+// Cek manifest hubcapmanifest tanpa full-download.
+// Beberapa server (termasuk hubcapmanifest) balikin HTTP 405 buat HEAD request
+// karena route-nya cuma didaftarkan buat GET — jadi HEAD bukan exception yang
+// dilempar axios, tapi response biasa dengan status 405. Makanya fallback ke
+// GET-stream-lalu-di-stop harus jalan setiap kali HEAD BUKAN 200/404, bukan cuma
+// pas HEAD gagal total (network error).
 async function checkHubcapManifest(appId) {
   if (!HUBCAP_API_KEY) return { configured: false, hasManifest: null, sizeBytes: null };
   const url = `${HUBCAP_BASE_URL}/api/v1/lua/${encodeURIComponent(appId)}`;
   const headers = { Authorization: `Bearer ${HUBCAP_API_KEY}` };
 
+  // 1) Coba HEAD dulu (paling hemat kuota kalau didukung)
   try {
     const headRes = await axios.head(url, { headers, timeout: 10000, validateStatus: () => true });
     if (headRes.status === 200) {
@@ -608,23 +614,26 @@ async function checkHubcapManifest(appId) {
       return { configured: true, hasManifest: true, sizeBytes: len ? Number(len) : null };
     }
     if (headRes.status === 404) return { configured: true, hasManifest: false, sizeBytes: null };
-    // status lain (mis. 401/403/429) -> lempar biar ditangani di bawah sebagai "tidak diketahui"
-    if (headRes.status >= 400) return { configured: true, hasManifest: null, sizeBytes: null, error: `hubcapmanifest: HTTP ${headRes.status}` };
+    // 401/403/429/405/dll -> lanjut coba metode GET-stream di bawah, JANGAN langsung nyerah
   } catch (e) {
-    // Sebagian server tidak mendukung HEAD -> fallback GET stream, langsung distop begitu header nongol
-    try {
-      const getRes = await axios.get(url, { headers, timeout: 10000, responseType: 'stream', validateStatus: () => true });
-      const status = getRes.status;
-      const len = getRes.headers['content-length'];
-      getRes.data.destroy(); // stop koneksi secepatnya, jangan tarik seluruh body
-      if (status === 200) return { configured: true, hasManifest: true, sizeBytes: len ? Number(len) : null };
-      if (status === 404) return { configured: true, hasManifest: false, sizeBytes: null };
-      return { configured: true, hasManifest: null, sizeBytes: null, error: `hubcapmanifest: HTTP ${status}` };
-    } catch (e2) {
-      return { configured: true, hasManifest: null, sizeBytes: null, error: 'hubcapmanifest: gagal dihubungi' };
-    }
+    // HEAD error jaringan -> lanjut ke fallback GET-stream juga
   }
-  return { configured: true, hasManifest: null, sizeBytes: null };
+
+  // 2) Fallback: GET biasa tapi responseType 'stream' & langsung di-destroy begitu
+  //    header/status masuk, jadi gak menarik seluruh isi file (hemat kuota & bandwidth).
+  try {
+    const getRes = await axios.get(url, { headers, timeout: 10000, responseType: 'stream', validateStatus: () => true });
+    const status = getRes.status;
+    const len = getRes.headers['content-length'];
+    getRes.data.destroy();
+    if (status === 200) return { configured: true, hasManifest: true, sizeBytes: len ? Number(len) : null };
+    if (status === 404) return { configured: true, hasManifest: false, sizeBytes: null };
+    if (status === 401 || status === 403) return { configured: true, hasManifest: null, sizeBytes: null, error: 'hubcapmanifest: API key tidak valid/ditolak (401/403).' };
+    if (status === 429) return { configured: true, hasManifest: null, sizeBytes: null, error: 'hubcapmanifest: kuota harian API key habis (429).' };
+    return { configured: true, hasManifest: null, sizeBytes: null, error: `hubcapmanifest: HTTP ${status}` };
+  } catch (e2) {
+    return { configured: true, hasManifest: null, sizeBytes: null, error: 'hubcapmanifest: gagal dihubungi.' };
+  }
 }
 
 app.get('/api/admin/appid-lookup/:appId', requireAdmin, async (req, res) => {
@@ -637,6 +646,7 @@ app.get('/api/admin/appid-lookup/:appId', requireAdmin, async (req, res) => {
     description: null,
     imageUrl: null,
     storeUrl: `https://store.steampowered.com/app/${appId}/`,
+    manifestUrl: null,
     sizeBytes: null,
     sizeLabel: null,
     hasManifest: null,
@@ -670,6 +680,9 @@ app.get('/api/admin/appid-lookup/:appId', requireAdmin, async (req, res) => {
     result.hasManifest = hc.hasManifest;
     result.sizeBytes = hc.sizeBytes;
     result.sizeLabel = formatBytes(hc.sizeBytes);
+    // Link manifest langsung ditampilkan ke admin kalau memang tersedia di hubcapmanifest,
+    // biar bisa dicek/dibuka manual juga.
+    if (hc.hasManifest === true) result.manifestUrl = `${HUBCAP_BASE_URL}/api/v1/lua/${appId}`;
     if (hc.error) result.warnings.push(hc.error);
     if (hc.configured && hc.hasManifest === false) result.warnings.push('Manifest untuk App ID ini belum tersedia di hubcapmanifest.');
     if (!hc.configured) result.warnings.push('HUBCAP_API_KEY belum diisi di .env — cek ketersediaan manifest & ukuran file dilewati.');

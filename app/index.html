@@ -37,7 +37,7 @@
     <nav class="menu">
       <a href="#" class="active" data-page="dashboard"><span class="ic">▦</span> Dashboard</a>
       <a href="#" data-page="games"><span class="ic">🎮</span> Games <span class="badge">10</span></a>
-      <a href="#" data-page="favorites"><span class="ic">♡</span> Favorites <span class="badge">12</span></a>
+      <a href="#" data-page="bypasses"><span class="ic">🛡️</span> Bypass <span class="badge" id="bypassesNavBadge">0</span></a>
       <a href="#" data-page="store"><span class="ic">🛒</span> Store <span class="badge update">Update</span></a>
       <a href="#" data-page="histori"><span class="ic">🕒</span> Histori</a>
       <a href="#" data-page="setting"><span class="ic">⚙</span> Setting</a>
@@ -158,13 +158,20 @@
       </section>
     </div>
 
-    <!-- ═══════════ PAGE: FAVORITES (polos, belum ada fitur) ═══════════ -->
-    <div class="page-content" id="pageFavorites" style="display:none;">
-      <div class="blank-page">
-        <div class="blank-page-emoji">♡</div>
-        <div class="blank-page-title">Favorites</div>
-        <div class="blank-page-text">Halaman ini belum ada fiturnya.</div>
-      </div>
+    <!-- ═══════════ PAGE: BYPASS (nampilin semua bypass yang tersedia buat role kamu) ═══════════ -->
+    <div class="page-content" id="pageBypasses" style="display:none;">
+      <section class="section">
+        <div class="section-head">
+          <h3><span class="emoji">🛡️</span> Bypass</h3>
+          <div class="role-filter-tabs" id="bypassesRoleFilter">
+            <button class="role-filter-tab active" data-role="all">Semua</button>
+            <button class="role-filter-tab" data-role="public">🌐 Public</button>
+            <button class="role-filter-tab" data-role="gold">🥇 Gold</button>
+            <button class="role-filter-tab" data-role="platinum">💎 Platinum</button>
+          </div>
+        </div>
+        <div class="cards-row" id="bypassesGrid"></div>
+      </section>
     </div>
 
     <!-- ═══════════ PAGE: STORE (polos, belum ada fitur) ═══════════ -->

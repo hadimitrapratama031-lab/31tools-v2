@@ -304,6 +304,14 @@
             <a class="appid-preview-link" id="appIdPreviewLink" href="#" target="_blank" rel="noopener">Lihat di Steam Store ↗</a>
           </div>
         </div>
+
+        <div class="form-group" id="manifestUrlRow" style="display:none;margin-top:12px;margin-bottom:0;">
+          <label class="form-label">Link Manifest (hubcapmanifest) <span style="color:var(--text-faint);font-weight:400;">— otomatis terisi kalau tersedia</span></label>
+          <div class="cover-row">
+            <input class="form-input" type="text" id="itemManifestUrl" placeholder="Belum tersedia" readonly style="margin:0;cursor:text;">
+            <a class="btn btn-secondary" id="btnOpenManifestUrl" href="#" target="_blank" rel="noopener" style="flex-shrink:0;text-decoration:none;">↗ Buka</a>
+          </div>
+        </div>
       </div>
 
       <div class="modal-divider"><span>Detail Item</span></div>
@@ -352,15 +360,15 @@
           </span>
         </label>
         <div class="form-group" id="bypassContentRow" style="display:none;margin-top:10px;">
-          <label class="form-label">Link / Catatan Bypass <span style="color:var(--text-faint);font-weight:400;">(opsional)</span></label>
-          <textarea class="form-input" id="itemBypassContent" rows="2" placeholder="Link download bypass, atau catatan cara pakai..."></textarea>
+          <label class="form-label">Link Bypass</label>
+          <input class="form-input" type="text" id="itemBypassContent" placeholder="https://link-bypass-kamu...">
         </div>
       </div>
 
-      <!-- Field khusus dipakai kalau nambah item langsung di halaman Bypass -->
+      <!-- Field khusus dipakai kalau nambah item langsung di halaman Bypass (link SELALU manual, bukan dari hubcap) -->
       <div class="form-group" id="bypassOnlyContentRow" style="display:none;">
-        <label class="form-label">Link / Catatan Bypass <span style="color:var(--text-faint);font-weight:400;">(opsional)</span></label>
-        <textarea class="form-input" id="itemBypassOnlyContent" rows="2" placeholder="Link download bypass, atau catatan cara pakai..."></textarea>
+        <label class="form-label">Link Bypass</label>
+        <input class="form-input" type="text" id="itemBypassOnlyContent" placeholder="https://link-bypass-kamu...">
       </div>
     </div>
     <div class="modal-footer">
