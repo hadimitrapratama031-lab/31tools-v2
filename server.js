@@ -548,17 +548,14 @@ app.get('/api/bypasses/:id/download', requireUser, async (req, res) => {
     }
 
     const url = bypass.zipUrl || bypass.link || null;
-    const appId = bypass.appId || bypass.steamAppId || null;
-
-    // Bypass valid kalau: punya zipUrl/link ATAU punya appId (→ HubCap)
-    if (!url && !appId) {
-      return res.status(404).json({ error: 'Bypass ini belum diatur admin. Isi App ID atau Link ZIP di admin panel.' });
+    if (!url) {
+      return res.status(404).json({ error: 'File bypass belum diatur admin. Hubungi admin.' });
     }
 
     res.json({
       streamPath: `/api/bypasses/${req.params.id}/stream`,
-      appId:      appId,
-      steamAppId: appId,
+      appId:      bypass.appId      || bypass.steamAppId || null,
+      steamAppId: bypass.steamAppId || bypass.appId      || null,
       name:       bypass.name
     });
   } catch (e) {
@@ -566,7 +563,6 @@ app.get('/api/bypasses/:id/download', requireUser, async (req, res) => {
   }
 });
 
-// ── STREAM BYPASS (proxy) ──
 app.get('/api/bypasses/:id/stream', async (req, res) => {
   try {
     const token = req.query.token || (req.headers.authorization || '').replace(/^Bearer\s+/i, '');
@@ -585,23 +581,83 @@ app.get('/api/bypasses/:id/stream', async (req, res) => {
     const bypassLevel = ROLE_LEVEL[bypass.role] ?? 0;
     if (myLevel < bypassLevel) return res.status(403).json({ error: `Bypass ini membutuhkan paket ${bypass.role}.` });
 
+    const appId  = bypass.appId || bypass.steamAppId || null;
     const rawUrl = bypass.zipUrl || bypass.link || null;
 
-    // ── ROUTING PRIORITY ──
-    // 1. Kalau bypass punya appId → pakai HubCap manifest (rawUrl tidak diperlukan)
-    // 2. Kalau tidak ada appId tapi ada rawUrl → proxy rawUrl langsung
-    // 3. Tidak ada keduanya → error
-    const appId = bypass.appId || bypass.steamAppId || null;
-    const isHubcap = appId && (!rawUrl || rawUrl.includes('hubcapmanifest.com') || rawUrl.includes('hubcap'));
+    // ── ROUTING ──
+    // Priority 1: punya appId → HubCap (sama persis pola game inject di referensi)
+    // Priority 2: punya rawUrl → proxy langsung
+    // Priority 3: tidak ada keduanya → error jelas
 
-    if (isHubcap) {
-      return await streamHubcapManifest(appId, res, bypass.name);
+    if (appId) {
+      // HubCap manifest — pola sama persis dengan referensi server.js (inject-game)
+      const url = `${HUBCAP_BASE_URL}/api/v1/manifest/${appId}`;
+      let hubcapRes = null;
+      let lastError = null;
+
+      for (let attempt = 0; attempt < Math.max(HUBCAP_API_KEYS.length, 1); attempt++) {
+        const apiKey = getHubcapApiKey();
+        if (!apiKey) break;
+        try {
+          hubcapRes = await axios.get(url, {
+            headers: { 'Authorization': `Bearer ${apiKey}` },
+            responseType: 'stream',
+            timeout: 0,
+            maxRedirects: 10
+          });
+          break;
+        } catch (e) {
+          lastError = e;
+          console.error(`[BYPASS STREAM] HubCap attempt ${attempt + 1} gagal (appId=${appId}):`, e.response?.status, e.message);
+          if (e.response) {
+            const s = e.response.status;
+            if (s === 429 || s === 401 || s === 403) {
+              markHubcapKeyLimited();
+              if (attempt < HUBCAP_API_KEYS.length - 1) continue;
+            }
+          }
+          break;
+        }
+      }
+
+      if (!hubcapRes) {
+        const s = lastError?.response?.status;
+        if (s === 429) return res.status(429).json({ error: 'HubCap rate limit, coba lagi sebentar.' });
+        if (s === 401 || s === 403) return res.status(401).json({ error: 'HubCap API Key tidak valid. Hubungi admin.' });
+        if (s === 404) return res.status(404).json({ error: `Manifest App ID ${appId} tidak ditemukan di HubCap.` });
+        return res.status(502).json({ error: 'Gagal terhubung ke HubCap: ' + (lastError?.message || 'unknown') });
+      }
+
+      // Cek content-type sebelum pipe — kalau HubCap kirim JSON error (bukan ZIP), tangkap dulu
+      const ct = hubcapRes.headers['content-type'] || '';
+      if (ct.includes('application/json') || ct.includes('text/')) {
+        // Kumpulkan body dulu untuk baca pesan error
+        let body = '';
+        hubcapRes.data.on('data', chunk => { body += chunk.toString(); });
+        hubcapRes.data.on('end', () => {
+          console.error('[BYPASS STREAM] HubCap kirim non-ZIP response:', body.slice(0, 200));
+          if (!res.headersSent) res.status(502).json({ error: 'HubCap tidak mengembalikan file ZIP. Mungkin App ID salah atau belum tersedia.' });
+        });
+        return;
+      }
+
+      const safeName = (bypass.name || 'bypass').replace(/[^a-z0-9_\-]/gi, '_');
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Disposition', `attachment; filename="${safeName}.zip"`);
+      if (hubcapRes.headers['content-length']) res.setHeader('Content-Length', hubcapRes.headers['content-length']);
+      hubcapRes.data.pipe(res);
+      hubcapRes.data.on('error', (streamErr) => {
+        console.error('[BYPASS STREAM] Stream error dari HubCap:', streamErr.message);
+        if (!res.headersSent) res.status(502).json({ error: 'Stream HubCap terputus: ' + streamErr.message });
+      });
+      return;
     }
 
-    if (!rawUrl) return res.status(404).json({ error: 'File bypass belum diatur admin. Isi App ID atau Link ZIP di admin panel.' });
+    if (!rawUrl) {
+      return res.status(404).json({ error: 'Bypass belum dikonfigurasi. Hubungi admin untuk mengisi App ID atau Link ZIP.' });
+    }
 
-    // PROXY download — stream file dari rawUrl (GitHub / link apapun) ke client
-    // tanpa expose URL aslinya ke Electron app. Client hanya tahu /api/bypasses/:id/stream.
+    // Proxy rawUrl (GitHub / link lain)
     const safeName = (bypass.name || 'bypass').replace(/[^a-z0-9_\-]/gi, '_');
     try {
       const upstream = await axios.get(rawUrl, {
@@ -612,16 +668,15 @@ app.get('/api/bypasses/:id/stream', async (req, res) => {
       });
       res.setHeader('Content-Type', 'application/zip');
       res.setHeader('Content-Disposition', `attachment; filename="${safeName}.zip"`);
-      if (upstream.headers['content-length']) {
-        res.setHeader('Content-Length', upstream.headers['content-length']);
-      }
+      if (upstream.headers['content-length']) res.setHeader('Content-Length', upstream.headers['content-length']);
       upstream.data.pipe(res);
       upstream.data.on('error', () => { if (!res.headersSent) res.status(502).end(); });
     } catch (e) {
       if (!res.headersSent) res.status(502).json({ error: 'Gagal mengambil file bypass: ' + e.message });
     }
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    console.error('[BYPASS STREAM] Unexpected error:', e.message);
+    if (!res.headersSent) res.status(500).json({ error: e.message });
   }
 });
 

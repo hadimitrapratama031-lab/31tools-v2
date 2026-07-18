@@ -331,43 +331,47 @@ function copyDirOverwrite(srcDir, destDir) {
   }
 }
 
-ipcMain.handle('install-bypass', async (event, { steamPath, appId, zipUrl, extraHeaders }) => {
+ipcMain.handle('install-bypass', async (event, { folderPath, driveUrl, userId, deviceId, gameId, gameName, steamAppId, extraHeaders }) => {
   const tempZip = path.join(app.getPath('temp'), 'bypass_' + Date.now() + '.zip');
   const tempDir = path.join(app.getPath('temp'), 'bypass_extract_' + Date.now());
   try {
-    // 1. Cari folder game via appId
-    if (!steamPath) throw new Error('Steam tidak terdeteksi di PC ini');
-    const libraries = getSteamLibraryFolders(steamPath);
-    let folderPath = null;
-    for (const lib of libraries) {
-      const manifestPath = path.join(lib, 'steamapps', `appmanifest_${appId}.acf`);
-      if (fs.existsSync(manifestPath)) {
-        const manifest = fs.readFileSync(manifestPath, 'utf8');
-        const match = manifest.match(/"installdir"\s+"([^"]+)"/);
-        if (match) {
-          const gf = path.join(lib, 'steamapps', 'common', match[1]);
-          if (fs.existsSync(gf)) { folderPath = gf; break; }
-        }
+    // 1. Validasi folderPath — sudah dicari di app.js via find-game-folder-by-appid
+    if (!folderPath || !fs.existsSync(folderPath)) {
+      throw new Error('Folder game tujuan tidak ditemukan: ' + (folderPath || '(kosong)'));
+    }
+
+    const resolvedFolder = path.resolve(folderPath);
+    const normalizedFolder = resolvedFolder.toLowerCase().replace(/\\/g, '/');
+
+    if (!normalizedFolder.includes('steamapps/common')) {
+      throw new Error('Folder tujuan harus berada di dalam steamapps/common');
+    }
+
+    const forbiddenPaths = [
+      process.env.SystemRoot || 'C:\\Windows',
+      process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'AppData', 'Roaming') : '',
+      process.env.USERPROFILE ? path.join(process.env.USERPROFILE, 'AppData', 'Local', 'Microsoft') : '',
+    ].filter(Boolean).map(p => path.resolve(p));
+    for (const forbidden of forbiddenPaths) {
+      if (resolvedFolder.toLowerCase().startsWith(forbidden.toLowerCase())) {
+        throw new Error('Folder tujuan tidak diizinkan (sistem/AppData): ' + resolvedFolder);
       }
     }
-    if (!folderPath) throw new Error(`Game dengan App ID ${appId} belum terinstall di Steam. Install gamenya dulu ya.`);
 
-    // Validasi: harus di dalam steamapps/common
-    const normalizedFolder = path.resolve(folderPath).toLowerCase().replace(/\\/g, '/');
-    if (!normalizedFolder.includes('steamapps/common')) throw new Error('Folder tujuan tidak valid');
-
-    // 2. Download
-    await downloadFileWithProgress(zipUrl, tempZip, null, 0, extraHeaders || {});
+    // 2. Download dari driveUrl (proxy server)
+    await downloadFileWithProgress(driveUrl, tempZip, null, 0, extraHeaders || {});
 
     // Validasi ZIP
     const head = fs.readFileSync(tempZip, { encoding: null }).slice(0, 4);
-    if (head[0] !== 0x50 || head[1] !== 0x4B) throw new Error('File bukan ZIP valid — URL mungkin salah atau akses ditolak server.');
+    if (head[0] !== 0x50 || head[1] !== 0x4B) {
+      throw new Error('File yang didownload bukan ZIP valid. Kemungkinan App ID salah atau file belum tersedia di HubCap.');
+    }
 
     // 3. Extract ke temp
     fs.mkdirSync(tempDir, { recursive: true });
     await extractZip(tempZip, { dir: tempDir });
 
-    // 4. Catat semua file yang akan dicopy
+    // 4. Catat semua file
     const extractedFiles = [];
     function walkBypass(dir, baseDir) {
       for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
