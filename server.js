@@ -364,6 +364,72 @@ app.get('/api/games', requireUser, async (req, res) => {
   }
 });
 
+// ── DOWNLOAD: kembalikan URL zip/manifest untuk di-inject ke Steam ──
+// Dipanggil app saat user tekan "Download" pada kartu game.
+// Cek role dulu — user hanya boleh download game yang sesuai level paketnya.
+app.get('/api/games/:id/download', requireUser, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+    const game = await db.collection('games').findOne({ _id: new ObjectId(req.params.id) });
+    if (!game) return res.status(404).json({ error: 'Game tidak ditemukan.' });
+
+    // Cek role user cukup untuk game ini
+    const myLevel   = ROLE_LEVEL[req.user.role] ?? 0;
+    const gameLevel = ROLE_LEVEL[game.role]     ?? 0;
+    if (myLevel < gameLevel) {
+      return res.status(403).json({ error: `Game ini membutuhkan paket ${game.role}. Upgrade paket kamu dulu.` });
+    }
+
+    // Tentukan URL download — pakai manifestUrl kalau ada, fallback ke zipUrl
+    const url = game.manifestUrl || game.zipUrl || null;
+    if (!url) {
+      return res.status(404).json({ error: 'File download untuk game ini belum diatur admin. Hubungi admin.' });
+    }
+
+    // Kalau manifestUrl dari hubcapmanifest, perlu Authorization header
+    // Kembalikan juga appId supaya client bisa pakai buat bypass
+    res.json({
+      url,
+      appId:    game.appId    || null,
+      steamAppId: game.appId  || null,
+      name:     game.name,
+      // Kalau perlu auth header ke hubcapmanifest, sertakan di sini
+      headers:  HUBCAP_API_KEY && url.includes('hubcap') ? { Authorization: `Bearer ${HUBCAP_API_KEY}` } : {}
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── DOWNLOAD BYPASS ──
+app.get('/api/bypasses/:id/download', requireUser, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+    const bypass = await db.collection('bypasses').findOne({ _id: new ObjectId(req.params.id) });
+    if (!bypass) return res.status(404).json({ error: 'Bypass tidak ditemukan.' });
+
+    const myLevel     = ROLE_LEVEL[req.user.role]   ?? 0;
+    const bypassLevel = ROLE_LEVEL[bypass.role]     ?? 0;
+    if (myLevel < bypassLevel) {
+      return res.status(403).json({ error: `Bypass ini membutuhkan paket ${bypass.role}.` });
+    }
+
+    const url = bypass.zipUrl || bypass.link || null;
+    if (!url) {
+      return res.status(404).json({ error: 'File bypass belum diatur admin. Hubungi admin.' });
+    }
+
+    res.json({
+      url,
+      appId:      bypass.appId      || bypass.steamAppId || null,
+      steamAppId: bypass.steamAppId || bypass.appId      || null,
+      name:       bypass.name
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 // APP — BYPASS
 // ══════════════════════════════════════════════════════════════════════════

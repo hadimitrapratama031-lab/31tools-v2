@@ -188,16 +188,17 @@ ipcMain.handle('find-game-folder-by-appid', (event, { steamPath, appId }) => {
 let activeDownloadRequest = null;
 let activeDownloadFile = null;
 
-function downloadFileWithProgress(url, destPath, onProgress, redirectCount = 0) {
+function downloadFileWithProgress(url, destPath, onProgress, redirectCount = 0, extraHeaders = {}) {
   return new Promise((resolve, reject) => {
     if (redirectCount > 10) return reject(new Error('Terlalu banyak redirect'));
     const client = url.startsWith('https') ? https : http;
-    const request = client.get(url, { headers: { 'User-Agent': 'NovaLauncher' } }, (response) => {
+    const reqHeaders = { 'User-Agent': 'NovaLauncher', ...extraHeaders };
+    const request = client.get(url, { headers: reqHeaders }, (response) => {
       if (response.statusCode >= 300 && response.statusCode < 400 && response.headers.location) {
         response.resume();
         let location = response.headers.location;
         if (location.startsWith('/')) location = new URL(url).origin + location;
-        return resolve(downloadFileWithProgress(location, destPath, onProgress, redirectCount + 1));
+        return resolve(downloadFileWithProgress(location, destPath, onProgress, redirectCount + 1, extraHeaders));
       }
       if (response.statusCode !== 200) {
         response.resume();
@@ -234,16 +235,16 @@ ipcMain.handle('cancel-download', () => {
 });
 
 // ── INJECT GAME: extract ZIP → .lua ke stplug-in, .manifest ke depotcache ──
-ipcMain.handle('inject-game', async (event, { steamPath, zipUrl }) => {
+ipcMain.handle('inject-game', async (event, { steamPath, zipUrl, extraHeaders }) => {
   const tempZip = path.join(app.getPath('temp'), 'inject_' + Date.now() + '.zip');
   const tempDir = path.join(app.getPath('temp'), 'inject_extract_' + Date.now());
   try {
     // Download
-    await downloadFileWithProgress(zipUrl, tempZip);
+    await downloadFileWithProgress(zipUrl, tempZip, null, 0, extraHeaders || {});
 
     // Validasi ZIP signature
     const head = fs.readFileSync(tempZip, { encoding: null }).slice(0, 4);
-    if (head[0] !== 0x50 || head[1] !== 0x4B) throw new Error('File bukan ZIP valid');
+    if (head[0] !== 0x50 || head[1] !== 0x4B) throw new Error('File bukan ZIP valid — URL mungkin salah atau akses ditolak server.');
 
     // Siapkan folder tujuan
     const stplugDir    = path.join(steamPath, 'config', 'stplug-in');
@@ -295,7 +296,7 @@ function copyDirOverwrite(srcDir, destDir) {
   }
 }
 
-ipcMain.handle('install-bypass', async (event, { steamPath, appId, zipUrl }) => {
+ipcMain.handle('install-bypass', async (event, { steamPath, appId, zipUrl, extraHeaders }) => {
   const tempZip = path.join(app.getPath('temp'), 'bypass_' + Date.now() + '.zip');
   const tempDir = path.join(app.getPath('temp'), 'bypass_extract_' + Date.now());
   try {
@@ -321,11 +322,11 @@ ipcMain.handle('install-bypass', async (event, { steamPath, appId, zipUrl }) => 
     if (!normalizedFolder.includes('steamapps/common')) throw new Error('Folder tujuan tidak valid');
 
     // 2. Download
-    await downloadFileWithProgress(zipUrl, tempZip);
+    await downloadFileWithProgress(zipUrl, tempZip, null, 0, extraHeaders || {});
 
     // Validasi ZIP
     const head = fs.readFileSync(tempZip, { encoding: null }).slice(0, 4);
-    if (head[0] !== 0x50 || head[1] !== 0x4B) throw new Error('File bukan ZIP valid');
+    if (head[0] !== 0x50 || head[1] !== 0x4B) throw new Error('File bukan ZIP valid — URL mungkin salah atau akses ditolak server.');
 
     // 3. Extract ke temp
     fs.mkdirSync(tempDir, { recursive: true });

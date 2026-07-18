@@ -616,7 +616,7 @@ async function handleInstall(itemType, itemId, itemName) {
   try {
     // Step 1 — Ambil URL
     const data = await api(`/api/${isGame ? 'games' : 'bypasses'}/${itemId}/download`);
-    if (!data.url) throw new Error('Server tidak memberikan URL download. Coba lagi nanti.');
+    if (!data.url) throw new Error(data.error || 'Server tidak memberikan URL download. Pastikan admin sudah mengisi Manifest URL di data game.');
     dlSetStage('URL diterima, mendeteksi Steam...', 1);
 
     // Step 2 — Cek Steam
@@ -628,7 +628,7 @@ async function handleInstall(itemType, itemId, itemName) {
 
     if (isGame) {
       // Step 3 — Download + inject
-      result = await window.electronAPI.injectGame({ steamPath, zipUrl: data.url });
+      result = await window.electronAPI.injectGame({ steamPath, zipUrl: data.url, extraHeaders: data.headers || {} });
       if (result.cancelled) { dlModalHide(); return; }
       if (!result.success) throw new Error(result.error || 'Inject game gagal tanpa keterangan.');
 
@@ -650,7 +650,7 @@ async function handleInstall(itemType, itemId, itemName) {
       if (!appId) throw new Error('App ID tidak ditemukan pada data bypass ini. Hubungi admin untuk perbaikan.');
       dlSetStage(`Mencari folder game (App ID: ${appId})...`, 2);
 
-      result = await window.electronAPI.installBypass({ steamPath, appId: String(appId), zipUrl: data.url });
+      result = await window.electronAPI.installBypass({ steamPath, appId: String(appId), zipUrl: data.url, extraHeaders: data.headers || {} });
       if (result.cancelled) { dlModalHide(); return; }
       if (!result.success) throw new Error(result.error || 'Install bypass gagal tanpa keterangan.');
 
