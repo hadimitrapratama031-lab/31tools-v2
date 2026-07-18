@@ -419,6 +419,23 @@ app.get('/api/history', requireUser, async (req, res) => {
   }
 });
 
+// Hapus satu entri histori milik user sendiri (dipakai tombol "Uninstall" di halaman Histori).
+// Ini cuma menghapus catatan histori-nya, bukan file di komputer user — launcher ini
+// memang belum ngatur instalasi lokal, cuma nyatet apa yang pernah di-install/dipakai.
+app.delete('/api/history/:id', requireUser, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+    const result = await db.collection('history').deleteOne({
+      _id: new ObjectId(req.params.id),
+      userId: req.user.discordId // wajib punya user ini sendiri, gak bisa hapus punya orang lain
+    });
+    if (result.deletedCount === 0) return res.status(404).json({ error: 'Histori tidak ditemukan.' });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Info akun sendiri (dipakai app buat nampilin nama/role/avatar terbaru)
 app.get('/api/me', requireUser, (req, res) => {
   res.json(publicUser(req.user));

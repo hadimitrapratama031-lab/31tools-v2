@@ -40,6 +40,11 @@ app.on('window-all-closed', () => {
 // ── IPC: kontrol window custom title bar ──
 ipcMain.on('window-minimize', () => mainWindow?.minimize());
 ipcMain.on('window-close', () => mainWindow?.close());
+ipcMain.on('window-maximize', () => {
+  if (!mainWindow) return;
+  if (mainWindow.isMaximized()) mainWindow.unmaximize();
+  else mainWindow.maximize();
+});
 
 // ── IPC: buka link di browser default (dipakai buat login Discord) ──
 // Login Discord SENGAJA dibuka di browser luar, bukan di dalam app — Discord

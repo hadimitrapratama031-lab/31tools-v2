@@ -2,93 +2,193 @@
 <html lang="id">
 <head>
 <meta charset="UTF-8">
-<title>Nova Launcher</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GameDash — Dashboard</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="style.css">
 </head>
 <body>
 
-  <!-- ── CUSTOM TITLE BAR ── -->
+  <!-- CUSTOM TITLEBAR (window frameless, jadi minimize/fullscreen/close dibikin sendiri) -->
   <div class="titlebar">
-    <div class="titlebar-drag">
-      <div class="titlebar-logo"></div>
-      <span id="titlebarAppName">Nova Launcher</span>
-    </div>
+    <div class="titlebar-title">GameDash</div>
     <div class="titlebar-controls">
-      <button id="btnMinimize" title="Minimize">─</button>
-      <button id="btnClose" title="Close">✕</button>
+      <button id="btnMinimize" class="tb-btn" title="Minimize">&#8211;</button>
+      <button id="btnMaximize" class="tb-btn" title="Fullscreen">&#9723;</button>
+      <button id="btnClose" class="tb-btn tb-close" title="Close">&#10005;</button>
     </div>
   </div>
 
-  <div class="bg-orbs"><span></span><span></span><span></span></div>
+  <div class="app-wrap">
+  <div class="app">
 
-  <!-- ── LOGIN VIEW ── -->
-  <div class="view" id="viewLogin">
-    <div class="login-card">
-      <div class="login-mark"></div>
-      <h1 id="loginAppName">Nova Launcher</h1>
-      <p>Masuk pakai akun Discord kamu buat lanjut. Pastikan kamu udah join server Discord kami dulu ya.</p>
-      <button class="btn-discord" id="btnLoginDiscord">
-        <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.37a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.736 19.736 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.057a.082.082 0 0 0 .031.057 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028c.462-.63.874-1.295 1.226-1.994a.076.076 0 0 0-.041-.106 13.107 13.107 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.099.246.198.373.292a.077.077 0 0 1-.006.127 12.3 12.3 0 0 1-1.873.892.076.076 0 0 0-.04.107c.36.698.772 1.362 1.225 1.993a.077.077 0 0 0 .084.028 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.054c.5-5.177-.838-9.674-3.549-13.66a.06.06 0 0 0-.031-.03zM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.956 2.418-2.157 2.418zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.419 2.157-2.419 1.21 0 2.176 1.096 2.157 2.42 0 1.333-.946 2.418-2.157 2.418z"/></svg>
-        Login dengan Discord
-      </button>
-      <div class="login-status" id="loginStatus"></div>
-    </div>
-  </div>
-
-  <!-- ── APP VIEW (setelah login) ── -->
-  <div class="view" id="viewApp" style="display:none;">
-    <aside class="sidebar">
-      <div class="sidebar-top">
-        <div class="brand-mark"></div>
-        <nav class="nav">
-          <button class="nav-item active" data-page="game">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="6" width="20" height="12" rx="3"/><path d="M6 12h4M8 10v4M15 13h.01M18 11h.01"/></svg>
-            Game
-          </button>
-          <button class="nav-item" data-page="bypass">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2 3 6v6c0 5 3.8 8.7 9 10 5.2-1.3 9-5 9-10V6l-9-4z"/></svg>
-            Bypass
-          </button>
-          <button class="nav-item" data-page="histori">
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 3"/></svg>
-            Histori
-          </button>
-        </nav>
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="profile">
+      <img src="https://i.pravatar.cc/80?img=12" alt="avatar">
+      <div>
+        <div class="name">Behzad9574</div>
+        <div class="role">Gamer</div>
       </div>
-      <div class="sidebar-bottom">
-        <div class="profile-card">
-          <img id="profileAvatar" class="profile-avatar" src="" alt="">
-          <div class="profile-info">
-            <div class="profile-name" id="profileName">—</div>
-            <span class="role-badge" id="profileRole">public</span>
+      <span class="chev">⌄</span>
+    </div>
+
+    <nav class="menu">
+      <a href="#" class="active" data-page="dashboard"><span class="ic">▦</span> Dashboard</a>
+      <a href="#" data-page="games"><span class="ic">🎮</span> Games <span class="badge">10</span></a>
+      <a href="#" data-page="favorites"><span class="ic">♡</span> Favorites <span class="badge">12</span></a>
+      <a href="#" data-page="store"><span class="ic">🛒</span> Store <span class="badge update">Update</span></a>
+      <a href="#" data-page="histori"><span class="ic">🕒</span> Histori</a>
+      <a href="#" data-page="setting"><span class="ic">⚙</span> Setting</a>
+      <a href="#" id="navLogout"><span class="ic">⏻</span> Log Out</a>
+    </nav>
+
+    <div class="dark-mode-row">
+      🌙 Dark Mode
+      <div class="toggle"></div>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main">
+
+    <div class="topbar">
+      <h2>Have a good time Behzad!</h2>
+      <div class="search">
+        <span class="icon">🔍</span>
+        <input type="text" placeholder="Search Game...">
+      </div>
+      <div class="icon-btn">🛍</div>
+      <div class="icon-btn">🔔<span class="dot"></span></div>
+    </div>
+
+    <!-- ═══════════ PAGE: DASHBOARD ═══════════ -->
+    <div class="page-content" id="pageDashboard">
+
+      <div class="hero-row">
+        <div class="hero">
+          <div class="figure"></div>
+          <div class="hero-content">
+            <h1>THRONE</h1>
+            <div class="hero-actions">
+              <button class="btn-primary">Start Game</button>
+              <div class="play-round">▶</div>
+            </div>
           </div>
         </div>
-        <button class="btn-logout" id="btnLogout">Keluar</button>
+
+        <div class="leaderboard">
+          <div class="lb-row">
+            <img src="https://i.pravatar.cc/60?img=33" alt="">
+            <div class="name">Edwin</div>
+            <div class="score"><span class="flame">🔥</span> 996 K</div>
+          </div>
+          <div class="lb-row">
+            <img src="https://i.pravatar.cc/60?img=45" alt="">
+            <div class="name">Cassie</div>
+            <div class="score"><span class="flame">🔥</span> 751 K</div>
+          </div>
+          <div class="lb-row">
+            <img src="https://i.pravatar.cc/60?img=51" alt="">
+            <div class="name">Bezi</div>
+            <div class="score"><span class="flame">🔥</span> 526 K</div>
+          </div>
+          <div class="lb-row">
+            <img src="https://i.pravatar.cc/60?img=15" alt="">
+            <div class="name">Debbie</div>
+            <div class="score"><span class="flame">🔥</span> 135 K</div>
+          </div>
+        </div>
       </div>
-    </aside>
 
-    <main class="main">
-      <header class="main-header">
-        <h2 id="pageTitle">Game</h2>
-        <p id="pageSubtitle">Daftar game yang bisa kamu install sesuai paket kamu.</p>
-      </header>
-
-      <section class="page active" id="pageGame">
-        <div class="grid" id="gameGrid"></div>
+      <!-- GAMES ON SALE -->
+      <section class="section">
+        <div class="section-head">
+          <h3><span class="emoji">🏷️</span> Games On Sale</h3>
+          <div class="nav-arrows">
+            <button>‹</button>
+            <button>›</button>
+          </div>
+        </div>
+        <div class="cards-row" id="dashSaleGrid"></div>
       </section>
 
-      <section class="page" id="pageBypass">
-        <div class="grid" id="bypassGrid"></div>
+      <!-- NEW GAMES -->
+      <section class="section">
+        <div class="section-head">
+          <h3><span class="emoji">✨</span> New Games</h3>
+          <div class="filters">
+            <span class="active">All Games</span>
+            <span>Action</span>
+            <span>Sport</span>
+            <span>Puzzle</span>
+            <span>Mystery</span>
+          </div>
+          <div class="grid-toggle">▦</div>
+        </div>
+        <div class="cards-row" id="dashNewGrid"></div>
       </section>
 
-      <section class="page" id="pageHistori">
-        <div class="history-list" id="historiList"></div>
+    </div>
+
+    <!-- ═══════════ PAGE: GAMES (game doang) ═══════════ -->
+    <div class="page-content" id="pageGames" style="display:none;">
+      <section class="section">
+        <div class="section-head">
+          <h3><span class="emoji">🎮</span> Games</h3>
+          <div class="role-filter-tabs" id="gamesRoleFilter">
+            <button class="role-filter-tab active" data-role="all">Semua</button>
+            <button class="role-filter-tab" data-role="public">🌐 Public</button>
+            <button class="role-filter-tab" data-role="gold">🥇 Gold</button>
+            <button class="role-filter-tab" data-role="platinum">💎 Platinum</button>
+          </div>
+        </div>
+        <div class="cards-row" id="gamesOnlyGrid"></div>
       </section>
-    </main>
+    </div>
+
+    <!-- ═══════════ PAGE: HISTORI (halaman sendiri, bukan popup) ═══════════ -->
+    <div class="page-content" id="pageHistori" style="display:none;">
+      <section class="section">
+        <div class="section-head">
+          <h3><span class="emoji">🕒</span> Histori</h3>
+        </div>
+        <div class="histori-list" id="historiListPage"></div>
+      </section>
+    </div>
+
+    <!-- ═══════════ PAGE: FAVORITES (polos, belum ada fitur) ═══════════ -->
+    <div class="page-content" id="pageFavorites" style="display:none;">
+      <div class="blank-page">
+        <div class="blank-page-emoji">♡</div>
+        <div class="blank-page-title">Favorites</div>
+        <div class="blank-page-text">Halaman ini belum ada fiturnya.</div>
+      </div>
+    </div>
+
+    <!-- ═══════════ PAGE: STORE (polos, belum ada fitur) ═══════════ -->
+    <div class="page-content" id="pageStore" style="display:none;">
+      <div class="blank-page">
+        <div class="blank-page-emoji">🛒</div>
+        <div class="blank-page-title">Store</div>
+        <div class="blank-page-text">Halaman ini belum ada fiturnya.</div>
+      </div>
+    </div>
+
+    <!-- ═══════════ PAGE: SETTING (polos, belum ada fitur) ═══════════ -->
+    <div class="page-content" id="pageSetting" style="display:none;">
+      <div class="blank-page">
+        <div class="blank-page-emoji">⚙</div>
+        <div class="blank-page-title">Setting</div>
+        <div class="blank-page-text">Halaman ini belum ada fiturnya.</div>
+      </div>
+    </div>
+
+  </main>
+  </div>
   </div>
 
-  <script src="app.js"></script>
+<script src="app.js"></script>
 </body>
 </html>

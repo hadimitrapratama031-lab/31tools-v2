@@ -6,6 +6,12 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
+const ROLE_TAG_ICON = { public: '🌐', gold: '🥇', platinum: '💎' };
+function roleTagHtml(role) {
+  const icon = ROLE_TAG_ICON[role] || '';
+  return `<span class="tag ${role}">${icon} ${escapeHtml(role)}</span>`;
+}
+
 async function api(path, options = {}) {
   const token = localStorage.getItem('adminToken');
   const res = await fetch(SERVER_URL + path, {
@@ -322,7 +328,7 @@ function renderTableRows(type, rows) {
           <div class="cell-name">${escapeHtml(item.name)}</div>
           ${item.description ? `<div class="cell-desc">${escapeHtml(item.description)}</div>` : ''}
         </td>
-        <td><span class="tag ${item.role}">${item.role}</span></td>
+        <td>${roleTagHtml(item.role)}</td>
         <td class="row-actions">
           <button class="btn btn-ghost btn-sm" onclick='openItemModal("${type}", ${JSON.stringify(item).replace(/'/g, "&#39;")})'>Edit</button>
           <button class="btn btn-danger btn-sm" onclick="deleteItem('${type}','${item._id}')">Hapus</button>
@@ -358,6 +364,14 @@ function openItemModal(type, item) {
   document.getElementById('itemRole').value = item?.role || 'public';
   document.getElementById('itemImageUrl').value = item?.imageUrl || '';
   document.getElementById('coverResults').innerHTML = '';
+
+  // Checkbox "sekalian jadi Bypass" cuma relevan pas nambah GAME BARU (bukan edit, bukan pas di halaman Bypass)
+  const alsoBypassRow = document.getElementById('alsoBypassRow');
+  const alsoBypassCheckbox = document.getElementById('itemAlsoBypass');
+  const showAlsoBypass = (type === 'games' && !item);
+  alsoBypassRow.style.display = showAlsoBypass ? 'block' : 'none';
+  alsoBypassCheckbox.checked = false;
+
   document.getElementById('itemModalBackdrop').style.display = 'flex';
 }
 window.openItemModal = openItemModal;
@@ -380,14 +394,21 @@ document.getElementById('btnSaveItem').addEventListener('click', async () => {
     imageUrl:    document.getElementById('itemImageUrl').value.trim() || null
   };
   if (!body.name) { showToast('Nama wajib diisi.', 'error'); return; }
+  const alsoBypass = document.getElementById('itemAlsoBypass').checked;
   const btn = document.getElementById('btnSaveItem');
   btn.textContent = 'Menyimpan...'; btn.disabled = true;
   try {
     const { type, id } = editingContext;
     if (id) await api(`/api/admin/${type}/${id}`, { method: 'PUT',  body: JSON.stringify(body) });
     else    await api(`/api/admin/${type}`,        { method: 'POST', body: JSON.stringify(body) });
+
+    // Kalau checkbox "sekalian jadi Bypass" dicentang, bikin entri Bypass juga pakai data yang sama
+    if (!id && type === 'games' && alsoBypass) {
+      await api('/api/admin/bypasses', { method: 'POST', body: JSON.stringify(body) });
+    }
+
     closeModal();
-    showToast('Berhasil disimpan!', 'success');
+    showToast(alsoBypass && !id ? 'Game & Bypass berhasil disimpan!' : 'Berhasil disimpan!', 'success');
     renderTable(type);
   } catch (e) {
     showToast('Gagal menyimpan: ' + e.message, 'error');
@@ -448,7 +469,7 @@ async function renderUsers() {
               : `<div class="cell-avatar" style="display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;background:linear-gradient(135deg,#7b5cff,#e64bb8);">${(u.username||'?')[0].toUpperCase()}</div>`}
             <div>
               <div class="cell-name">${escapeHtml(u.username)}</div>
-              <span class="tag ${u.role}" style="margin-top:3px;">${u.role}</span>
+              <span style="margin-top:3px;">${roleTagHtml(u.role)}</span>
             </div>
           </td>
           <td style="color:var(--text-faint);font-size:12.5px;">${escapeHtml(u.discordId)}</td>
