@@ -595,69 +595,60 @@ app.get('/api/bypasses/:id/stream', async (req, res) => {
       return res.status(404).json({ error: 'Link bypass belum diatur admin. Hubungi admin untuk mengisi link file bypass.' });
     }
 
-    // Proxy rawUrl (Google Drive / GitHub / link lain)
-    const safeName = (bypass.name || 'bypass').replace(/[^a-z0-9_\-]/gi, '_');
+    // ── STRATEGI DOWNLOAD BERDASARKAN SUMBER LINK ──
+    //
+    // File bypass bisa >500MB. Men-proxy file besar lewat Railway sangat berisiko
+    // (timeout, memory, bandwidth terbatas). Strategi per sumber:
+    //
+    //  • GitHub Release (objects.githubusercontent.com / github.com/releases)
+    //    → REDIRECT langsung ke URL asli. GitHub sudah handle auth via URL token-nya
+    //      sendiri, tidak perlu proxy. Client download langsung, server cuma validasi auth.
+    //
+    //  • Google Drive
+    //    → REDIRECT ke direct download URL (uc?export=download). File besar GDrive
+    //      punya virus-scan warning, tapi client (Electron/axios di main.js) bisa follow.
+    //
+    //  • Link lain (custom CDN, dll)
+    //    → REDIRECT juga — lebih aman dan efisien daripada proxy untuk file besar.
+    //
+    // Auth sudah divalidasi di atas (JWT + role check) sebelum redirect dikirim,
+    // jadi URL asli baru bocor setelah user terbukti berhak akses.
 
-    // Resolve Google Drive share link → direct download link
-    let finalUrl = rawUrl;
-    const gdMatch = rawUrl.match(/drive\.google\.com\/(?:file\/d\/|open\?id=|uc\?.*id=)([a-zA-Z0-9_\-]+)/);
-    if (gdMatch) {
-      finalUrl = `https://drive.google.com/uc?export=download&id=${gdMatch[1]}&confirm=t`;
-    }
+    const isGithub = /github\.com|githubusercontent\.com/.test(rawUrl);
+    const isGdrive = /drive\.google\.com/.test(rawUrl);
 
-    try {
-      const upstream = await axios.get(finalUrl, {
-        responseType: 'stream',
-        timeout: 0,           // tidak ada timeout — file bypass bisa besar
-        maxRedirects: 15,     // Google Drive butuh beberapa redirect
-        headers: {
-          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36',
-          'Accept': '*/*',
-        },
-        validateStatus: (s) => s < 400, // ikuti redirect 3xx tanpa throw
-      });
-
-      // Kalau Google Drive kirim halaman konfirmasi virus scan (HTML, bukan file)
-      // → coba lagi dengan param confirm yang berbeda
-      const ct = upstream.headers['content-type'] || '';
-      if (ct.includes('text/html')) {
-        upstream.data.destroy();
-        // Coba pakai URL alternatif dengan confirm token
-        const altUrl = finalUrl.includes('confirm=t')
-          ? finalUrl.replace('confirm=t', 'confirm=1')
-          : finalUrl + '&confirm=t';
-        const upstream2 = await axios.get(altUrl, {
-          responseType: 'stream',
-          timeout: 0,
-          maxRedirects: 15,
-          headers: {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/124 Safari/537.36',
-            'Accept': '*/*',
-          },
+    if (isGithub) {
+      // GitHub Release: resolve redirect dulu untuk dapat URL objects.githubusercontent.com
+      // yang bisa langsung di-download client tanpa perlu header apapun
+      try {
+        const headRes = await axios.head(rawUrl, {
+          maxRedirects: 10,
+          timeout: 10000,
+          headers: { 'User-Agent': 'ThreeOneStore/1.0' },
+          validateStatus: s => s < 400
         });
-        res.setHeader('Content-Type', 'application/octet-stream');
-        res.setHeader('Content-Disposition', `attachment; filename="${safeName}.zip"`);
-        if (upstream2.headers['content-length']) res.setHeader('Content-Length', upstream2.headers['content-length']);
-        upstream2.data.pipe(res);
-        upstream2.data.on('error', (err) => {
-          console.error('[BYPASS STREAM] upstream2 error:', err.message);
-          if (!res.headersSent) res.status(502).end();
-        });
-        return;
+        // Ikuti redirect — axios.head() sudah resolve ke final URL
+        const finalUrl = headRes.request?.res?.responseUrl || headRes.config?.url || rawUrl;
+        console.log('[BYPASS] GitHub redirect →', finalUrl);
+        return res.redirect(302, finalUrl);
+      } catch (e) {
+        // Kalau head gagal, coba redirect langsung ke rawUrl — client akan follow sendiri
+        console.warn('[BYPASS] GitHub head gagal, redirect ke rawUrl:', e.message);
+        return res.redirect(302, rawUrl);
       }
-
-      res.setHeader('Content-Type', 'application/octet-stream');
-      res.setHeader('Content-Disposition', `attachment; filename="${safeName}.zip"`);
-      if (upstream.headers['content-length']) res.setHeader('Content-Length', upstream.headers['content-length']);
-      upstream.data.pipe(res);
-      upstream.data.on('error', (err) => {
-        console.error('[BYPASS STREAM] upstream error:', err.message);
-        if (!res.headersSent) res.status(502).end();
-      });
-    } catch (e) {
-      console.error('[BYPASS STREAM] fetch error:', e.message, '| URL:', finalUrl);
-      if (!res.headersSent) res.status(502).json({ error: 'Gagal mengambil file bypass: ' + e.message + ' — Pastikan link yang diset admin bisa diakses publik.' });
     }
+
+    if (isGdrive) {
+      // Google Drive: convert share link → direct download
+      const gdMatch = rawUrl.match(/drive\.google\.com\/(?:file\/d\/|open\?id=|uc\?.*id=)([a-zA-Z0-9_\-]+)/);
+      const fileId  = gdMatch?.[1];
+      if (!fileId) return res.status(400).json({ error: 'Format link Google Drive tidak dikenali.' });
+      const directUrl = `https://drive.google.com/uc?export=download&id=${fileId}&confirm=t`;
+      return res.redirect(302, directUrl);
+    }
+
+    // Link lain — redirect langsung, lebih aman daripada proxy untuk file besar
+    return res.redirect(302, rawUrl);
   } catch (e) {
     console.error('[BYPASS STREAM] Unexpected error:', e.message);
     if (!res.headersSent) res.status(500).json({ error: e.message });
