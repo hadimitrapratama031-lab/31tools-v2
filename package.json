@@ -11,7 +11,7 @@
     "server": "node server.js",
     "app": "electron .",
     "dev": "concurrently \"npm run server\" \"npm run app\"",
-    "build": "electron-builder --win"
+    "build:win": "electron-builder --win"
   },
   "build": {
     "appId": "com.31tools.app",
