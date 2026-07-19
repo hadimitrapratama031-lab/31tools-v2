@@ -619,6 +619,18 @@ select.role-select:focus { outline: none; border-color: var(--violet); }
 .form-input:focus { outline: none; border-color: var(--violet); background: rgba(123,92,255,.06); }
 .form-input::placeholder { color: var(--text-faint); }
 textarea.form-input { resize: vertical; min-height: 72px; }
+/* Fix: paksa select dark supaya dropdown options tidak putih di browser Chromium/Electron */
+select.form-input {
+  background-color: #1a1535;
+  color: var(--text);
+  cursor: pointer;
+  appearance: auto;
+}
+select.form-input option {
+  background: #1a1535;
+  color: var(--text);
+  padding: 8px 12px;
+}
 
 .cover-row { display: flex; gap: 8px; align-items: center; }
 .cover-row .form-input { margin: 0; }
@@ -1174,37 +1186,58 @@ textarea.form-input { resize: vertical; min-height: 72px; }
 .vr-gateway-badge.ok      { background: rgba(74,222,128,.12); border-color: rgba(74,222,128,.3); color: var(--green); }
 .vr-gateway-badge.error   { background: rgba(248,113,113,.12); border-color: rgba(248,113,113,.3); color: var(--red); }
 
+/* Mapping + Webhook 2 kolom, Resync full-width di bawah */
 .vr-grid {
-  display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 16px; margin-bottom: 4px; align-items: start;
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px; margin-bottom: 16px; align-items: start;
 }
-.vr-grid .card-body .btn { width: 100%; margin-top: 4px; }
-
-.vr-toggle-row { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 18px; }
-.vr-toggle {
-  display: flex; align-items: center; gap: 10px; font-size: 12.5px;
-  color: var(--text-dim); cursor: pointer; line-height: 1.5;
+/* Kartu Resync: span full width */
+.vr-grid .card:last-child {
+  grid-column: 1 / -1;
 }
-.vr-toggle input { accent-color: var(--violet); width: 16px; height: 16px; flex-shrink: 0; cursor: pointer; }
-
-.vr-btn-row { display: flex; gap: 10px; }
-.vr-btn-row .btn { flex: 1; margin-top: 0; }
-
+/* Di dalam Resync, tampilkan 2 opsi side by side */
+.vr-resync-body {
+  display: grid; grid-template-columns: 1fr 1fr; gap: 14px;
+}
+.vr-resync-card {
+  display: flex; flex-direction: column; gap: 10px;
+  background: var(--glass); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 16px;
+}
+.vr-resync-title { font-size: 13.5px; font-weight: 700; color: var(--text); }
+.vr-resync-desc  { font-size: 12px; color: var(--text-faint); line-height: 1.6; flex: 1; }
+.vr-resync-card .btn { margin-top: auto; }
 .vr-resync-row {
   display: flex; align-items: center; justify-content: space-between; gap: 14px;
   padding: 12px 0; border-bottom: 1px solid var(--line);
 }
 .vr-resync-row:last-of-type { border-bottom: none; }
 .vr-resync-row .btn { width: auto; margin-top: 0; flex-shrink: 0; }
-.vr-resync-title { font-size: 13px; font-weight: 700; }
-.vr-resync-desc  { font-size: 11px; color: var(--text-faint); margin-top: 2px; line-height: 1.5; }
+.vr-grid .card-body .btn { width: 100%; margin-top: 4px; }
+
+.vr-toggle-row { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 18px; }
+.vr-toggle {
+  display: flex; align-items: flex-start; gap: 10px; font-size: 12.5px;
+  color: var(--text-dim); cursor: pointer; line-height: 1.5;
+}
+.vr-toggle input { accent-color: var(--violet); width: 16px; height: 16px; flex-shrink: 0; cursor: pointer; margin-top: 2px; }
+
+.vr-btn-row { display: flex; gap: 10px; }
+.vr-btn-row .btn { flex: 1; margin-top: 0; }
 
 .vr-resync-result {
-  margin-top: 6px; padding: 12px 14px; border-radius: var(--radius-sm);
+  margin-top: 12px; padding: 12px 14px; border-radius: var(--radius-sm);
   background: var(--glass); border: 1px solid var(--line);
   font-size: 12px; color: var(--text-dim); line-height: 1.7; display: none;
 }
 .vr-resync-result.show { display: block; }
+
+@media (max-width: 900px) {
+  .vr-grid { grid-template-columns: 1fr; }
+  .vr-grid .card:last-child { grid-column: 1; }
+  .vr-resync-body { grid-template-columns: 1fr; }
+}
 
 .tag.source-admin      { background: rgba(123,92,255,.18); color: #a78bfa; box-shadow: none; }
 .tag.source-discord     { background: rgba(88,101,242,.18); color: #8ea1ff; box-shadow: none; }

@@ -431,19 +431,17 @@
             <div class="card-sub">Samakan paksa semua role user, dua arah bisa dipilih.</div>
           </div>
           <div class="card-body">
-            <div class="vr-resync-row">
-              <div>
-                <div class="vr-resync-title">App → Discord</div>
-                <div class="vr-resync-desc">Dorong role yang ada di app sekarang ke Discord semua user.</div>
+            <div class="vr-resync-body">
+              <div class="vr-resync-card">
+                <div class="vr-resync-title">⬆️ App → Discord</div>
+                <div class="vr-resync-desc">Dorong role yang ada di app sekarang ke Discord semua user. Gunakan ini kalau role di app sudah benar tapi Discord belum update.</div>
+                <button class="btn btn-secondary" id="btnResyncToDiscord">Jalankan</button>
               </div>
-              <button class="btn btn-secondary" id="btnResyncToDiscord">Jalankan</button>
-            </div>
-            <div class="vr-resync-row">
-              <div>
-                <div class="vr-resync-title">Discord → App</div>
-                <div class="vr-resync-desc">Tarik role Discord yang sebenarnya, jadikan role di app.</div>
+              <div class="vr-resync-card">
+                <div class="vr-resync-title">⬇️ Discord → App</div>
+                <div class="vr-resync-desc">Tarik role Discord yang sebenarnya, jadikan role di app. Gunakan ini kalau Discord adalah sumber kebenaran role yang paling akurat.</div>
+                <button class="btn btn-secondary" id="btnResyncToApp">Jalankan</button>
               </div>
-              <button class="btn btn-secondary" id="btnResyncToApp">Jalankan</button>
             </div>
             <div class="vr-resync-result" id="vrResyncResult"></div>
           </div>

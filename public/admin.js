@@ -1594,8 +1594,8 @@ async function loadRoleSyncLogs() {
       <thead><tr>
         <th>User</th>
         <th>Perubahan</th>
-        <th>Sumber</th>
-        <th style="width:120px;">Waktu</th>
+        <th style="width:130px;">Sumber</th>
+        <th style="width:140px;">Waktu</th>
       </tr></thead>
       <tbody>
       ${rows.map(r => `
@@ -1609,7 +1609,10 @@ async function loadRoleSyncLogs() {
             ${r.discordSynced === false ? `<div style="color:var(--red);font-size:11px;margin-top:4px;">⚠️ Sync Discord gagal${r.discordSyncReason ? ' ('+escapeHtml(r.discordSyncReason)+')' : ''}</div>` : ''}
           </td>
           <td><span class="tag source-${r.source}">${ROLE_SOURCE_LABEL[r.source] || r.source}</span></td>
-          <td class="cell-time" style="margin-top:0;">${timeAgo(r.createdAt)}</td>
+          <td style="white-space:nowrap;">
+            <div style="font-size:12.5px;color:var(--text);">${timeAgo(r.createdAt)}</div>
+            <div style="font-size:11px;color:var(--text-faint);margin-top:2px;">${r.createdAt ? new Date(r.createdAt).toLocaleDateString('id-ID',{day:'2-digit',month:'short',year:'numeric',hour:'2-digit',minute:'2-digit'}) : '—'}</div>
+          </td>
         </tr>
       `).join('')}
       </tbody>
