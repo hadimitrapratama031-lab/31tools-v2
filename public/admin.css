@@ -755,7 +755,7 @@ textarea.form-input { resize: vertical; min-height: 72px; }
 .item-card__cover {
   position: relative;
   width: 100%;
-  aspect-ratio: 3 / 4;
+  aspect-ratio: 16 / 9;
   background: var(--navy-800);
   overflow: hidden;
   flex-shrink: 0;
