@@ -731,31 +731,33 @@
     font-size:12px;font-weight:700;color:#ffce54;
   }
 
-  /* ---------------- ROLE BADGE (Public/Gold/Platinum) — dipakai di kartu game & bypass ---------------- */
+  /* ---------------- ROLE BADGE (Public/Gold/Platinum) — SATU badge aja ---------------- */
+  .badge-slot{ position:absolute; top:10px; left:10px; z-index:3; }
   .role-pill{
-    display:inline-flex;align-items:center;gap:4px;
-    font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;
-    padding:4px 10px;border-radius:99px;
-    box-shadow:0 4px 12px rgba(0,0,0,.35);
-    backdrop-filter:blur(6px);
+    display:inline-flex;align-items:center;gap:5px;
+    font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.04em;
+    padding:5px 11px 5px 8px;border-radius:99px;
+    box-shadow:0 6px 16px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.25);
+    backdrop-filter:blur(8px);
+  }
+  .role-pill .rp-icon{
+    display:flex;align-items:center;justify-content:center;
+    width:16px;height:16px;border-radius:50%;font-size:9.5px;
+    background:rgba(255,255,255,.22);flex-shrink:0;
   }
   .role-pill.public{
-    background:rgba(20,16,32,.65);color:#d7d2ea;border:1px solid rgba(255,255,255,.18);
+    background:rgba(20,16,32,.72);color:#e4e0f2;border:1px solid rgba(255,255,255,.16);
   }
   .role-pill.gold{
-    background:linear-gradient(135deg,#ffd76a,#ff9d3d);color:#3a2405;border:1px solid rgba(255,255,255,.35);
+    background:linear-gradient(135deg,#ffe28a,#ff9d3d 65%,#ff7d1f);
+    color:#3a2405;border:1px solid rgba(255,255,255,.5);
+    box-shadow:0 6px 18px rgba(255,157,61,.45), inset 0 1px 0 rgba(255,255,255,.4);
   }
   .role-pill.platinum{
-    background:linear-gradient(135deg,#7dd3fc,#a78bfa);color:#1c1440;border:1px solid rgba(255,255,255,.35);
+    background:linear-gradient(135deg,#a9e8ff,#8b7bff 60%,#c084fc);
+    color:#1c1440;border:1px solid rgba(255,255,255,.55);
+    box-shadow:0 6px 18px rgba(139,123,255,.45), inset 0 1px 0 rgba(255,255,255,.4);
   }
-  .role-pill-inline{
-    display:inline-flex;align-items:center;gap:4px;
-    font-size:10.5px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;
-    padding:3px 9px;border-radius:99px;
-  }
-  .role-pill-inline.public{background:rgba(255,255,255,.08);color:var(--text-dim);}
-  .role-pill-inline.gold{background:linear-gradient(135deg,rgba(255,215,106,.25),rgba(255,157,61,.15));color:#ffd76a;border:1px solid rgba(255,215,106,.3);}
-  .role-pill-inline.platinum{background:linear-gradient(135deg,rgba(125,211,252,.22),rgba(167,139,250,.16));color:#c4b5fd;border:1px solid rgba(167,139,250,.3);}
 
   .game-info{padding:12px 14px 14px;}
   .game-info h4{
@@ -764,7 +766,15 @@
   }
   .game-meta{
     display:flex;align-items:center;justify-content:space-between;
+    padding-top:8px;border-top:1px solid rgba(255,255,255,.06);
   }
+  .game-meta-hint{ font-size:11.5px;color:var(--text-dim);font-weight:600; }
+  .game-meta-arrow{
+    font-size:16px;color:#8b7bff;font-weight:800;
+    transition:transform .18s ease;
+  }
+  .game-card:hover .game-meta-arrow{ transform:translateX(3px); }
+  .game-card{ cursor:pointer; }
   .price-block{display:flex;flex-direction:column;}
   .price-block .now{font-size:14px;font-weight:800;color:var(--text-main);}
   .price-block .old{font-size:11px;color:var(--text-faint);text-decoration:line-through;}
@@ -783,7 +793,7 @@
   .game-card.locked .game-art{ filter:grayscale(.6) brightness(.55); }
   .game-card.locked .game-info h4{ color:var(--text-dim); }
   .lock-overlay{
-    position:absolute; inset:0; display:flex; align-items:center; justify-content:center;
+    position:absolute; inset:0; z-index:2; display:flex; align-items:center; justify-content:center;
     font-size:28px; background:rgba(10,7,18,.25);
   }
   .dl-btn.locked-btn{
@@ -981,3 +991,91 @@
 }
 .dl-btn-retry:hover { background: rgba(255,107,129,.25); }
 .dl-btn-retry.show { display: inline-flex; align-items: center; gap: 6px; }
+
+/* ═══════════════════════════════════════════════════════════
+   HALAMAN DETAIL GAME/BYPASS — dibuka saat kartu diklik
+   ═══════════════════════════════════════════════════════════ */
+.detail-back {
+  display: inline-flex; align-items: center; gap: 6px; width: fit-content;
+  background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.1);
+  color: #d7d2ea; font-size: 13px; font-weight: 700;
+  padding: 9px 16px 9px 12px; border-radius: 99px; cursor: pointer;
+  font-family: 'Manrope', sans-serif; transition: all .15s ease;
+}
+.detail-back span { font-size: 18px; line-height: 1; }
+.detail-back:hover { background: rgba(255,255,255,.1); transform: translateX(-2px); }
+
+.detail-hero {
+  position: relative; width: 100%; min-height: 340px; border-radius: 22px;
+  overflow: hidden; display: flex; align-items: flex-end;
+  background: linear-gradient(140deg,#241d24 0%,#12263f 100%);
+  box-shadow: 0 20px 50px rgba(0,0,0,.35);
+}
+.detail-hero-art {
+  position: absolute; inset: 0; background-size: cover; background-position: center;
+}
+.detail-hero-art.a{background:radial-gradient(circle at 75% 20%, rgba(255,210,90,0.35), transparent 55%),linear-gradient(140deg,#2a6f6b,#1c4a5e 60%,#12263f);}
+.detail-hero-art.b{background:radial-gradient(circle at 30% 20%, rgba(255,224,130,0.35), transparent 55%),linear-gradient(140deg,#3a7d3f,#245c3f 60%,#123a2e);}
+.detail-hero-art.c{background:radial-gradient(circle at 70% 15%, rgba(255,140,90,0.3), transparent 55%),linear-gradient(140deg,#3a2f2a,#241d24 60%,#141018);}
+.detail-hero-art.d{background:radial-gradient(circle at 30% 20%, rgba(140,190,255,0.35), transparent 55%),linear-gradient(140deg,#274a7a,#1b2f56 60%,#101a34);}
+.detail-hero-art.e{background:radial-gradient(circle at 70% 20%, rgba(255,170,210,0.35), transparent 55%),linear-gradient(140deg,#7a3f6d,#4a2450 60%,#241030);}
+.detail-hero-art.f{background:radial-gradient(circle at 30% 15%, rgba(120,220,255,0.35), transparent 55%),linear-gradient(140deg,#1c4a6f,#12304a 60%,#0a1a2c);}
+
+.detail-hero-overlay {
+  position: absolute; inset: 0;
+  background: linear-gradient(0deg, rgba(10,7,18,.92) 5%, rgba(10,7,18,.55) 45%, rgba(10,7,18,.1) 100%);
+}
+.detail-hero-badge { position: absolute; top: 18px; left: 18px; z-index: 3; }
+.detail-hero-badge .role-pill { font-size: 12px; padding: 7px 14px 7px 9px; }
+.detail-hero-badge .rp-icon { width: 19px; height: 19px; font-size: 11px; }
+
+.detail-hero-content { position: relative; z-index: 2; padding: 28px 30px; width: 100%; }
+.detail-hero-content h1 {
+  font-family: 'Poppins', sans-serif; font-weight: 800; font-size: 30px;
+  color: #fff; margin: 0 0 12px; text-shadow: 0 4px 16px rgba(0,0,0,.5);
+  line-height: 1.2;
+}
+.detail-hero-meta { display: flex; flex-wrap: wrap; gap: 8px; }
+.detail-chip {
+  background: rgba(255,255,255,.12); backdrop-filter: blur(6px);
+  border: 1px solid rgba(255,255,255,.16); color: #f1edfa;
+  font-size: 11.5px; font-weight: 600; padding: 5px 12px; border-radius: 99px;
+}
+
+.detail-body {
+  background: var(--card); border: 1px solid rgba(255,255,255,.05);
+  border-radius: 18px; padding: 22px 26px;
+}
+.detail-section-title {
+  font-family: 'Poppins', sans-serif; font-size: 14px; font-weight: 700;
+  color: var(--text-main); margin: 0 0 12px; display: flex; align-items: center; gap: 8px;
+}
+.detail-section-title .emoji { font-size: 15px; }
+.detail-description {
+  font-size: 13.5px; line-height: 1.85; color: var(--text-dim);
+  white-space: pre-line; margin: 0;
+}
+
+.detail-action-bar {
+  position: sticky; bottom: 0; padding: 16px 0 4px;
+  background: linear-gradient(0deg, var(--bg-purple-1) 60%, transparent 100%);
+}
+.detail-install-btn {
+  width: 100%; padding: 15px; border: none; border-radius: 14px;
+  background: linear-gradient(90deg,#7c5cff,#5b8dff); color: #fff;
+  font-size: 14.5px; font-weight: 800; font-family: 'Manrope', sans-serif;
+  cursor: pointer; box-shadow: 0 10px 26px rgba(124,92,255,.45);
+  transition: all .18s ease;
+}
+.detail-install-btn:hover { transform: translateY(-2px); box-shadow: 0 14px 32px rgba(124,92,255,.55); }
+.detail-install-btn:active { transform: translateY(0); }
+.detail-install-btn.locked {
+  background: rgba(255,255,255,.06); color: var(--text-dim);
+  border: 1px solid rgba(255,255,255,.12); box-shadow: none; cursor: not-allowed;
+}
+.detail-install-btn.locked:hover { transform: none; }
+
+@media (max-width: 880px) {
+  .detail-hero { min-height: 260px; }
+  .detail-hero-content h1 { font-size: 24px; }
+}

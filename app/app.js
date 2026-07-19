@@ -172,7 +172,8 @@ const PAGE_IDS = {
   bypasses: 'pageBypasses',
   store: 'pageStore',
   histori: 'pageHistori',
-  setting: 'pageSetting'
+  setting: 'pageSetting',
+  gameDetail: 'pageGameDetail'
 };
 
 function showPage(pageName) {
@@ -474,10 +475,9 @@ function startAutoRefresh() {
 }
 
 const ROLE_BADGE_ICON = { public: '🌐', gold: '🥇', platinum: '💎' };
-function roleBadgeHtml(role, inline = false) {
+function roleBadgeHtml(role) {
   const icon = ROLE_BADGE_ICON[role] || '🌐';
-  const cls = inline ? 'role-pill-inline' : 'role-pill';
-  return `<span class="${cls} ${role}">${icon} ${escapeHtml(role)}</span>`;
+  return `<span class="role-pill ${role}"><span class="rp-icon">${icon}</span>${escapeHtml(role)}</span>`;
 }
 
 // ── Cek apakah role user cukup buat akses item ini ──
@@ -488,26 +488,87 @@ function hasAccess(itemRole) {
   return myLevel >= itemLevel;
 }
 
+// ── HALAMAN DETAIL GAME/BYPASS ──
+// Dibuka saat kartu game/bypass diklik. Nampilin cover besar, deskripsi lengkap,
+// dan tombol install/aktifkan di bawah. Tombol Download di kartu sudah dihapus —
+// user WAJIB buka halaman detail dulu sebelum bisa install.
+let _prevPageBeforeDetail = 'dashboard';
+
+function openDetailPage(item, itemType) {
+  const activeLink = els.navLinks.find(a => a.classList.contains('active'));
+  _prevPageBeforeDetail = activeLink ? activeLink.dataset.page : 'dashboard';
+
+  const locked = !hasAccess(item.role);
+
+  const heroArt = document.getElementById('detailHeroArt');
+  if (item.imageUrl) {
+    heroArt.setAttribute('style', `background-image:url('${item.imageUrl}');background-size:cover;background-position:center;`);
+    heroArt.className = 'detail-hero-art';
+  } else {
+    heroArt.setAttribute('style', '');
+    heroArt.className = 'detail-hero-art ' + artClassForId(item._id || item.name || '');
+  }
+
+  document.getElementById('detailRoleBadge').innerHTML = roleBadgeHtml(item.role);
+  document.getElementById('detailTitle').textContent = item.name || '—';
+
+  const metaChips = [`${itemType === 'game' ? '🎮 Game' : '🛡️ Bypass'}`];
+  if (item.sizeLabel) metaChips.push(`💾 ${item.sizeLabel}`);
+  if (item.appId)     metaChips.push(`🆔 App ID ${item.appId}`);
+  document.getElementById('detailMetaChips').innerHTML =
+    metaChips.map(c => `<span class="detail-chip">${escapeHtml(c)}</span>`).join('');
+
+  document.getElementById('detailDescription').textContent =
+    item.description?.trim() || 'Belum ada deskripsi untuk item ini.';
+
+  const installBtn = document.getElementById('detailInstallBtn');
+  if (locked) {
+    installBtn.disabled  = true;
+    installBtn.className = 'detail-install-btn locked';
+    installBtn.textContent = `🔒 Butuh paket ${item.role} — Upgrade dulu`;
+    installBtn.onclick = null;
+  } else {
+    installBtn.disabled  = false;
+    installBtn.className = 'detail-install-btn';
+    installBtn.textContent = itemType === 'game' ? '⚡ Install Game' : '🛡️ Aktifkan Bypass';
+    installBtn.onclick = () => handleInstall(itemType, item._id, item.name);
+  }
+
+  showPage('gameDetail');
+  const mainEl = document.querySelector('.main');
+  if (mainEl) mainEl.scrollTop = 0;
+}
+window.openDetailPage = openDetailPage;
+
+function artClassForId(seed) {
+  const classes = ['a', 'b', 'c', 'd', 'e', 'f'];
+  let hash = 0;
+  for (let i = 0; i < String(seed).length; i++) hash = (hash * 31 + String(seed).charCodeAt(i)) >>> 0;
+  return classes[hash % classes.length];
+}
+
+function wireDetailPage() {
+  const backBtn = document.getElementById('detailBackBtn');
+  if (backBtn) backBtn.addEventListener('click', () => showPage(_prevPageBeforeDetail));
+}
+
 // ── RENDER KARTU GAME ──
-function renderGameCard(item) {
+function renderGameCard(item, idx) {
   const art = item.imageUrl
     ? `background-image:url('${item.imageUrl}');background-size:cover;background-position:center;`
     : '';
   const locked = !hasAccess(item.role);
   return `
-    <div class="game-card${locked ? ' locked' : ''}">
-      <div class="game-art" style="${art}">
-        ${roleBadgeHtml(item.role)}
+    <div class="game-card${locked ? ' locked' : ''}" data-idx="${idx}">
+      <div class="game-art${item.imageUrl ? '' : ' ' + artClassForId(item._id || item.name)}" style="${art}">
+        <div class="badge-slot">${roleBadgeHtml(item.role)}</div>
         ${locked ? `<div class="lock-overlay">🔒</div>` : ''}
       </div>
       <div class="game-info">
         <h4 title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</h4>
         <div class="game-meta">
-          ${roleBadgeHtml(item.role, true)}
-          ${locked
-            ? `<button class="dl-btn locked-btn" disabled title="Butuh paket ${escapeHtml(item.role)}">🔒 Upgrade ke ${escapeHtml(item.role)}</button>`
-            : `<button class="dl-btn" data-id="${item._id}" data-name="${escapeHtml(item.name)}">Download</button>`
-          }
+          <span class="game-meta-hint">${locked ? '🔒 Terkunci' : 'Lihat Detail'}</span>
+          <span class="game-meta-arrow">›</span>
         </div>
       </div>
     </div>`;
@@ -516,33 +577,30 @@ function renderGameCard(item) {
 function renderGrid(container, games) {
   if (!container) return;
   container.innerHTML = games.length
-    ? games.map(renderGameCard).join('')
+    ? games.map((g, i) => renderGameCard(g, i)).join('')
     : `<div style="color:#8577a3;font-size:13px;padding:10px 4px;">Belum ada game.</div>`;
-  container.querySelectorAll('.dl-btn:not(.locked-btn)').forEach(btn => {
-    btn.addEventListener('click', () => handleInstall('game', btn.dataset.id, btn.dataset.name));
+  container.querySelectorAll('.game-card').forEach(card => {
+    card.addEventListener('click', () => openDetailPage(games[+card.dataset.idx], 'game'));
   });
 }
 
 // ── RENDER KARTU BYPASS ──
-function renderBypassCard(item) {
+function renderBypassCard(item, idx) {
   const art = item.imageUrl
     ? `background-image:url('${item.imageUrl}');background-size:cover;background-position:center;`
     : '';
   const locked = !hasAccess(item.role);
   return `
-    <div class="game-card${locked ? ' locked' : ''}">
-      <div class="game-art" style="${art}">
-        ${roleBadgeHtml(item.role)}
+    <div class="game-card${locked ? ' locked' : ''}" data-idx="${idx}">
+      <div class="game-art${item.imageUrl ? '' : ' ' + artClassForId(item._id || item.name)}" style="${art}">
+        <div class="badge-slot">${roleBadgeHtml(item.role)}</div>
         ${locked ? `<div class="lock-overlay">🔒</div>` : ''}
       </div>
       <div class="game-info">
         <h4 title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</h4>
         <div class="game-meta">
-          ${roleBadgeHtml(item.role, true)}
-          ${locked
-            ? `<button class="dl-btn locked-btn" disabled title="Butuh paket ${escapeHtml(item.role)}">🔒 Upgrade ke ${escapeHtml(item.role)}</button>`
-            : `<button class="dl-btn" data-id="${item._id}" data-name="${escapeHtml(item.name)}">Install</button>`
-          }
+          <span class="game-meta-hint">${locked ? '🔒 Terkunci' : 'Lihat Detail'}</span>
+          <span class="game-meta-arrow">›</span>
         </div>
       </div>
     </div>`;
@@ -551,13 +609,10 @@ function renderBypassCard(item) {
 function renderBypassGrid(container, bypasses) {
   if (!container) return;
   container.innerHTML = bypasses.length
-    ? bypasses.map(renderBypassCard).join('')
+    ? bypasses.map((b, i) => renderBypassCard(b, i)).join('')
     : `<div style="color:#8577a3;font-size:13px;padding:10px 4px;">Belum ada bypass.</div>`;
-  // Bypass diinstall dengan cara yang SAMA seperti game — download lewat proxy server
-  // (handleInstall), auto-detect folder game via App ID, lalu extract ke folder tersebut.
-  // TIDAK ADA lagi tombol "Buka Link" / shell.openExternal ke link mentah.
-  container.querySelectorAll('.dl-btn:not(.locked-btn)').forEach(btn => {
-    btn.addEventListener('click', () => handleInstall('bypass', btn.dataset.id, btn.dataset.name));
+  container.querySelectorAll('.game-card').forEach(card => {
+    card.addEventListener('click', () => openDetailPage(bypasses[+card.dataset.idx], 'bypass'));
   });
 }
 
@@ -1287,6 +1342,7 @@ document.addEventListener('DOMContentLoaded', () => {
   wireSearch();
   wireGamesRoleFilter();
   wireBypassesRoleFilter();
+  wireDetailPage();
   wireHistoriTabs();
   loadConfig();
   tryAutoLogin();
