@@ -484,23 +484,25 @@ function renderTableRows(type, rows, isFilteredEmpty) {
     <tbody>
     ${rows.map(item => `
       <tr class="row-role-accent ${item.role}">
-        <td style="width:72px;">
-          ${item.imageUrl
-            ? `<img class="cell-img" src="${escapeHtml(item.imageUrl)}" onerror="this.style.display='none'">`
-            : `<div class="cell-img" style="display:flex;align-items:center;justify-content:center;color:var(--text-faint);font-size:20px;">🎮</div>`}
+        <td>
+          <div class="cell-img-wrap">
+            ${item.imageUrl
+              ? `<img class="cell-img" src="${escapeHtml(item.imageUrl)}" onerror="this.style.display='none'">`
+              : `<div class="cell-img" style="display:flex;align-items:center;justify-content:center;color:var(--text-faint);font-size:20px;">🎮</div>`}
+          </div>
         </td>
         <td>
           <div class="cell-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</div>
           ${item.description ? `<div class="cell-desc">${escapeHtml(item.description)}</div>` : ''}
-          <div style="margin-top:5px;display:flex;gap:5px;flex-wrap:wrap;max-width:100%;">
+          <div style="margin-top:6px;display:flex;gap:5px;flex-wrap:wrap;max-width:460px;">
             ${item.sizeLabel ? `<span class="chip">💾 ${escapeHtml(item.sizeLabel)}</span>` : ''}
             ${item.appId     ? `<span class="chip">🆔 ${escapeHtml(item.appId)}</span>` : ''}
             ${(item.zipUrl || item.link) ? `<span class="chip chip-ok">🔗 Ada link</span>` : ''}
           </div>
           ${item.createdAt ? `<div class="cell-time">🕓 ${timeAgo(item.createdAt)}</div>` : ''}
         </td>
-        <td style="width:120px;">${roleTagHtml(item.role)}</td>
-        <td style="width:96px;" class="row-actions">
+        <td>${roleTagHtml(item.role)}</td>
+        <td class="row-actions">
           <button class="icon-btn" title="Edit" onclick='openItemModal("${type}", ${JSON.stringify(item).replace(/'/g, "&#39;")})'>${editIcon}</button>
           <button class="icon-btn danger" title="Hapus" onclick="deleteItem('${type}','${item._id}')">${trashIcon}</button>
         </td>

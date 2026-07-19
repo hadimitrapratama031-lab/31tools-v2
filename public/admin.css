@@ -424,27 +424,39 @@ table th {
   background: rgba(255,255,255,.02);
 }
 table td {
-  padding: 12px 18px; border-bottom: 1px solid var(--line);
-  vertical-align: top;
+  padding: 14px 18px; border-bottom: 1px solid var(--line);
+  vertical-align: middle;
 }
-/* Kolom dengan lebar fixed supaya tabel tidak berantakan */
-table th:nth-child(1), table td:nth-child(1) { width: 72px; }
-table th:nth-child(3), table td:nth-child(3) { width: 120px; }
-table th:nth-child(4), table td:nth-child(4) { width: 96px; }
+/* Kolom dengan lebar fixed supaya tabel tidak berantakan.
+   PENTING: box-sizing global-nya border-box, jadi width di sini SUDAH TERMASUK
+   padding kiri+kanan td (18px+18px=36px) — kolom cover harus cukup lebar untuk
+   menampung padding itu + gambar cover-nya, kalau tidak gambar akan kepotong. */
+table th:nth-child(1), table td:nth-child(1) { width: 88px; }
+table th:nth-child(3), table td:nth-child(3) { width: 130px; }
+table th:nth-child(4), table td:nth-child(4) { width: 112px; }
+/* Kolom Nama (kolom ke-2) sengaja TIDAK dikasih width tetap supaya otomatis
+   mengisi sisa ruang — tapi ISI di dalamnya (cell-name/cell-desc) dibatasi
+   max-width sendiri (lihat di bawah) supaya teks tidak melebar sampai ratusan
+   pixel dan menyisakan jarak kosong raksasa sebelum kolom Role/Aksi. */
 table tr:last-child td { border-bottom: none; }
 table tbody tr { transition: background .15s; }
 table tbody tr:hover td { background: rgba(123,92,255,.05); }
 
+.cell-img-wrap { display: flex; align-items: center; justify-content: center; }
 .cell-img {
-  width: 46px; height: 64px; border-radius: 9px; object-fit: cover;
+  width: 48px; height: 68px; border-radius: 8px; object-fit: cover;
   background: var(--navy-700); display: block;
   box-shadow: 0 4px 12px rgba(0,0,0,.3); flex-shrink: 0;
 }
-.cell-name { font-weight: 600; font-size: 13.5px; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cell-name {
+  font-weight: 600; font-size: 13.5px; margin-bottom: 3px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 460px;
+}
 .cell-desc {
-  font-size: 11.5px; color: var(--text-faint);
+  font-size: 11.5px; color: var(--text-faint); max-width: 460px;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-  overflow: hidden; max-width: 100%;
+  overflow: hidden;
 }
 .cell-avatar {
   width: 32px; height: 32px; border-radius: 50%; object-fit: cover;
