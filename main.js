@@ -382,7 +382,7 @@ function copyDirOverwrite(srcDir, destDir) {
   }
 }
 
-ipcMain.handle('install-bypass', async (event, { folderPath, driveUrl, userId, deviceId, gameId, gameName, steamAppId }) => {
+ipcMain.handle('install-bypass', async (event, { folderPath, driveUrl, userId, deviceId, gameId, gameName, steamAppId, extraHeaders }) => {
   const tempZipPath = path.join(app.getPath('temp'), 'bypass_' + Date.now() + '.zip');
   const tempExtractDir = path.join(app.getPath('temp'), 'bypass_extract_' + Date.now());
   try {
@@ -408,8 +408,9 @@ ipcMain.handle('install-bypass', async (event, { folderPath, driveUrl, userId, d
       }
     }
 
-    // Download langsung dari URL yang admin set (persis seperti project lama)
-    await downloadFileWithProgress(driveUrl, tempZipPath, null);
+    // Download dari URL yang admin set, ATAU dari streamPath proxy server sendiri (butuh
+    // extraHeaders/Authorization kalau link-nya perlu auth, mis. Ryuu Generator).
+    await downloadFileWithProgress(driveUrl, tempZipPath, null, 0, extraHeaders || {});
 
     // Validasi: file harus diawali signature ZIP (PK\x03\x04)
     const headBuf = fs.readFileSync(tempZipPath, { encoding: null, flag: 'r' }).slice(0, 4);

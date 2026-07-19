@@ -104,6 +104,10 @@ let HUBCAP_API_KEYS = [
 ].filter(Boolean);
 const HUBCAP_API_KEY = HUBCAP_API_KEYS[0] || ''; // dipertahankan untuk kompatibilitas kode lama
 
+// Ryuu Generator (generator.ryuu.lol) — dipakai kalau bypass pakai link Ryuu. Ambil dari
+// generator.ryuu.lol/api > "Your Auth Key" (butuh akun Ryuu, gratis/premium tergantung kuota).
+const RYUU_API_KEY = process.env.RYUU_API_KEY || '';
+
 let hubcapKeyIndex = 0;
 const HUBCAP_COOLDOWN_MS = 60 * 1000; // 1 menit cooldown per key yang kena limit
 const hubcapKeyCooldown = {}; // { index: timestampMs kapan boleh dipakai lagi }
@@ -655,7 +659,29 @@ app.get('/api/bypasses/:id/download-link', requireUser, async (req, res) => {
       return res.status(404).json({ error: 'Link bypass belum diatur admin. Hubungi admin untuk mengisi link file bypass.' });
     }
 
-    // Return langsung URL-nya ke client — sama persis dengan project lama
+    // BUG FIX: Link dari Ryuu Generator (generator.ryuu.lol) WAJIB pakai auth (session,
+    // auth_key parameter, atau X-Auth-Key header) — kalau tidak, Ryuu selalu balikin
+    // "Login, auth_key, or auth_code required." Sebelumnya URL dikirim mentah ke client
+    // TANPA auth apapun, jadi bypass dari Ryuu SELALU gagal. Sekarang di-proxy lewat
+    // server sendiri (pakai RYUU_API_KEY dari .env, sama seperti pola HubCap), supaya
+    // admin tidak perlu tempel auth key manual di tiap link, dan key-nya tidak pernah
+    // terekspos ke client/Electron.
+    const isRyuu = /ryuu\.lol/i.test(url);
+    if (isRyuu) {
+      if (!RYUU_API_KEY) {
+        return res.status(400).json({
+          error: 'Link bypass ini dari Ryuu Generator, tapi RYUU_API_KEY belum diisi di server (.env). Hubungi admin untuk mengisinya.'
+        });
+      }
+      return res.json({
+        streamPath: `/api/bypasses/${req.params.id}/ryuu-stream`,
+        name:       bypass.name,
+        steamAppId: bypass.steamAppId || bypass.appId || null,
+      });
+    }
+
+    // Link non-Ryuu (GitHub Release, Google Drive, CDN lain) — tetap seperti sebelumnya,
+    // return langsung URL-nya ke client.
     res.json({
       directUrl:  url,
       name:       bypass.name,
@@ -663,6 +689,80 @@ app.get('/api/bypasses/:id/download-link', requireUser, async (req, res) => {
     });
   } catch(e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ── PROXY DOWNLOAD RYUU GENERATOR — server yang nempelin auth (X-Auth-Key), client cuma
+// terima file ZIP jadi. API key Ryuu tidak pernah dikirim ke Electron/localStorage. ──
+app.get('/api/bypasses/:id/ryuu-stream', requireUser, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+    const bypass = await db.collection('bypasses').findOne({ _id: new ObjectId(req.params.id) });
+    if (!bypass) return res.status(404).json({ error: 'Bypass tidak ditemukan.' });
+
+    const myLevel     = ROLE_LEVEL[req.user.role]   ?? 0;
+    const bypassLevel = ROLE_LEVEL[bypass.role]     ?? 0;
+    if (myLevel < bypassLevel) {
+      return res.status(403).json({ error: `Bypass ini membutuhkan paket ${bypass.role}.` });
+    }
+
+    const url = bypass.zipUrl || bypass.link || bypass.driveLink || null;
+    if (!url || !/ryuu\.lol/i.test(url)) {
+      return res.status(400).json({ error: 'Link bypass ini bukan link Ryuu Generator.' });
+    }
+    if (!RYUU_API_KEY) {
+      return res.status(500).json({ error: 'RYUU_API_KEY belum diisi di server (.env). Hubungi admin.' });
+    }
+
+    let ryuuRes;
+    try {
+      ryuuRes = await axios.get(url, {
+        headers: { 'X-Auth-Key': RYUU_API_KEY },
+        responseType: 'stream',
+        timeout: 0, // file manifest/zip bisa besar
+        maxRedirects: 10,
+        validateStatus: () => true
+      });
+    } catch (e) {
+      console.error('[RYUU STREAM] Gagal terhubung ke Ryuu Generator:', e.message);
+      return res.status(502).json({ error: 'Gagal terhubung ke Ryuu Generator: ' + e.message });
+    }
+
+    if (ryuuRes.status !== 200) {
+      // Baca body error (biasanya JSON kecil kayak {"error":"..."}) supaya pesannya
+      // informatif, bukan cuma "HTTP 401" polos.
+      let bodyText = '';
+      try {
+        for await (const chunk of ryuuRes.data) {
+          bodyText += chunk.toString('utf8');
+          if (bodyText.length > 500) break;
+        }
+      } catch (e2) {}
+      let parsedMsg = null;
+      try {
+        const parsed = JSON.parse(bodyText);
+        if (parsed && typeof parsed.error === 'string') parsedMsg = parsed.error;
+      } catch (e3) {}
+
+      if (ryuuRes.status === 401 || ryuuRes.status === 403) {
+        return res.status(401).json({ error: parsedMsg || 'RYUU_API_KEY tidak valid/ditolak Ryuu Generator (401/403). Hubungi admin untuk update key.' });
+      }
+      if (ryuuRes.status === 404) {
+        return res.status(404).json({ error: parsedMsg || 'Manifest untuk game ini tidak ditemukan di Ryuu Generator.' });
+      }
+      if (ryuuRes.status === 429) {
+        return res.status(429).json({ error: parsedMsg || 'Kuota harian Ryuu Generator habis, coba lagi nanti.' });
+      }
+      return res.status(502).json({ error: parsedMsg || `Ryuu Generator mengembalikan HTTP ${ryuuRes.status}.` });
+    }
+
+    res.setHeader('Content-Type', 'application/zip');
+    res.setHeader('Content-Disposition', `attachment; filename="${(bypass.name || 'bypass').replace(/[^a-z0-9]/gi, '_')}.zip"`);
+    if (ryuuRes.headers['content-length']) res.setHeader('Content-Length', ryuuRes.headers['content-length']);
+    ryuuRes.data.pipe(res);
+  } catch (e) {
+    console.error('[RYUU STREAM] Unexpected error:', e.message);
+    if (!res.headersSent) res.status(500).json({ error: e.message });
   }
 });
 
