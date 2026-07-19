@@ -245,13 +245,6 @@ function downloadFileWithProgress(url, destPath, onProgress, redirectCount = 0, 
         return resolve(downloadFileWithProgress(location, destPath, onProgress, redirectCount + 1, redirectHeaders));
       }
       if (response.statusCode === 401 || response.statusCode === 403 || (response.statusCode >= 400 && response.statusCode < 600)) {
-        // BUG FIX: sebelumnya langsung response.resume() (buang body tanpa dibaca) lalu MENEBAK
-        // pesan error cuma dari hostname. Karena SEMUA link (termasuk ryuu.lol) di-proxy lewat
-        // server sendiri, host yang diterima di sini SELALU ownServerHost — jadi kode lama selalu
-        // menyimpulkan "sesi login expired", padahal server kita sendiri SUDAH mengirim pesan JSON
-        // yang jelas & akurat (mis. "Ryuu menolak akses (401). Link kedaluwarsa..."). Sekarang body
-        // response dibaca dulu dan dipakai kalau memang JSON `{error: "..."}` — baru fallback ke
-        // pesan generik kalau body-nya bukan JSON (host asing yang bukan proxy server sendiri).
         let rawBody = '';
         response.on('data', (chunk) => { rawBody += chunk; });
         response.on('end', () => {
@@ -259,15 +252,21 @@ function downloadFileWithProgress(url, destPath, onProgress, redirectCount = 0, 
           try {
             const parsed = JSON.parse(rawBody);
             if (parsed && typeof parsed.error === 'string' && parsed.error.trim()) serverMsg = parsed.error;
-          } catch(e3) { /* bukan JSON — host asing, pakai fallback di bawah */ }
+          } catch(e3) {
+            // Bukan JSON — coba pakai teks mentahnya kalau pendek & bermakna
+            const trimmed = rawBody.trim();
+            if (trimmed && trimmed.length < 300 && !trimmed.startsWith('<')) {
+              serverMsg = `Link bypass bermasalah: "${trimmed}". Minta admin ganti dengan link GitHub Release yang valid.`;
+            }
+          }
 
           if (serverMsg) return reject(new Error(serverMsg));
 
-          // Fallback lama — cuma dipakai kalau body-nya BUKAN JSON (bukan dari server sendiri)
           const host = (() => { try { return new URL(url).hostname.toLowerCase(); } catch(e4) { return ''; } })();
           if (response.statusCode === 401) {
             let errMsg401 = 'Sesi login kamu expired. Silakan logout dan login ulang.';
             if (host.includes('hubcap')) errMsg401 = 'API Key HubCap tidak valid atau expired. Hubungi admin.';
+            else if (host.includes('ryuu')) errMsg401 = 'Link bypass Ryuu memerlukan auth — gunakan link GitHub Release sebagai gantinya. Minta admin update link bypass.';
             else if (host !== ownServerHost) errMsg401 = `Link file ditolak oleh server (401): ${host}. Kemungkinan link sudah kedaluwarsa atau diproteksi. Hubungi admin untuk ganti link.`;
             return reject(new Error(errMsg401));
           }

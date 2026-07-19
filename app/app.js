@@ -705,20 +705,18 @@ async function handleInstall(itemType, itemId, itemName) {
   dlSetStage('Menghubungkan ke server...', 0);
 
   try {
-    const data = await api(`/api/${isGame ? 'games' : 'bypasses'}/${itemId}/download`);
-    if (!data.streamPath) throw new Error(data.error || 'Server tidak memberikan link download. Pastikan admin sudah mengisi data game/bypass.');
-    dlSetStage('URL diterima, mendeteksi Steam...', 1);
-
-    // PENTING: ambil token SETELAH api() di atas — karena api() mungkin sudah refresh
-    // token saat memanggil /api/bypasses/:id/download. Kalau pakai token lama,
-    // stream endpoint akan tetap 401 meski download endpoint sukses.
-    const token = localStorage.getItem('token') || '';
-    const zipUrl = `${SERVER_URL}${data.streamPath}`;
-    const streamAuthHeaders = { Authorization: `Bearer ${token}` };
-
     let result;
 
     if (isGame) {
+      // ── GAME INJECT (pakai HubCap lewat proxy server, tidak berubah) ──
+      const data = await api(`/api/games/${itemId}/download`);
+      if (!data.streamPath) throw new Error(data.error || 'Server tidak memberikan link download. Pastikan admin sudah mengisi data game.');
+      dlSetStage('URL diterima, mendeteksi Steam...', 1);
+
+      const token = localStorage.getItem('token') || '';
+      const zipUrl = `${SERVER_URL}${data.streamPath}`;
+      const streamAuthHeaders = { Authorization: `Bearer ${token}` };
+
       const steamPath = await window.electronAPI.getSteamPath();
       if (!steamPath) throw new Error('Steam tidak ditemukan di PC ini. Pastikan Steam sudah terinstall dan pernah dijalankan.');
 
@@ -745,17 +743,12 @@ async function handleInstall(itemType, itemId, itemName) {
       );
 
     } else {
-      // ── BYPASS INSTALL (sistem persis seperti project lama) ──
-      // 1. Ambil directUrl dari endpoint sederhana (tanpa proxy/stream complexity)
-      // 2. Cari folder game di steamapps via appId
-      // 3. Download langsung dari directUrl ke main.js
-      // 4. Extract ke folder game
-
+      // ── BYPASS INSTALL (sistem persis project lama — download langsung dari link admin) ──
       dlSetStage('Mengambil link bypass...', 1);
       const linkData = await api(`/api/bypasses/${itemId}/download-link`);
       if (!linkData.directUrl) throw new Error(linkData.error || 'Link bypass tidak ditemukan. Pastikan admin sudah mengisi link file bypass.');
 
-      const appId = linkData.steamAppId || data.steamAppId || data.appId;
+      const appId = linkData.steamAppId || linkData.appId;
       if (!appId) throw new Error('App ID belum diisi admin pada bypass ini. Hubungi admin.');
 
       dlSetStage('Mendeteksi Steam...', 1);
@@ -769,7 +762,7 @@ async function handleInstall(itemType, itemId, itemName) {
       dlSetStage('Mengunduh bypass...', 2);
       result = await window.electronAPI.installBypass({
         folderPath:  folderResult.folderPath,
-        driveUrl:    linkData.directUrl,   // URL langsung dari admin, bukan lewat proxy server
+        driveUrl:    linkData.directUrl,
         userId:      currentUser?.discordId || currentUser?.userId || '',
         deviceId:    getOrCreateDeviceId(),
         gameId:      itemId,
