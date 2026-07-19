@@ -567,6 +567,101 @@ app.get('/api/games', requireUser, async (req, res) => {
   }
 });
 
+// ══════════════════════════════════════════════════════════════════════════
+// HALAMAN DETAIL — data ASLI dari Steam Store API berdasarkan App ID
+// (BUKAN data fiksi/hardcode). Dipakai app client buat nampilin halaman
+// detail game/bypass gaya Steam: cover, release date, metacritic, developer,
+// publisher, tag, dan System Requirements (Minimum/Recommended).
+// ══════════════════════════════════════════════════════════════════════════
+const _steamDetailsCache = new Map(); // appId -> { data, expiresAt }
+const STEAM_DETAILS_CACHE_MS = 15 * 60 * 1000; // 15 menit, biar gak spam Steam API tiap buka halaman
+
+// Ubah HTML requirements dari Steam ("<ul class='bb_ul'><li><strong>OS:</strong> ...</li>...")
+// jadi array {label, value} yang bersih buat dirender di UI.
+function parseSteamRequirements(html) {
+  if (!html) return [];
+  const items = [];
+  const liMatches = html.match(/<li>.*?<\/li>/gis) || [];
+  for (const li of liMatches) {
+    const inner = li.replace(/^<li>|<\/li>$/gi, '');
+    const strongMatch = inner.match(/<strong>(.*?)<\/strong>\s*:?\s*(.*)/is);
+    const stripTags = s => s.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ').trim();
+    if (strongMatch) {
+      const label = stripTags(strongMatch[1]);
+      const value = stripTags(strongMatch[2]);
+      if (label || value) items.push({ label, value });
+    } else {
+      const value = stripTags(inner);
+      if (value) items.push({ label: '', value });
+    }
+  }
+  return items;
+}
+
+async function fetchSteamDetailsForAppId(appId) {
+  const cached = _steamDetailsCache.get(appId);
+  if (cached && cached.expiresAt > Date.now()) return cached.data;
+
+  const steamRes = await axios.get('https://store.steampowered.com/api/appdetails', {
+    params: { appids: appId, l: 'english' },
+    timeout: 12000
+  });
+  const entry = steamRes.data?.[appId];
+  if (!entry?.success || !entry.data) return null;
+  const d = entry.data;
+
+  const result = {
+    appId,
+    name: d.name || null,
+    headerImage: d.header_image || null,
+    shortDescription: d.short_description || '',
+    genres: (d.genres || []).map(g => g.description).filter(Boolean),
+    categories: (d.categories || []).map(c => c.description).filter(Boolean),
+    releaseDate: d.release_date?.date || null,
+    comingSoon: !!d.release_date?.coming_soon,
+    metacritic: (typeof d.metacritic?.score === 'number') ? d.metacritic.score : null,
+    developers: d.developers || [],
+    publishers: d.publishers || [],
+    requirementsMin: parseSteamRequirements(d.pc_requirements?.minimum),
+    requirementsRec: parseSteamRequirements(d.pc_requirements?.recommended),
+    storeUrl: `https://store.steampowered.com/app/${appId}/`
+  };
+
+  _steamDetailsCache.set(appId, { data: result, expiresAt: Date.now() + STEAM_DETAILS_CACHE_MS });
+  return result;
+}
+
+app.get('/api/games/:id/steam-details', requireUser, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+    const game = await db.collection('games').findOne({ _id: new ObjectId(req.params.id) });
+    if (!game) return res.status(404).json({ error: 'Game tidak ditemukan.' });
+    if (!game.appId) return res.status(404).json({ error: 'App ID Steam belum diisi admin untuk game ini.' });
+
+    const details = await fetchSteamDetailsForAppId(game.appId);
+    if (!details) return res.status(404).json({ error: `Detail Steam untuk App ID ${game.appId} tidak ditemukan.` });
+    res.json(details);
+  } catch (e) {
+    res.status(500).json({ error: 'Gagal mengambil detail dari Steam: ' + e.message });
+  }
+});
+
+app.get('/api/bypasses/:id/steam-details', requireUser, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+    const bypass = await db.collection('bypasses').findOne({ _id: new ObjectId(req.params.id) });
+    if (!bypass) return res.status(404).json({ error: 'Bypass tidak ditemukan.' });
+    const appId = bypass.appId || bypass.steamAppId || null;
+    if (!appId) return res.status(404).json({ error: 'App ID Steam belum diisi admin untuk bypass ini.' });
+
+    const details = await fetchSteamDetailsForAppId(appId);
+    if (!details) return res.status(404).json({ error: `Detail Steam untuk App ID ${appId} tidak ditemukan.` });
+    res.json(details);
+  } catch (e) {
+    res.status(500).json({ error: 'Gagal mengambil detail dari Steam: ' + e.message });
+  }
+});
+
 // ── DOWNLOAD (metadata): cek role & kembalikan info untuk mulai proses inject.
 // TIDAK lagi mengirim URL HubCap mentah + API key ke client (rawan & kadang gagal
 // karena Electron fetch langsung ke HubCap tidak sereliable axios di server).

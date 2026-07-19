@@ -204,21 +204,57 @@
 
     <!-- ═══════════ PAGE: DETAIL GAME/BYPASS (dibuka saat klik kartu) ═══════════ -->
     <div class="page-content" id="pageGameDetail" style="display:none;">
-      <button class="detail-back" id="detailBackBtn"><span>‹</span> Kembali</button>
+      <button class="detail-back" id="detailBackBtn"><span>←</span> Back to Games</button>
 
-      <div class="detail-hero" id="detailHero">
-        <div class="detail-hero-art" id="detailHeroArt"></div>
-        <div class="detail-hero-overlay"></div>
-        <div class="detail-hero-badge" id="detailRoleBadge"></div>
-        <div class="detail-hero-content">
-          <h1 id="detailTitle">—</h1>
-          <div class="detail-hero-meta" id="detailMetaChips"></div>
+      <div class="detail-grid">
+
+        <!-- KOLOM KIRI: cover besar + info grid (Release Date / Metacritic / Developer / Publisher) -->
+        <div class="detail-col-left">
+          <div class="detail-cover" id="detailCover"></div>
+
+          <div class="detail-info-grid" id="detailInfoGrid">
+            <div class="detail-info-box">
+              <div class="dib-label">Release Date</div>
+              <div class="dib-value" id="dibRelease">—</div>
+            </div>
+            <div class="detail-info-box">
+              <div class="dib-label">Metacritic</div>
+              <div class="dib-value" id="dibMetacritic">—</div>
+            </div>
+            <div class="detail-info-box">
+              <div class="dib-label">Developer</div>
+              <div class="dib-value" id="dibDeveloper">—</div>
+            </div>
+            <div class="detail-info-box">
+              <div class="dib-label">Publisher</div>
+              <div class="dib-value" id="dibPublisher">—</div>
+            </div>
+          </div>
         </div>
-      </div>
 
-      <div class="detail-body">
-        <h3 class="detail-section-title"><span class="emoji">📄</span> Deskripsi</h3>
-        <p class="detail-description" id="detailDescription">—</p>
+        <!-- KOLOM KANAN: judul, steam id, deskripsi, tag, system requirements -->
+        <div class="detail-col-right">
+          <h1 class="detail-title" id="detailTitle">—</h1>
+          <div class="detail-steamid" id="detailSteamId" style="display:none;">STEAM ID: <span id="detailSteamIdVal">—</span></div>
+
+          <p class="detail-description" id="detailDescription">—</p>
+
+          <div class="detail-tags" id="detailTags"></div>
+
+          <div class="detail-reqs-wrap" id="detailReqsWrap" style="display:none;">
+            <h3 class="detail-reqs-title">System Requirements</h3>
+            <div class="detail-reqs-grid">
+              <div class="detail-reqs-box">
+                <div class="drb-label">Minimum</div>
+                <div class="drb-body" id="detailReqsMin"></div>
+              </div>
+              <div class="detail-reqs-box">
+                <div class="drb-label">Recommended</div>
+                <div class="drb-body" id="detailReqsRec"></div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
 
       <div class="detail-action-bar">

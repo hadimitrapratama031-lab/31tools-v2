@@ -489,37 +489,60 @@ function hasAccess(itemRole) {
 }
 
 // ── HALAMAN DETAIL GAME/BYPASS ──
-// Dibuka saat kartu game/bypass diklik. Nampilin cover besar, deskripsi lengkap,
-// dan tombol install/aktifkan di bawah. Tombol Download di kartu sudah dihapus —
-// user WAJIB buka halaman detail dulu sebelum bisa install.
+// Dibuka saat kartu game/bypass diklik. Data dasar (nama, role, deskripsi, cover)
+// langsung ditampilkan dari data yang sudah ada, lalu detail LENGKAP & ASLI
+// (release date, metacritic, developer, publisher, tag, system requirements)
+// di-fetch dari Steam Store API (lewat proxy server) berdasarkan App ID game itu —
+// BUKAN data fiksi/hardcode.
 let _prevPageBeforeDetail = 'dashboard';
+let _detailFetchToken = 0; // biar response fetch yang telat/kebalap gak nimpa detail yang lagi dibuka
 
 function openDetailPage(item, itemType) {
   const activeLink = els.navLinks.find(a => a.classList.contains('active'));
   _prevPageBeforeDetail = activeLink ? activeLink.dataset.page : 'dashboard';
+  const myFetchToken = ++_detailFetchToken;
 
   const locked = !hasAccess(item.role);
 
-  const heroArt = document.getElementById('detailHeroArt');
+  // ── Isi cepat pakai data yang sudah ada (tanpa nunggu network) ──
+  const coverEl = document.getElementById('detailCover');
   if (item.imageUrl) {
-    heroArt.setAttribute('style', `background-image:url('${item.imageUrl}');background-size:cover;background-position:center;`);
-    heroArt.className = 'detail-hero-art';
+    coverEl.style.backgroundImage = `url('${item.imageUrl}')`;
+    coverEl.className = 'detail-cover';
   } else {
-    heroArt.setAttribute('style', '');
-    heroArt.className = 'detail-hero-art ' + artClassForId(item._id || item.name || '');
+    coverEl.style.backgroundImage = '';
+    coverEl.className = 'detail-cover ' + artClassForId(item._id || item.name || '');
   }
 
-  document.getElementById('detailRoleBadge').innerHTML = roleBadgeHtml(item.role);
   document.getElementById('detailTitle').textContent = item.name || '—';
-
-  const metaChips = [`${itemType === 'game' ? '🎮 Game' : '🛡️ Bypass'}`];
-  if (item.sizeLabel) metaChips.push(`💾 ${item.sizeLabel}`);
-  if (item.appId)     metaChips.push(`🆔 App ID ${item.appId}`);
-  document.getElementById('detailMetaChips').innerHTML =
-    metaChips.map(c => `<span class="detail-chip">${escapeHtml(c)}</span>`).join('');
-
   document.getElementById('detailDescription').textContent =
-    item.description?.trim() || 'Belum ada deskripsi untuk item ini.';
+    item.description?.trim() || 'Memuat deskripsi dari Steam...';
+
+  const steamIdRow = document.getElementById('detailSteamId');
+  if (item.appId) {
+    steamIdRow.style.display = 'block';
+    document.getElementById('detailSteamIdVal').textContent = item.appId;
+  } else {
+    steamIdRow.style.display = 'none';
+  }
+
+  // Info grid — skeleton dulu sambil nunggu data Steam asli
+  const setInfoBox = (id, val, isSkel) => {
+    const el = document.getElementById(id);
+    el.textContent = val;
+    el.classList.toggle('detail-skel', !!isSkel);
+  };
+  const hasAppId = !!item.appId;
+  setInfoBox('dibRelease', hasAppId ? '' : '—', hasAppId);
+  setInfoBox('dibMetacritic', hasAppId ? '' : '—', hasAppId);
+  setInfoBox('dibDeveloper', hasAppId ? '' : '—', hasAppId);
+  setInfoBox('dibPublisher', hasAppId ? '' : '—', hasAppId);
+
+  document.getElementById('detailTags').innerHTML =
+    `<span class="detail-tag plain">${itemType === 'game' ? '🎮 Game' : '🛡️ Bypass'}</span>` +
+    (item.sizeLabel ? `<span class="detail-tag plain">💾 ${escapeHtml(item.sizeLabel)}</span>` : '');
+
+  document.getElementById('detailReqsWrap').style.display = 'none';
 
   const installBtn = document.getElementById('detailInstallBtn');
   if (locked) {
@@ -537,8 +560,65 @@ function openDetailPage(item, itemType) {
   showPage('gameDetail');
   const mainEl = document.querySelector('.main');
   if (mainEl) mainEl.scrollTop = 0;
+
+  // ── Ambil detail ASLI dari Steam (App ID) lewat server, lalu lengkapi tampilan ──
+  if (item.appId) {
+    const endpoint = itemType === 'game' ? `/api/games/${item._id}/steam-details` : `/api/bypasses/${item._id}/steam-details`;
+    api(endpoint)
+      .then(d => {
+        if (myFetchToken !== _detailFetchToken) return; // user udah pindah ke item lain, buang hasil ini
+        applySteamDetails(d, item, itemType);
+      })
+      .catch(() => {
+        if (myFetchToken !== _detailFetchToken) return;
+        setInfoBox('dibRelease', '—', false);
+        setInfoBox('dibMetacritic', '—', false);
+        setInfoBox('dibDeveloper', '—', false);
+        setInfoBox('dibPublisher', '—', false);
+      });
+  }
 }
 window.openDetailPage = openDetailPage;
+
+function applySteamDetails(d, item, itemType) {
+  if (d.headerImage) {
+    const coverEl = document.getElementById('detailCover');
+    coverEl.style.backgroundImage = `url('${d.headerImage}')`;
+    coverEl.className = 'detail-cover';
+  }
+
+  if (d.shortDescription) document.getElementById('detailDescription').textContent = d.shortDescription;
+
+  const setInfoBox = (id, val) => {
+    const el = document.getElementById(id);
+    el.textContent = val;
+    el.classList.remove('detail-skel');
+  };
+  setInfoBox('dibRelease', d.releaseDate || (d.comingSoon ? 'Coming Soon' : 'Tidak diketahui'));
+  setInfoBox('dibMetacritic', d.metacritic != null ? `${d.metacritic} (Meta)` : 'Tidak ada skor');
+  setInfoBox('dibDeveloper', d.developers?.length ? d.developers.join(', ') : 'Tidak diketahui');
+  setInfoBox('dibPublisher', d.publishers?.length ? d.publishers.join(', ') : 'Tidak diketahui');
+
+  const tagsHtml = [
+    `<span class="detail-tag plain">${itemType === 'bypass' ? '🛡️ Bypass' : '🎮 Game'}</span>`,
+    ...(d.categories || []).map(c => `<span class="detail-tag">${escapeHtml(c)}</span>`),
+    ...(d.genres || []).map(g => `<span class="detail-tag plain">${escapeHtml(g)}</span>`)
+  ].join('');
+  document.getElementById('detailTags').innerHTML = tagsHtml;
+
+  const reqsWrap = document.getElementById('detailReqsWrap');
+  const hasReqs = (d.requirementsMin?.length || d.requirementsRec?.length);
+  if (hasReqs) {
+    reqsWrap.style.display = 'block';
+    const renderReqs = list => list.map(r =>
+      `<div class="drb-row">${r.label ? `<b>${escapeHtml(r.label)}:</b> ` : ''}${escapeHtml(r.value)}</div>`
+    ).join('') || '<div class="drb-row">Tidak ada data.</div>';
+    document.getElementById('detailReqsMin').innerHTML = renderReqs(d.requirementsMin || []);
+    document.getElementById('detailReqsRec').innerHTML = renderReqs(d.requirementsRec || []);
+  } else {
+    reqsWrap.style.display = 'none';
+  }
+}
 
 function artClassForId(seed) {
   const classes = ['a', 'b', 'c', 'd', 'e', 'f'];
