@@ -262,6 +262,12 @@ async function applyExpiryIfNeeded(user) {
     type: 'period_expired',
     title: 'Masa Aktif Berakhir',
     message: `Masa aktif paket ${oldRole.toUpperCase()} kamu telah berakhir dan otomatis diturunkan ke Public.`,
+    fields: [
+      field('👤 Username', username, true),
+      field('🆔 Discord ID', discordId, true),
+      field('📦 Paket Sebelumnya', oldRole.toUpperCase(), true),
+      field('📦 Paket Sekarang', 'PUBLIC', true)
+    ],
     dm: true, webhook: true
   }).catch(() => {});
   pushAccountUpdate(discordId).catch(() => {});
@@ -304,6 +310,13 @@ async function consumeDownloadQuota(user, type) {
       type: 'quota_empty',
       title: `Limit Download ${label} Habis`,
       message: `Limit download harian kamu untuk ${label} (${limit}x/hari) sudah habis. Reset otomatis besok jam 00:00 WIB.`,
+      fields: [
+        field('👤 Username', user.username, true),
+        field('🆔 Discord ID', user.discordId, true),
+        field('📦 Tipe', label, true),
+        field('🔢 Limit Harian', `${limit}x/hari`, true),
+        field('📉 Sisa Limit', '0x', true)
+      ],
       dm: true, webhook: true
     }).catch(() => {});
   } else if (remaining === 1 && limit > 1) {
@@ -311,6 +324,13 @@ async function consumeDownloadQuota(user, type) {
       type: 'quota_low',
       title: `Limit Download ${label} Hampir Habis`,
       message: `Sisa limit download ${label} kamu tinggal ${remaining}x hari ini.`,
+      fields: [
+        field('👤 Username', user.username, true),
+        field('🆔 Discord ID', user.discordId, true),
+        field('📦 Tipe', label, true),
+        field('🔢 Limit Harian', `${limit}x/hari`, true),
+        field('📉 Sisa Limit', `${remaining}x`, true)
+      ],
       dm: true, webhook: true
     }).catch(() => {});
   }
@@ -411,35 +431,44 @@ async function pushAccountUpdate(discordId) {
 // (Download Berhasil, Limit Habis, Pengumuman, dst) punya webhook URL sendiri
 // yang diatur dari Admin Web > Webhook Settings — best-effort, tidak pernah
 // melempar error ke pemanggil kalau webhook-nya belum diatur/gagal kirim.
+const { buildEmbed, field, fmtDurationMs, fmtDateTimeWIB } = require('./notifTemplates');
+// Logo aplikasi (opsional, isi di .env) — dipakai sebagai thumbnail fallback
+// pada notifikasi yang tidak punya gambar sendiri (mis. paket/pengumuman/error),
+// sesuai poin "Jika gambar tidak tersedia, gunakan thumbnail/logo aplikasi sebagai fallback".
+const APP_LOGO_URL = process.env.APP_LOGO_URL || null;
+
 async function sendDiscordWebhook(notifType, embed) {
   const category = WEBHOOK_CATEGORY_BY_NOTIF_TYPE[notifType] || 'announcement';
-  return webhookManager.sendCategoryWebhook(category, embed);
+  return webhookManager.sendCategoryWebhook(category, { embed });
 }
 
-const NOTIF_COLOR = {
-  download_success: 0x3ddc97,
-  download_failed:  0xff6b81,
-  quota_low:        0xffb84d,
-  quota_empty:      0xff6b81,
-  period_low:       0xffb84d,
-  period_expired:   0xff6b81,
-  announcement:     0x7c5cff
-};
-const NOTIF_ICON = {
-  download_success: '✅',
-  download_failed:  '❌',
-  quota_low:        '⚠️',
-  quota_empty:       '⛔',
-  period_low:       '⏳',
-  period_expired:   '🚫',
-  announcement:     '📢'
+// Status (warna+emoji 🟢🟡🔴🔵) & label tiap jenis notifikasi in-app. SATU-SATUNYA
+// sumber kebenaran dipakai buat bikin embed (lewat notifTemplates.buildEmbed) —
+// DM & Webhook jadi selalu konsisten tampilannya untuk jenis notifikasi yang sama.
+const NOTIF_META = {
+  download_success: { status: 'success', label: 'Download Berhasil' },
+  download_failed:  { status: 'error',   label: 'Download Gagal' },
+  quota_low:        { status: 'warning', label: 'Limit Download Hampir Habis' },
+  quota_empty:      { status: 'error',   label: 'Limit Download Habis' },
+  period_low:       { status: 'warning', label: 'Paket Hampir Berakhir' },
+  period_expired:   { status: 'error',   label: 'Paket Berakhir' },
+  purchase:         { status: 'success', label: 'Pembelian Paket' },
+  renewal:          { status: 'info',    label: 'Perpanjangan Paket' },
+  announcement:     { status: 'info',    label: 'Pengumuman Admin' },
+  login:            { status: 'info',    label: 'Login Akun' },
+  system_error:     { status: 'error',   label: 'Error Sistem' }
 };
 
 // Fungsi utama pengiriman notifikasi. Selalu simpan ke DB (in-app, muncul di lonceng
 // notifikasi walau user lagi offline) + push realtime via WebSocket kalau user online.
 // Discord DM & Webhook sifatnya best-effort tambahan, dikontrol per-jenis notifikasi
 // lewat opsi { dm, webhook } (default: dm untuk yang penting, webhook selalu untuk visibilitas admin).
-async function notifyUser(discordId, { type, title, message, meta = {}, dm = true, webhook = false }) {
+//
+// `fields`    : array field() tambahan yang RELEVAN untuk jenis notifikasi ini
+//               (mis. nama game, ukuran, sisa limit, dll) — lihat notifTemplates.js.
+// `thumbnail` : URL gambar kecil (icon paket/logo app/icon warning).
+// `image`     : URL gambar besar/cover (dipakai untuk event terkait game).
+async function notifyUser(discordId, { type, title, message, fields = [], thumbnail, image, meta = {}, dm = true, webhook = false }) {
   const doc = {
     discordId, type, title, message, meta,
     read: false,
@@ -462,24 +491,23 @@ async function notifyUser(discordId, { type, title, message, meta = {}, dm = tru
     wsSendToUser(discordId, 'notification:unread-count', { unread });
   } catch {}
 
-  const icon = NOTIF_ICON[type] || '🔔';
+  const typeMeta = NOTIF_META[type] || { status: 'info', label: title };
+  const embed = buildEmbed({
+    status: typeMeta.status,
+    title,
+    description: message,
+    fields,
+    thumbnail: thumbnail || APP_LOGO_URL || undefined,
+    image,
+    appName: APP_NAME,
+    footerNote: typeMeta.label
+  });
+
   if (dm) {
-    sendDiscordDM(discordId, {
-      embeds: [{
-        color: NOTIF_COLOR[type] ?? 0x7c5cff,
-        title: `${icon} ${title}`,
-        description: message,
-        footer: { text: `${process.env.APP_NAME || 'App'} · Notifikasi` },
-        timestamp: new Date().toISOString()
-      }]
-    }).catch(() => {});
+    sendDiscordDM(discordId, { embeds: [embed] }).catch(() => {});
   }
   if (webhook) {
-    sendDiscordWebhook(type, {
-      color: NOTIF_COLOR[type] ?? 0x7c5cff,
-      title: `${icon} ${title}`,
-      description: `${message}\n\n👤 <@${discordId}> (\`${discordId}\`)`
-    }).catch(() => {});
+    sendDiscordWebhook(type, embed).catch(() => {});
   }
 
   return inserted;
@@ -493,11 +521,16 @@ async function notifyAllUsers({ title, message, dm = false, webhook = true }) {
     users.map(u => notifyUser(u.discordId, { type: 'announcement', title, message, dm, webhook: false }))
   );
   if (webhook) {
-    await sendDiscordWebhook('announcement', {
-      color: NOTIF_COLOR.announcement,
-      title: `📢 ${title}`,
-      description: message
-    }).catch(() => {});
+    const embed = buildEmbed({
+      status: 'info',
+      title,
+      description: message,
+      fields: [field('🎯 Target', `Semua User (${users.length})`, true)],
+      thumbnail: APP_LOGO_URL || undefined,
+      appName: APP_NAME,
+      footerNote: NOTIF_META.announcement.label
+    });
+    await sendDiscordWebhook('announcement', embed).catch(() => {});
   }
   return results.length;
 }
@@ -519,7 +552,11 @@ const WEBHOOK_CATEGORY_BY_NOTIF_TYPE = {
   quota_empty:       'quota_empty',
   period_low:        'period_low',
   period_expired:    'period_expired',
-  announcement:      'announcement'
+  purchase:          'purchase',
+  renewal:           'renewal',
+  announcement:      'announcement',
+  login:             'login',
+  system_error:      'system_error'
 };
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -797,6 +834,25 @@ app.get('/auth/discord/callback', async (req, res) => {
     );
 
     const user = await db.collection('users').findOne({ discordId: discordUser.id });
+    const isNewAccount = user.createdAt && new Date(user.createdAt).getTime() === now.getTime();
+
+    // Webhook kategori "Login Akun" (opsional, default OFF supaya tidak spam kalau
+    // trafik tinggi) — best-effort, tidak pernah menghambat proses login user.
+    webhookManager.sendCategoryWebhook('login', {
+      embed: buildEmbed({
+        status: 'info',
+        title: isNewAccount ? 'Akun Baru Login Pertama Kali' : 'Login Akun',
+        description: `${user.username} berhasil login lewat Discord OAuth.`,
+        fields: [
+          field('👤 Username', user.username, true),
+          field('🆔 Discord ID', user.discordId, true),
+          field('📦 Paket', (user.role || 'public').toUpperCase(), true)
+        ],
+        thumbnail: avatarUrl,
+        appName: APP_NAME,
+        footerNote: 'Login Akun'
+      })
+    }).catch(() => {});
 
     // 5) Buat token login (JWT), simpan sementara di 'pendingLogins' biar bisa diambil app lewat /auth/poll
     const loginToken = jwt.sign({ discordId: user.discordId }, JWT_SECRET, { expiresIn: '90d' });
@@ -1458,10 +1514,22 @@ app.post('/api/history', requireUser, async (req, res) => {
       createdAt: new Date()
     });
 
+    const itemNameResolved = item?.name || fallbackName || 'Item';
+    const itemImageResolved = item?.imageUrl || fallbackImage || null;
     notifyUser(req.user.discordId, {
       type: 'download_success',
       title: 'Download Berhasil',
-      message: `${item?.name || fallbackName || 'Item'} (${itemType === 'game' ? 'Game' : 'Bypass'}) berhasil di-download & dipasang.`,
+      message: `${itemNameResolved} (${itemType === 'game' ? 'Game' : 'Bypass'}) berhasil di-download & dipasang.`,
+      fields: [
+        field('👤 Username', req.user.username, true),
+        field('🆔 Discord ID', req.user.discordId, true),
+        field('🎮 Nama Item', itemNameResolved, true),
+        field('📦 Tipe', itemType === 'game' ? 'Game' : 'Bypass', true),
+        field('💾 Ukuran File', item?.sizeLabel, true),
+        field('🆔 App ID', item?.appId || item?.steamAppId, true),
+        field('🧾 ID Riwayat', String(insertResult.insertedId), true)
+      ],
+      image: itemImageResolved,
       meta: { itemType, itemId },
       dm: false, webhook: true
     }).catch(() => {});
@@ -1476,11 +1544,19 @@ app.post('/api/history', requireUser, async (req, res) => {
 // supaya user tetap dapat notifikasi kegagalan walau tidak ada baris histori yang tercatat.
 app.post('/api/downloads/failed', requireUser, async (req, res) => {
   try {
-    const { itemType, itemName, reason } = req.body;
+    const { itemType, itemName, itemImage, reason } = req.body;
     notifyUser(req.user.discordId, {
       type: 'download_failed',
       title: 'Download Gagal',
-      message: `Download ${itemName || 'item'} (${itemType === 'game' ? 'Game' : 'Bypass'}) gagal.${reason ? ' Alasan: ' + reason : ''}`,
+      message: `Download ${itemName || 'item'} (${itemType === 'game' ? 'Game' : 'Bypass'}) gagal.`,
+      fields: [
+        field('👤 Username', req.user.username, true),
+        field('🆔 Discord ID', req.user.discordId, true),
+        field('🎮 Nama Item', itemName, true),
+        field('📦 Tipe', itemType === 'game' ? 'Game' : (itemType === 'bypass' ? 'Bypass' : undefined), true),
+        field('📝 Pesan Tambahan', reason, false)
+      ],
+      image: itemImage || undefined,
       dm: false, webhook: true
     }).catch(() => {});
     res.json({ success: true });
@@ -1911,18 +1987,26 @@ app.put('/api/admin/users/:discordId/role', requireAdmin, async (req, res) => {
       platinum: 'Akses Platinum — download UNLIMITED!',
       admin:    'Akses Admin — kelola panel admin & akses semua fitur.'
     };
+    const newActiveUntil = update.activeUntil !== undefined ? update.activeUntil : (user.activeUntil || null);
+    const purchaseFields = [
+      field('👤 Username', username, true),
+      field('🆔 Discord ID', discordId, true),
+      field('📦 Paket Sebelumnya', `${ROLE_ICON[oldRole] || '❓'} ${oldRole.toUpperCase()}`, true),
+      field('📦 Paket Baru', `${ROLE_ICON[role] || '🌐'} ${role.toUpperCase()}`, true),
+      field('ℹ️ Info Paket', ROLE_DESC[role] || role, false),
+      field('⏳ Masa Aktif Sampai', newActiveUntil ? fmtDateTimeWIB(newActiveUntil) : (role === 'gold' || role === 'platinum' ? 'Belum diatur admin' : null), true)
+    ];
+
     dmResult = await sendDiscordDM(discordId, {
-      embeds: [{
-        color: ROLE_COLOR[role] ?? 0xa78bfa,
-        title: `${ROLE_ICON[role] || '🎮'} Paket Kamu Diperbarui!`,
+      embeds: [buildEmbed({
+        status: 'success',
+        title: 'Paket Kamu Diperbarui!',
         description: `Halo **${username}**, paket kamu telah diubah oleh Admin.`,
-        fields: [
-          { name: '🔄 Perubahan',  value: `${ROLE_ICON[oldRole] || '❓'} **${oldRole}** → ${ROLE_ICON[role] || '🌐'} **${role}**`, inline: false },
-          { name: 'ℹ️ Info Paket', value: ROLE_DESC[role] || role, inline: false },
-        ],
-        footer: { text: `${process.env.APP_NAME || 'App'} · Notifikasi Paket` },
-        timestamp: new Date().toISOString()
-      }]
+        fields: purchaseFields,
+        thumbnail: APP_LOGO_URL || undefined,
+        appName: APP_NAME,
+        footerNote: 'Notifikasi Paket'
+      })]
     });
 
     // 3. Log + webhook detail ke channel Discord (via roleSync — log audit Verify Role)
@@ -1936,8 +2020,15 @@ app.put('/api/admin/users/:discordId/role', requireAdmin, async (req, res) => {
     // 3b. Webhook kategori "Pembelian Paket" — channel Discord terpisah, khusus buat
     // notif tiap kali admin mengaktifkan/mengubah paket seorang user (best-effort).
     webhookManager.sendCategoryWebhook('purchase', {
-      title: `${ROLE_ICON[role] || '🎮'} Paket Diperbarui`,
-      description: `👤 **${username}** (\`${discordId}\`)\n${ROLE_ICON[oldRole] || '❓'} **${oldRole}** → ${ROLE_ICON[role] || '🌐'} **${role}**\n${ROLE_DESC[role] || ''}`
+      embed: buildEmbed({
+        status: 'success',
+        title: 'Paket Diperbarui',
+        description: `Admin mengaktifkan/mengubah paket seorang user.`,
+        fields: purchaseFields,
+        thumbnail: APP_LOGO_URL || undefined,
+        appName: APP_NAME,
+        footerNote: 'Pembelian Paket'
+      })
     }).catch(() => {});
 
     // 4. Realtime ke client — user tidak perlu reload, role langsung terupdate
@@ -1981,22 +2072,35 @@ app.put('/api/admin/users/:discordId/active-period', requireAdmin, async (req, r
 
     await db.collection('users').updateOne({ discordId }, { $set: { activeUntil } });
 
+    const renewalFields = [
+      field('👤 Username', user.username || discordId, true),
+      field('🆔 Discord ID', discordId, true),
+      field('📦 Paket', user.role.toUpperCase(), true),
+      field('⏳ Masa Aktif Sampai', activeUntil ? fmtDateTimeWIB(activeUntil) : 'Direset (belum diatur ulang)', true)
+    ];
+
     notifyUser(discordId, {
-      type: 'announcement',
+      type: 'renewal',
       title: clear ? 'Masa Aktif Direset' : 'Masa Aktif Diperpanjang',
       message: clear
         ? 'Masa aktif paket kamu telah direset oleh Admin.'
-        : `Masa aktif paket kamu telah diperpanjang oleh Admin, aktif sampai ${activeUntil.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB.`,
+        : `Masa aktif paket kamu telah diperpanjang oleh Admin, aktif sampai ${fmtDateTimeWIB(activeUntil)}.`,
+      fields: renewalFields,
       dm: true, webhook: false
     }).catch(() => {});
 
     // Webhook kategori "Perpanjangan Paket" — channel Discord terpisah, khusus buat
     // notif tiap kali admin memperpanjang/mereset masa aktif paket user (best-effort).
     webhookManager.sendCategoryWebhook('renewal', {
-      title: clear ? '🔄 Masa Aktif Direset' : '🔄 Masa Aktif Diperpanjang',
-      description: `👤 **${user.username || discordId}** (\`${discordId}\`) — paket **${user.role.toUpperCase()}**\n${
-        clear ? 'Masa aktif direset oleh Admin.' : `Aktif sampai ${activeUntil.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB.`
-      }`
+      embed: buildEmbed({
+        status: 'info',
+        title: clear ? 'Masa Aktif Direset' : 'Masa Aktif Diperpanjang',
+        description: clear ? 'Admin mereset masa aktif paket user.' : 'Admin memperpanjang masa aktif paket user.',
+        fields: renewalFields,
+        thumbnail: APP_LOGO_URL || undefined,
+        appName: APP_NAME,
+        footerNote: 'Perpanjangan Paket'
+      })
     }).catch(() => {});
 
     pushAccountUpdate(discordId).catch(() => {});
@@ -2042,7 +2146,14 @@ app.post('/api/admin/notifications/send', requireAdmin, async (req, res) => {
 
     const user = await db.collection('users').findOne({ discordId: target });
     if (!user) return res.status(404).json({ error: 'User tidak ditemukan.' });
-    await notifyUser(target, { type: 'announcement', title, message, dm: !!dm, webhook: !!webhook });
+    await notifyUser(target, {
+      type: 'announcement', title, message,
+      fields: [
+        field('👤 Username', user.username || target, true),
+        field('🆔 Discord ID', target, true)
+      ],
+      dm: !!dm, webhook: !!webhook
+    });
     res.json({ success: true, sentTo: 1 });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2375,11 +2486,19 @@ async function scanExpiringPeriods() {
         (new Date(u.periodWarnedAt).toDateString() === new Date().toDateString());
       if (alreadyWarnedToday) continue;
 
-      const hoursLeft = Math.max(1, Math.round((new Date(u.activeUntil).getTime() - Date.now()) / (60 * 60 * 1000)));
+      const msLeft = new Date(u.activeUntil).getTime() - Date.now();
+      const hoursLeft = Math.max(1, Math.round(msLeft / (60 * 60 * 1000)));
       await notifyUser(u.discordId, {
         type: 'period_low',
         title: 'Masa Aktif Hampir Habis',
         message: `Masa aktif paket ${u.role.toUpperCase()} kamu tersisa sekitar ${hoursLeft} jam lagi. Perpanjang sekarang biar tidak terputus.`,
+        fields: [
+          field('👤 Username', u.username, true),
+          field('🆔 Discord ID', u.discordId, true),
+          field('📦 Paket', u.role.toUpperCase(), true),
+          field('⏳ Sisa Masa Aktif', fmtDurationMs(msLeft) || `${hoursLeft} jam`, true),
+          field('📅 Berakhir Pada', fmtDateTimeWIB(u.activeUntil), true)
+        ],
         dm: true, webhook: true
       });
       await db.collection('users').updateOne({ discordId: u.discordId }, { $set: { periodWarnedAt: new Date() } });
@@ -2438,15 +2557,29 @@ setInterval(() => {
 process.on('unhandledRejection', (reason) => {
   console.error('[Unhandled Rejection]', reason);
   webhookManager.sendCategoryWebhook('system_error', {
-    title: '⚠️ Unhandled Promise Rejection',
-    description: '```' + String(reason?.stack || reason).slice(0, 1500) + '```'
+    embed: buildEmbed({
+      status: 'error',
+      title: 'Unhandled Promise Rejection',
+      description: 'Ada promise yang gagal tapi tidak tertangani di server. Proses utama tetap berjalan normal.',
+      fields: [field('📝 Pesan Tambahan', '```' + String(reason?.stack || reason).slice(0, 950) + '```', false)],
+      thumbnail: APP_LOGO_URL || undefined,
+      appName: APP_NAME,
+      footerNote: 'Error Sistem'
+    })
   }).catch(() => {});
 });
 process.on('uncaughtException', (err) => {
   console.error('[Uncaught Exception]', err);
   webhookManager.sendCategoryWebhook('system_error', {
-    title: '🚨 Uncaught Exception',
-    description: '```' + String(err?.stack || err).slice(0, 1500) + '```'
+    embed: buildEmbed({
+      status: 'error',
+      title: 'Uncaught Exception',
+      description: 'Ada error tak tertangani di server. Proses utama tetap berjalan normal (tidak crash).',
+      fields: [field('📝 Pesan Tambahan', '```' + String(err?.stack || err).slice(0, 950) + '```', false)],
+      thumbnail: APP_LOGO_URL || undefined,
+      appName: APP_NAME,
+      footerNote: 'Error Sistem'
+    })
   }).catch(() => {});
 });
 

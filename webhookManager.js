@@ -26,6 +26,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 
 const axios = require('axios');
+const { buildEmbed, field } = require('./notifTemplates');
 
 const COLLECTION = 'webhookSettings';
 
@@ -42,6 +43,7 @@ const CATEGORIES = [
   { key: 'period_low',       label: 'Paket Hampir Berakhir',          icon: '⏳', color: 0xffb84d, desc: 'Terkirim saat masa aktif Gold/Platinum user tersisa < 24 jam.' },
   { key: 'period_expired',   label: 'Paket Berakhir',                 icon: '🚫', color: 0xff6b81, desc: 'Terkirim saat masa aktif Gold/Platinum user habis & otomatis turun ke Public.' },
   { key: 'announcement',     label: 'Pengumuman / Informasi Admin',  icon: '📢', color: 0x7c5cff, desc: 'Terkirim saat admin mengirim pengumuman ke satu user atau semua user.' },
+  { key: 'login',            label: 'Login Akun',                    icon: '🔑', color: 0x3498db, desc: 'Opsional — terkirim tiap user berhasil login lewat Discord OAuth.', optional: true },
   { key: 'system_error',     label: 'Error Sistem',                  icon: '🛠️', color: 0xff4d4d, desc: 'Opsional — error tak tertangani di server (crash, promise rejection, dll).', optional: true }
 ];
 const CATEGORY_KEYS = CATEGORIES.map(c => c.key);
@@ -164,7 +166,7 @@ module.exports = function createWebhookManager({ getDb }) {
   // Best-effort MUTLAK: apapun yang terjadi (belum diatur, disabled, URL invalid,
   // request gagal/timeout), fungsi ini TIDAK PERNAH throw. Cukup return status &
   // catat ke console.warn/DB, supaya proses utama pemanggil tidak pernah terganggu.
-  async function sendCategoryWebhook(category, { title, description, color, fields, url: overrideUrl } = {}) {
+  async function sendCategoryWebhook(category, { title, description, color, fields, thumbnail, image, url: overrideUrl, embed: rawEmbed } = {}) {
     if (!isValidCategory(category)) {
       console.warn('[WebhookManager] Kategori tidak dikenal, dilewati:', category);
       return { sent: false, reason: 'unknown_category' };
@@ -176,16 +178,27 @@ module.exports = function createWebhookManager({ getDb }) {
       if (!targetUrl) return { sent: false, reason: 'not_configured' };
 
       const meta = CATEGORY_MAP[category];
+      // `rawEmbed` — kalau pemanggil sudah bikin embed lengkap sendiri (lewat
+      // notifTemplates.buildEmbed), pakai itu APA ADANYA supaya field Status/
+      // Waktu Kejadian/thumbnail/image yang sudah disusun tidak ketimpa/dobel.
+      // Kalau tidak, tetap dukung bentuk lama (title/description/color/fields)
+      // demi kompatibilitas mundur.
+      const embed = rawEmbed || {
+        title: title || `${meta.icon} ${meta.label}`,
+        description: description || '',
+        color: color ?? meta.color,
+        fields: fields || [],
+        timestamp: new Date().toISOString(),
+        footer: { text: `${APP_NAME} · ${meta.label}` }
+      };
+      if (!rawEmbed) {
+        if (thumbnail) embed.thumbnail = { url: thumbnail };
+        if (image) embed.image = { url: image };
+      }
+
       await axios.post(targetUrl, {
         username: APP_NAME,
-        embeds: [{
-          title: title || `${meta.icon} ${meta.label}`,
-          description: description || '',
-          color: color ?? meta.color,
-          fields: fields || [],
-          timestamp: new Date().toISOString(),
-          footer: { text: `${APP_NAME} · ${meta.label}` }
-        }]
+        embeds: [embed]
       });
 
       if (!overrideUrl) await recordResult(category, true);
@@ -213,13 +226,14 @@ module.exports = function createWebhookManager({ getDb }) {
     try {
       await axios.post(targetUrl, {
         username: APP_NAME,
-        embeds: [{
-          title: `✅ Test Webhook — ${meta.icon} ${meta.label}`,
+        embeds: [buildEmbed({
+          status: 'success',
+          title: `Test Webhook — ${meta.label}`,
           description: `Webhook kategori **${meta.label}** berhasil terhubung ke ${APP_NAME}. Notifikasi jenis ini akan muncul di channel ini.`,
-          color: 0x4ade80,
-          timestamp: new Date().toISOString(),
-          footer: { text: `${APP_NAME} · ${meta.label}` }
-        }]
+          fields: [field('📂 Kategori', meta.label, true)],
+          appName: APP_NAME,
+          footerNote: meta.label
+        })]
       });
       await recordResult(category, true);
       return { sent: true };

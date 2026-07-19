@@ -1323,9 +1323,12 @@ ${result.extractedFiles?.length || 0} file berhasil dipasang.`
     dlSetError(e.message);
     // Laporkan kegagalan ke server supaya user dapat notifikasi (in-app + realtime),
     // best-effort — jangan sampai gagalnya laporan ini menutupi error aslinya.
+    const failedMeta = isGame
+      ? allGames.find(g => String(g._id) === String(itemId))
+      : allBypasses.find(b => String(b._id) === String(itemId));
     api('/api/downloads/failed', {
       method: 'POST',
-      body: JSON.stringify({ itemType, itemName, reason: e.message })
+      body: JSON.stringify({ itemType, itemName, itemImage: failedMeta?.imageUrl || null, reason: e.message })
     }).catch(() => {});
   }
 }
@@ -1805,7 +1808,8 @@ async function loadNotifications() {
 
 const NOTIF_ICON = {
   download_success: '✅', download_failed: '❌', quota_low: '⚠️',
-  quota_empty: '⛔', period_low: '⏳', period_expired: '🚫', announcement: '📢'
+  quota_empty: '⛔', period_low: '⏳', period_expired: '🚫',
+  renewal: '🔄', announcement: '📢'
 };
 function notifItemHtml(n) {
   const icon = NOTIF_ICON[n.type] || '🔔';
