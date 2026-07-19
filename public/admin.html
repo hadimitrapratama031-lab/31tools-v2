@@ -339,11 +339,14 @@
           <div class="table-toolbar-title">👤 Manajemen Users</div>
           <div class="table-search">
             <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <input type="text" id="searchUsers" placeholder="Cari user...">
+            <input type="text" id="searchUsers" placeholder="Cari username, Discord ID, atau role...">
           </div>
           <div class="table-toolbar-filters">
             <div class="filter-chips" id="usersRoleFilter"></div>
           </div>
+        </div>
+        <div class="table-toolbar table-toolbar--sub">
+          <div class="filter-chips" id="usersStatusFilter"></div>
         </div>
         <div class="users-grid" id="tableUsers"></div>
         <div class="pagination" id="usersPagination" style="display:none;"></div>
@@ -688,17 +691,17 @@
 
 <div class="toast-container" id="toastContainer"></div>
 
-<!-- ═══ MODAL: SET PAKET USER ═══ -->
+<!-- ═══ MODAL: KELOLA USER (Set Paket + Detail lengkap) ═══ -->
 <div class="modal-backdrop" id="setRoleModalBackdrop" style="display:none;" onclick="if(event.target===this)closeSetRoleModal()">
-  <div class="modal" style="max-width:460px;">
+  <div class="modal modal-lg user-modal">
     <div class="modal-header">
       <div>
-        <div class="modal-title">👤 Set Paket User</div>
-        <div class="modal-subtitle">Cari user via Discord ID lalu pilih paket baru.</div>
+        <div class="modal-title">👤 Kelola User</div>
+        <div class="modal-subtitle">Cari user via Discord ID, lihat detail lengkap, lalu kelola paket / limit / status.</div>
       </div>
       <button class="modal-close" onclick="closeSetRoleModal()">×</button>
     </div>
-    <div class="modal-body" style="display:flex;flex-direction:column;gap:16px;">
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:6px;">
 
       <!-- Search -->
       <div class="form-group">
@@ -711,10 +714,12 @@
         <div id="srStatus" style="margin-top:6px;font-size:12.5px;min-height:18px;"></div>
       </div>
 
-      <!-- User Preview -->
+      <!-- User Preview + Ringkasan -->
       <div id="srUserPreview"></div>
+      <div id="srUserSummary"></div>
 
-      <!-- Role segmented -->
+      <!-- ── Paket & Masa Aktif ── -->
+      <div class="modal-divider">📦 Paket &amp; Masa Aktif</div>
       <div class="form-group">
         <label class="form-label">Paket Baru</label>
         <div class="segmented" id="srRoleSegment" style="display:flex;gap:0;flex-wrap:wrap;">
@@ -745,11 +750,52 @@
           Kosongkan kalau tidak mau mengubah masa aktif yang sudah ada. Setelah masa aktif habis, paket user otomatis diturunkan ke Public.
         </div>
       </div>
+      <div style="display:flex;justify-content:flex-end;">
+        <button id="btnSrSave" class="btn btn-primary" onclick="doSetRole()">💾 Simpan Paket</button>
+      </div>
+
+      <!-- ── Atur Limit ── -->
+      <div class="modal-divider">🎯 Atur Limit Download</div>
+      <div class="quota-adjust-row">
+        <div class="quota-adjust-label">🎮 Limit Game</div>
+        <input type="number" min="1" id="qtyGameAmount" class="form-input" placeholder="Jumlah" style="max-width:90px;">
+        <button class="btn btn-sm btn-outline" onclick="doAdjustQuota('game','add')">➕ Tambah</button>
+        <button class="btn btn-sm btn-outline" onclick="doAdjustQuota('game','subtract')">➖ Kurangi</button>
+        <button class="btn btn-sm btn-outline" onclick="doAdjustQuota('game','reset')">♻️ Reset</button>
+      </div>
+      <div class="quota-adjust-row">
+        <div class="quota-adjust-label">🛡️ Limit Bypass</div>
+        <input type="number" min="1" id="qtyBypassAmount" class="form-input" placeholder="Jumlah" style="max-width:90px;">
+        <button class="btn btn-sm btn-outline" onclick="doAdjustQuota('bypass','add')">➕ Tambah</button>
+        <button class="btn btn-sm btn-outline" onclick="doAdjustQuota('bypass','subtract')">➖ Kurangi</button>
+        <button class="btn btn-sm btn-outline" onclick="doAdjustQuota('bypass','reset')">♻️ Reset</button>
+      </div>
+      <div style="font-size:11px;color:var(--text-faint);">Tambah = mengembalikan sisa jatah hari ini. Kurangi = memotong sisa jatah hari ini. Reset = kembalikan pemakaian ke 0.</div>
+
+      <!-- ── Status Akun ── -->
+      <div class="modal-divider">🛡️ Status Akun</div>
+      <div id="srStatusCurrent" style="font-size:12px;color:var(--text-dim);margin-bottom:8px;"></div>
+      <textarea id="srStatusReason" class="form-input" placeholder="Alasan (opsional, dikirim ke user via DM)" style="min-height:52px;margin-bottom:10px;"></textarea>
+      <div style="display:flex;gap:8px;flex-wrap:wrap;">
+        <button class="btn btn-sm btn-outline" style="border-color:var(--green);color:var(--green);" onclick="doSetStatus('active')">✅ Aktifkan</button>
+        <button class="btn btn-sm btn-outline" style="border-color:#ffd76a;color:#ffd76a;" onclick="doSetStatus('suspended')">⏸️ Suspend</button>
+        <button class="btn btn-sm btn-outline" style="border-color:var(--red);color:var(--red);" onclick="doSetStatus('banned')">⛔ Ban</button>
+      </div>
+
+      <!-- ── Kirim Pesan ── -->
+      <div class="modal-divider">📢 Kirim Pesan ke User</div>
+      <input id="srMsgTitle" class="form-input" placeholder="Judul notifikasi" style="margin-bottom:10px;">
+      <textarea id="srMsgBody" class="form-input" placeholder="Isi pesan" style="min-height:64px;margin-bottom:10px;"></textarea>
+      <label style="display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--text-dim);margin-bottom:10px;">
+        <input type="checkbox" id="srMsgDm" checked style="width:auto;"> Kirim juga sebagai DM Discord
+      </label>
+      <div style="display:flex;justify-content:flex-end;">
+        <button class="btn btn-sm btn-primary" onclick="doSendUserMessage()">📨 Kirim Pesan</button>
+      </div>
 
     </div>
     <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeSetRoleModal()">Batal</button>
-      <button id="btnSrSave" class="btn btn-primary" onclick="doSetRole()">💾 Simpan Paket</button>
+      <button class="btn btn-secondary" onclick="closeSetRoleModal()">Tutup</button>
     </div>
   </div>
 </div>

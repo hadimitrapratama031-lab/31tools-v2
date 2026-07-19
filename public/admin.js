@@ -355,7 +355,7 @@ const ACTIVITY_ICON_FALLBACK = {
   purchase: '💳', renewal: '🔄', request_game: '🎯',
   admin_add_game: '➕', admin_edit_game: '✏️', admin_delete_game: '🗑️',
   admin_add_bypass: '➕', admin_edit_bypass: '✏️', admin_delete_bypass: '🗑️',
-  admin_reset_quota: '♻️', announcement: '📢', system_error: '🚨'
+  admin_reset_quota: '♻️', announcement: '📢', system_error: '🚨', account_status: '🛡️'
 };
 
 function activityItemHtml(item) {
@@ -436,6 +436,8 @@ function connectAdminWS() {
           prependActivity(msg.data);
           refreshDashboardStatsDebounced();
         }
+      } else if (msg.event === 'user:update') {
+        if (typeof mergeUserUpdate === 'function') mergeUserUpdate(msg.data);
       }
     };
     _adminWs.onclose = () => {
@@ -1088,7 +1090,7 @@ document.getElementById('btnSearchCover').addEventListener('click', async () => 
 });
 
 // ─── USERS ───
-const usersUiState = { role: 'all', search: '', page: 1 };
+const usersUiState = { role: 'all', status: 'all', search: '', page: 1 };
 let usersDataCache = [];
 
 async function renderUsers() {
@@ -1114,6 +1116,24 @@ async function renderUsers() {
   }
 }
 
+// Pil filter Status Akun (Aktif / Suspend / Banned) — terpisah dari pil filter Role
+// yang sudah ada, biar admin bisa gabung dua filter sekaligus (mis. "Gold" + "Suspend").
+const STATUS_CHIP_LABEL = { all: 'Semua Status', active: '✅ Aktif', suspended: '⏸️ Suspend', banned: '⛔ Banned' };
+function renderStatusChips(containerId, rows, activeStatus, onSelect) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  const counts = { all: rows.length, active: 0, suspended: 0, banned: 0 };
+  rows.forEach(r => { const s = r.status || 'active'; if (counts[s] !== undefined) counts[s]++; });
+  el.innerHTML = ['all', 'active', 'suspended', 'banned'].map(key => `
+    <button class="filter-chip ${activeStatus === key ? 'active' : ''}" data-status="${key}">
+      ${STATUS_CHIP_LABEL[key]} <span class="count">${counts[key]}</span>
+    </button>
+  `).join('');
+  el.querySelectorAll('.filter-chip').forEach(btn => {
+    btn.addEventListener('click', () => onSelect(btn.dataset.status));
+  });
+}
+
 function applyUsersFilters() {
   const rows = usersDataCache;
   const counts = roleCounts(rows);
@@ -1123,16 +1143,26 @@ function applyUsersFilters() {
     usersUiState.page = 1;
     applyUsersFilters();
   }, { showAdmin: true });
+  renderStatusChips('usersStatusFilter', rows, usersUiState.status, (status) => {
+    usersUiState.status = status;
+    usersUiState.page = 1;
+    applyUsersFilters();
+  });
 
   let filtered = usersUiState.role === 'all' ? rows : rows.filter(r => r.role === usersUiState.role);
+  if (usersUiState.status !== 'all') filtered = filtered.filter(r => (r.status || 'active') === usersUiState.status);
   if (usersUiState.search.trim()) {
     const q = usersUiState.search.trim().toLowerCase();
-    filtered = filtered.filter(u => (u.username || '').toLowerCase().includes(q) || (u.discordId || '').includes(q));
+    filtered = filtered.filter(u =>
+      (u.username || '').toLowerCase().includes(q) ||
+      (u.discordId || '').includes(q) ||
+      (u.role || '').toLowerCase().includes(q)
+    );
   }
 
   const start = (usersUiState.page - 1) * PER_PAGE;
   const pageRows = filtered.slice(start, start + PER_PAGE);
-  renderUsersRows(pageRows, filtered.length === 0 && (usersUiState.search || usersUiState.role !== 'all'));
+  renderUsersRows(pageRows, filtered.length === 0 && (usersUiState.search || usersUiState.role !== 'all' || usersUiState.status !== 'all'));
 
   renderPagination('usersPagination', filtered.length, usersUiState.page, PER_PAGE, (p) => {
     usersUiState.page = p;
@@ -1149,6 +1179,12 @@ function applyUsersFilters() {
 function fmtDateShort(dateStr) {
   if (!dateStr) return '';
   return new Date(dateStr).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+const STATUS_TAG_LABEL = { active: '✅ Aktif', suspended: '⏸️ Suspend', banned: '⛔ Banned' };
+function statusTagHtml(status) {
+  const s = status || 'active';
+  return `<span class="status-tag ${s}">${STATUS_TAG_LABEL[s] || s}</span>`;
 }
 
 // Blok "Masa Aktif" + "Limit Download" di tiap kartu user — supaya admin bisa langsung
@@ -1186,25 +1222,32 @@ function renderUsersRows(rows, isFilteredEmpty) {
     return;
   }
   grid.innerHTML = rows.map(u => `
-    <div class="user-card row-role-accent ${escapeHtml(u.role)}">
+    <div class="user-card row-role-accent ${escapeHtml(u.role)} status-${escapeHtml(u.status || 'active')}" data-discord-id="${escapeHtml(u.discordId)}">
       <div class="user-card-top">
         ${u.avatarUrl
           ? `<img class="user-card-avatar" src="${escapeHtml(u.avatarUrl)}" alt="">`
           : `<div class="user-card-avatar user-card-avatar--fallback">${escapeHtml((u.username || '?')[0].toUpperCase())}</div>`}
         <div class="user-card-headtext">
           <div class="user-card-name" title="${escapeHtml(u.username)}">${escapeHtml(u.username)}</div>
-          ${u.createdAt ? `<div class="cell-time">🕓 Login ${timeAgo(u.createdAt)}</div>` : ''}
+          <div class="cell-time">🕓 Login terakhir ${u.lastLoginAt ? timeAgo(u.lastLoginAt) : '—'}</div>
         </div>
-        <div class="user-card-role">${roleTagHtml(u.role)}</div>
+        <div class="user-card-badges">
+          <div class="user-card-role">${roleTagHtml(u.role)}</div>
+          ${statusTagHtml(u.status)}
+        </div>
       </div>
       <div class="user-card-id" title="${escapeHtml(u.discordId)}">
         <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 3.5V7M16 3.5V7"/></svg>
         <span>${escapeHtml(u.discordId)}</span>
       </div>
       ${accountStatusHtml(u.accountStatus)}
-      <div style="display:flex;gap:6px;">
-        <button class="btn btn-sm btn-outline user-card-action" style="flex:1;" onclick="openSetRoleModal('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}','${escapeHtml(u.role)}')">
-          Set Paket
+      <div class="user-card-stats">
+        <div class="user-card-stat-box"><div class="v">${(u.stats && u.stats.downloads) || 0}</div><div class="l">🎮 Download</div></div>
+        <div class="user-card-stat-box"><div class="v">${(u.stats && u.stats.installs) || 0}</div><div class="l">🛡️ Install</div></div>
+      </div>
+      <div class="user-card-actions-grid">
+        <button class="btn btn-sm btn-primary user-card-action" onclick="openSetRoleModal('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}','${escapeHtml(u.role)}')">
+          🔎 Lihat Detail
         </button>
         <button class="btn btn-sm btn-outline user-card-action" title="Reset limit download harian" onclick="doResetQuota('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}')">
           ♻️
@@ -1257,8 +1300,8 @@ function openSendNotifModal(discordId, username) {
 }
 window.openSendNotifModal = openSendNotifModal;
 
-// ─── MODAL SET ROLE — dengan Discord ID search ───
-let _setRoleTarget = null; // { discordId, username, currentRole, accountStatus }
+// ─── MODAL KELOLA USER — dengan Discord ID search + ringkasan + aksi lengkap ───
+let _setRoleTarget = null; // { discordId, username, currentRole, accountStatus, status, statusReason, stats, lastLoginAt }
 
 // Cuma Gold & Platinum yang punya Masa Aktif — Public & Admin selalu unlimited waktu.
 function _srToggleActivePeriodGroup(role) {
@@ -1274,40 +1317,83 @@ function _formatActiveUntil(dateStr) {
   return d.getTime() <= Date.now() ? `⏳ Sudah habis (${label})` : `✅ Aktif sampai ${label}`;
 }
 
-function _fillSetRoleModal(discordId, username, currentRole, accountStatus) {
-  document.getElementById('srDiscordId').value = discordId || '';
+// Ringkasan lengkap user di bagian atas modal — login terakhir, bergabung sejak,
+// total download/install, sisa limit — biar admin gak perlu buka beberapa halaman
+// buat lihat gambaran lengkap satu user ("Lihat Detail").
+function _renderUserSummary(u) {
+  const el = document.getElementById('srUserSummary');
+  if (!el) return;
+  if (!u) { el.innerHTML = ''; return; }
+  const as = u.accountStatus || {};
+  const gameQ = as.download?.game, bypassQ = as.download?.bypass;
+  const quotaText = (q) => !q ? '—' : q.unlimited ? 'Unlimited' : `${q.used}/${q.limit} hari ini`;
+  el.innerHTML = `
+    <div class="user-summary-grid">
+      <div class="user-summary-item"><span class="l">Login Terakhir</span><span class="v">${u.lastLoginAt ? timeAgo(u.lastLoginAt) : '—'}</span></div>
+      <div class="user-summary-item"><span class="l">Bergabung Sejak</span><span class="v">${u.createdAt ? fmtDateShort(u.createdAt) : '—'}</span></div>
+      <div class="user-summary-item"><span class="l">Total Download</span><span class="v">${(u.stats && u.stats.downloads) || 0}x</span></div>
+      <div class="user-summary-item"><span class="l">Total Install</span><span class="v">${(u.stats && u.stats.installs) || 0}x</span></div>
+      <div class="user-summary-item"><span class="l">Sisa Limit Game</span><span class="v ${gameQ?.unlimited ? 'unlimited' : gameQ?.remaining === 0 ? 'expired' : ''}">${quotaText(gameQ)}</span></div>
+      <div class="user-summary-item"><span class="l">Sisa Limit Bypass</span><span class="v ${bypassQ?.unlimited ? 'unlimited' : bypassQ?.remaining === 0 ? 'expired' : ''}">${quotaText(bypassQ)}</span></div>
+    </div>`;
+}
+
+function _renderStatusCurrent(u) {
+  const el = document.getElementById('srStatusCurrent');
+  if (!el) return;
+  if (!u) { el.innerHTML = ''; return; }
+  const s = u.status || 'active';
+  el.innerHTML = `Status saat ini: ${statusTagHtml(s)}${u.statusReason ? ` — <span style="color:var(--text-faint);">${escapeHtml(u.statusReason)}</span>` : ''}`;
+}
+
+function _fillSetRoleModal(u) {
+  const discordId = u?.discordId || '';
+  const username = u?.username || '';
+  const currentRole = u?.role || 'public';
+
+  document.getElementById('srDiscordId').value = discordId;
   document.getElementById('srUserPreview').innerHTML = discordId
     ? `<div class="sr-preview-filled">
          <div class="sr-preview-name">${escapeHtml(username || discordId)}</div>
          <div class="sr-preview-id">${escapeHtml(discordId)}</div>
-         <div class="sr-preview-current">Paket saat ini: ${roleTagHtml(currentRole || 'public')}</div>
+         <div class="sr-preview-current">Paket saat ini: ${roleTagHtml(currentRole)}</div>
        </div>`
     : '';
   const roleEl = document.getElementById('srRole');
-  if (roleEl) roleEl.value = currentRole || 'public';
+  if (roleEl) roleEl.value = currentRole;
 
   document.querySelectorAll('#srRoleSegment .segmented-opt').forEach(b => {
-    b.classList.toggle('active', b.dataset.role === (currentRole || 'public'));
+    b.classList.toggle('active', b.dataset.role === currentRole);
   });
-  _srToggleActivePeriodGroup(currentRole || 'public');
+  _srToggleActivePeriodGroup(currentRole);
 
   const daysInput = document.getElementById('srActiveDays');
   if (daysInput) daysInput.value = '';
   const infoEl = document.getElementById('srActiveCurrentInfo');
   if (infoEl) {
+    const accountStatus = u?.accountStatus;
     const label = accountStatus?.hasActivePeriod ? _formatActiveUntil(accountStatus.activeUntil) : null;
     infoEl.textContent = label ? `Masa aktif saat ini: ${label.replace(/^(✅|⏳)\s*/, '')}` : 'Masa aktif saat ini: belum diatur (unlimited waktu).';
   }
 
   document.getElementById('srStatus').innerHTML = '';
+  document.getElementById('qtyGameAmount').value = '';
+  document.getElementById('qtyBypassAmount').value = '';
+  document.getElementById('srStatusReason').value = '';
+  document.getElementById('srMsgTitle').value = '';
+  document.getElementById('srMsgBody').value = '';
+
+  _renderUserSummary(u);
+  _renderStatusCurrent(u);
 }
 
 function openSetRoleModal(discordId, username, currentRole) {
-  // Ambil accountStatus dari cache Users (sudah dimuat renderUsers) kalau ada, biar
-  // info masa aktif yang ditampilkan akurat tanpa perlu fetch ulang.
-  const cached = (typeof usersDataCache !== 'undefined' && usersDataCache) ? usersDataCache.find(u => u.discordId === discordId) : null;
-  _setRoleTarget = { discordId, username, currentRole, accountStatus: cached?.accountStatus || null };
-  _fillSetRoleModal(discordId, username, currentRole, cached?.accountStatus);
+  // Ambil data lengkap dari cache Users (sudah dimuat renderUsers) kalau ada, biar
+  // info masa aktif/status/stats yang ditampilkan akurat tanpa perlu fetch ulang.
+  const cached = discordId ? usersDataCache.find(u => u.discordId === discordId) : null;
+  const u = cached || (discordId ? { discordId, username, role: currentRole } : null);
+  _setRoleTarget = u;
+  _fillSetRoleModal(u);
   document.getElementById('setRoleModalBackdrop').style.display = 'flex';
 }
 window.openSetRoleModal = openSetRoleModal;
@@ -1331,14 +1417,17 @@ async function searchUserByDiscordId() {
 
   try {
     const rows = await api('/api/admin/users');
+    usersDataCache = rows;
     const found = rows.find(u => u.discordId === discordId || u.username?.toLowerCase() === discordId.toLowerCase());
     if (!found) {
       previewEl.innerHTML = `<div class="sr-preview-empty">⚠️ User dengan Discord ID <code>${escapeHtml(discordId)}</code> belum pernah login ke app.</div>`;
       _setRoleTarget = null;
+      document.getElementById('srUserSummary').innerHTML = '';
+      document.getElementById('srStatusCurrent').innerHTML = '';
       return;
     }
-    _setRoleTarget = { discordId: found.discordId, username: found.username, currentRole: found.role, accountStatus: found.accountStatus || null };
-    _fillSetRoleModal(found.discordId, found.username, found.role, found.accountStatus);
+    _setRoleTarget = found;
+    _fillSetRoleModal(found);
     statusEl.innerHTML = `<span style="color:var(--green);">✓ User ditemukan.</span>`;
   } catch (e) {
     statusEl.innerHTML = `<span style="color:var(--red);">✕ ${escapeHtml(e.message)}</span>`;
@@ -1381,9 +1470,10 @@ async function doSetRole() {
         cached.accountStatus.hasActivePeriod = (role === 'gold' || role === 'platinum');
         cached.accountStatus.hasExpiry = !!result.activeUntil;
       }
+      _setRoleTarget = cached;
     }
     applyUsersFilters();
-    closeSetRoleModal();
+    _fillSetRoleModal(_setRoleTarget);
 
     const ds = result?.discordSync;
     const activeInfo = body.activeAmount ? ` — masa aktif ${body.activeAmount} ${unitLabel}.` : '';
@@ -1400,10 +1490,83 @@ async function doSetRole() {
     statusEl.innerHTML = `<span style="color:var(--red);">✕ ${escapeHtml(e.message)}</span>`;
     showToast('Gagal mengubah paket: ' + e.message, 'error');
   } finally {
-    btn.textContent = '💾 Simpan'; btn.disabled = false;
+    btn.textContent = '💾 Simpan Paket'; btn.disabled = false;
   }
 }
 window.doSetRole = doSetRole;
+
+// ─── Atur Limit Download (Tambah / Kurangi / Reset) — Game & Bypass terpisah ───
+async function doAdjustQuota(type, action) {
+  if (!_setRoleTarget) { showToast('Cari user dulu.', 'error'); return; }
+  const amountInput = document.getElementById(type === 'game' ? 'qtyGameAmount' : 'qtyBypassAmount');
+  const amount = amountInput ? Number(amountInput.value) : null;
+  if (action !== 'reset' && (!amount || amount <= 0)) { showToast('Isi jumlah dulu.', 'error'); return; }
+  if (action !== 'reset' && !confirm(`${action === 'add' ? 'Tambah' : 'Kurangi'} limit ${type === 'game' ? 'Game' : 'Bypass'} sebanyak ${amount} untuk ${_setRoleTarget.username}?`)) return;
+  if (action === 'reset' && !confirm(`Reset limit ${type === 'game' ? 'Game' : 'Bypass'} untuk ${_setRoleTarget.username}?`)) return;
+
+  try {
+    const result = await api(`/api/admin/users/${_setRoleTarget.discordId}/quota`, {
+      method: 'PUT', body: JSON.stringify({ type, action, amount: amount || undefined })
+    });
+    const cached = usersDataCache.find(x => x.discordId === _setRoleTarget.discordId);
+    if (cached?.accountStatus?.download?.[type]) {
+      cached.accountStatus.download[type].used = result.used;
+      cached.accountStatus.download[type].remaining = result.remaining;
+      _setRoleTarget = cached;
+    }
+    if (amountInput) amountInput.value = '';
+    applyUsersFilters();
+    _renderUserSummary(_setRoleTarget);
+    showToast(`✅ Limit ${type === 'game' ? 'Game' : 'Bypass'} diperbarui — sisa ${result.remaining}/${result.limit}.`, 'success');
+  } catch (e) {
+    showToast('Gagal atur limit: ' + e.message, 'error');
+  }
+}
+window.doAdjustQuota = doAdjustQuota;
+
+// ─── Status Akun (Aktifkan / Suspend / Ban) ───
+async function doSetStatus(status) {
+  if (!_setRoleTarget) { showToast('Cari user dulu.', 'error'); return; }
+  const label = { active: 'mengaktifkan', suspended: 'men-suspend', banned: 'mem-banned' }[status];
+  if (!confirm(`Yakin ingin ${label} akun ${_setRoleTarget.username}?`)) return;
+  const reason = document.getElementById('srStatusReason')?.value?.trim() || '';
+
+  try {
+    await api(`/api/admin/users/${_setRoleTarget.discordId}/status`, {
+      method: 'PUT', body: JSON.stringify({ status, reason: reason || undefined })
+    });
+    const cached = usersDataCache.find(x => x.discordId === _setRoleTarget.discordId);
+    if (cached) { cached.status = status; cached.statusReason = reason || null; _setRoleTarget = cached; }
+    applyUsersFilters();
+    _renderStatusCurrent(_setRoleTarget);
+    showToast(`✅ Status ${_setRoleTarget.username} diubah ke ${STATUS_TAG_LABEL[status]}.`, 'success');
+  } catch (e) {
+    showToast('Gagal ubah status: ' + e.message, 'error');
+  }
+}
+window.doSetStatus = doSetStatus;
+
+// ─── Kirim pesan langsung dari modal Kelola User (In-App + opsional DM Discord) ───
+async function doSendUserMessage() {
+  if (!_setRoleTarget) { showToast('Cari user dulu.', 'error'); return; }
+  const title = document.getElementById('srMsgTitle')?.value?.trim();
+  const message = document.getElementById('srMsgBody')?.value?.trim();
+  const dm = document.getElementById('srMsgDm')?.checked;
+  if (!title || !message) { showToast('Judul & pesan wajib diisi.', 'error'); return; }
+
+  try {
+    await api('/api/admin/notifications/send', {
+      method: 'POST',
+      body: JSON.stringify({ target: _setRoleTarget.discordId, title, message, dm: !!dm, webhook: true })
+    });
+    document.getElementById('srMsgTitle').value = '';
+    document.getElementById('srMsgBody').value = '';
+    showToast(`✅ Pesan terkirim ke ${_setRoleTarget.username}.`, 'success');
+  } catch (e) {
+    showToast('Gagal kirim pesan: ' + e.message, 'error');
+  }
+}
+window.doSendUserMessage = doSendUserMessage;
 
 // Highlight segmented button di modal Set Role + toggle input Masa Aktif
 function _srSetRole(btn, role) {
@@ -1414,35 +1577,20 @@ function _srSetRole(btn, role) {
 }
 window._srSetRole = _srSetRole;
 
-async function changeUserRole(discordId, role) {
-  try {
-    const result = await api(`/api/admin/users/${discordId}/role`, { method: 'PUT', body: JSON.stringify({ role }) });
-    const u = usersDataCache.find(x => x.discordId === discordId);
-    if (u) u.role = role;
-    applyUsersFilters();
-
-    // Kasih tau juga status sync ke Discord-nya, biar admin gak nyangka semua otomatis
-    // beres kalau ternyata role Discord belum di-mapping / bot gak nemu usernya.
-    const ds = result?.discordSync;
-    if (!ds) {
-      showToast('Role berhasil diubah ke ' + role + '.', 'success');
-    } else if (ds.ok) {
-      showToast(`Role diubah ke ${role} — role Discord ikut disinkronkan ✓`, 'success');
-    } else if (ds.reason === 'not_configured') {
-      showToast(`Role diubah ke ${role}. Mapping role Discord belum diatur (lihat halaman Verify Role).`, 'default');
-    } else if (ds.reason === 'not_member') {
-      showToast(`Role diubah ke ${role}. User ini bukan member Discord, role Discord tidak disentuh.`, 'default');
-    } else if (ds.reason === 'bot_not_configured') {
-      showToast(`Role diubah ke ${role}. DISCORD_BOT_TOKEN/GUILD_ID belum diisi, role Discord tidak disinkron.`, 'default');
-    } else {
-      showToast(`Role diubah ke ${role}, tapi gagal sinkron ke Discord: ${(ds.errors||[]).join(', ') || ds.reason}`, 'error');
-    }
-  } catch (e) {
-    showToast('Gagal mengubah role: ' + e.message, 'error');
-    renderUsers();
+// ─── REALTIME — merge event 'user:update' dari WebSocket admin ke cache Users, tanpa
+// perlu refetch/refresh halaman sama sekali (role, status, limit, login terakhir, dll).
+function mergeUserUpdate(u) {
+  if (!u || !u.discordId) return;
+  const idx = usersDataCache.findIndex(x => x.discordId === u.discordId);
+  if (idx >= 0) usersDataCache[idx] = u; else usersDataCache.unshift(u);
+  if (currentPage === 'users') applyUsersFilters();
+  if (_setRoleTarget && _setRoleTarget.discordId === u.discordId) {
+    _setRoleTarget = u;
+    _renderUserSummary(u);
+    _renderStatusCurrent(u);
   }
 }
-window.changeUserRole = changeUserRole;
+window.mergeUserUpdate = mergeUserUpdate;
 
 // ─── HISTORY ───
 // REDESIGN: sekarang full server-driven (search/filter/sort/pagination semuanya

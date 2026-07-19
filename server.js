@@ -446,7 +446,8 @@ const ACTIVITY_ICON = {
   admin_delete_bypass: '🗑️',
   admin_reset_quota: '♻️',
   announcement: '📢',
-  system_error: '🚨'
+  system_error: '🚨',
+  account_status: '🛡️'
 };
 
 // Catat satu entri aktivitas ke koleksi `activityLogs` (dipakai buat panel
@@ -689,6 +690,19 @@ async function requireUser(req, res, next) {
     let user = await db.collection('users').findOne({ discordId: payload.discordId });
     if (!user) return res.status(401).json({ error: 'Akun tidak ditemukan.' });
 
+    // Akun yang di-suspend/ban oleh admin tidak boleh lanjut pakai app sama sekali —
+    // dicek di SETIAP request (bukan cuma pas login), jadi efeknya langsung kerasa
+    // real-time walau usernya sedang aktif pakai app saat status diubah.
+    if (isUserBlocked(user)) {
+      return res.status(403).json({
+        error: user.status === 'banned'
+          ? `Akun kamu telah di-banned.${user.statusReason ? ' Alasan: ' + user.statusReason : ''}`
+          : `Akun kamu sedang di-suspend sementara.${user.statusReason ? ' Alasan: ' + user.statusReason : ''}`,
+        accountBlocked: true,
+        status: user.status
+      });
+    }
+
     // Kalau masa aktif Gold/Platinum-nya sudah lewat, otomatis turunkan ke Public
     // SEBELUM request lanjut diproses, biar limit/akses yang berlaku langsung yang baru.
     user = await applyExpiryIfNeeded(user);
@@ -905,6 +919,16 @@ app.get('/auth/discord/callback', async (req, res) => {
     const user = await db.collection('users').findOne({ discordId: discordUser.id });
     const isNewAccount = user.createdAt && new Date(user.createdAt).getTime() === now.getTime();
 
+    if (isUserBlocked(user)) {
+      return res.send(renderInfoPage({
+        emoji: user.status === 'banned' ? '⛔' : '⏸️',
+        title: user.status === 'banned' ? 'Akun Kamu Di-banned' : 'Akun Kamu Di-suspend',
+        message: user.status === 'banned'
+          ? `Akun Discord kamu telah di-banned dari layanan ini dan tidak bisa login.${user.statusReason ? ' Alasan: ' + user.statusReason : ''}`
+          : `Akun kamu sedang di-suspend sementara oleh Admin dan tidak bisa login untuk saat ini.${user.statusReason ? ' Alasan: ' + user.statusReason : ''}`
+      }));
+    }
+
     // Catat aktivitas login (dipakai Dashboard admin: "Login hari ini", grafik
     // "Login 7 Hari Terakhir", dan Activity Feed) — best-effort, tidak pernah
     // menghambat proses login user kalau gagal simpan.
@@ -914,6 +938,12 @@ app.get('/auth/discord/callback', async (req, res) => {
       discordId: user.discordId,
       description: `${user.username} login${isNewAccount ? ' (akun baru)' : ''}.`
     }).catch(() => {});
+
+    // Realtime ke admin panel — biar "Login Terakhir" di Manajemen Users langsung
+    // ter-update tanpa admin perlu refresh halaman.
+    computeUserStats(user.discordId)
+      .then(stats => broadcastAdmin('user:update', publicUser(user, stats)))
+      .catch(() => broadcastAdmin('user:update', publicUser(user)));
 
     // Webhook kategori "Login Akun" (opsional, default OFF supaya tidak spam kalau
     // trafik tinggi) — best-effort, tidak pernah menghambat proses login user.
@@ -979,16 +1009,39 @@ app.get('/auth/poll', async (req, res) => {
   });
 });
 
-function publicUser(u) {
+// Status akun (BUKAN "accountStatus" yang di atas — itu ringkasan masa aktif/limit).
+// 'active' (default) | 'suspended' (sementara, bisa diaktifkan lagi) | 'banned' (permanen).
+const ACCOUNT_STATUSES = ['active', 'suspended', 'banned'];
+function isUserBlocked(user) {
+  return user.status === 'suspended' || user.status === 'banned';
+}
+
+function publicUser(u, stats) {
   return {
     discordId: u.discordId,
     username: u.username,
     avatarUrl: u.avatarUrl,
     role: u.role,
+    status: u.status || 'active',
+    statusReason: u.statusReason || null,
+    statusUpdatedAt: u.statusUpdatedAt || null,
+    lastLoginAt: u.lastLoginAt || null,
     createdAt: u.createdAt || null,
     roleUpdatedAt: u.roleUpdatedAt || null,
-    accountStatus: accountStatusSummary(u)
+    accountStatus: accountStatusSummary(u),
+    stats: stats || { downloads: 0, installs: 0, total: 0 }
   };
+}
+
+// Total download (Game) & install (Bypass) sepanjang waktu, dihitung dari koleksi
+// 'history' — dipakai buat kartu detail user di admin panel. Dipanggil per-user
+// (bukan batch) makanya cuma dipakai di endpoint yang butuh 1 user spesifik.
+async function computeUserStats(discordId) {
+  const [downloads, installs] = await Promise.all([
+    db.collection('history').countDocuments({ userId: discordId, itemType: 'game' }),
+    db.collection('history').countDocuments({ userId: discordId, itemType: 'bypass' })
+  ]);
+  return { downloads, installs, total: downloads + installs };
 }
 
 // ── Refresh token — perpanjang sesi tanpa login Discord ulang ──
@@ -2151,8 +2204,30 @@ app.get('/api/admin/history', requireAdmin, async (req, res) => {
 });
 
 app.get('/api/admin/users', requireAdmin, async (req, res) => {
-  const rows = await db.collection('users').find({}).sort({ createdAt: -1 }).toArray();
-  res.json(rows.map(publicUser));
+  const { search = '' } = req.query;
+  const query = {};
+  if (search && search.trim()) {
+    const q = search.trim();
+    const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+    query.$or = [{ username: re }, { discordId: re }, { role: re }];
+  }
+  const rows = await db.collection('users').find(query).sort({ createdAt: -1 }).toArray();
+
+  // Total download (Game) & install (Bypass) per user, dihitung SEKALIGUS lewat satu
+  // aggregation (bukan query per-user) biar tetap cepat walau jumlah user banyak.
+  const statsAgg = await db.collection('history').aggregate([
+    { $group: { _id: { userId: '$userId', itemType: '$itemType' }, count: { $sum: 1 } } }
+  ]).toArray();
+  const statsMap = {};
+  for (const s of statsAgg) {
+    const uid = s._id.userId;
+    if (!statsMap[uid]) statsMap[uid] = { downloads: 0, installs: 0, total: 0 };
+    if (s._id.itemType === 'game') statsMap[uid].downloads += s.count;
+    else if (s._id.itemType === 'bypass') statsMap[uid].installs += s.count;
+    statsMap[uid].total += s.count;
+  }
+
+  res.json(rows.map(u => publicUser(u, statsMap[u.discordId])));
 });
 
 // "Set paket" — ganti role user dari admin panel. Ini juga sekaligus:
@@ -2327,6 +2402,9 @@ app.put('/api/admin/users/:discordId/role', requireAdmin, async (req, res) => {
   }
 
   pushAccountUpdate(discordId).catch(() => {});
+  db.collection('users').findOne({ discordId })
+    .then(fresh => computeUserStats(discordId).then(stats => broadcastAdmin('user:update', publicUser(fresh, stats))))
+    .catch(() => {});
 
   res.json({
     success: true,
@@ -2404,6 +2482,9 @@ app.put('/api/admin/users/:discordId/active-period', requireAdmin, async (req, r
     }).catch(() => {});
 
     pushAccountUpdate(discordId).catch(() => {});
+    db.collection('users').findOne({ discordId })
+      .then(fresh => computeUserStats(discordId).then(stats => broadcastAdmin('user:update', publicUser(fresh, stats))))
+      .catch(() => {});
 
     res.json({ success: true, activeUntil });
   } catch (e) {
@@ -2432,7 +2513,138 @@ app.put('/api/admin/users/:discordId/reset-quota', requireAdmin, async (req, res
       meta: { discordId }
     }).catch(() => {});
 
+    db.collection('users').findOne({ discordId })
+      .then(fresh => computeUserStats(discordId).then(stats => broadcastAdmin('user:update', publicUser(fresh, stats))))
+      .catch(() => {});
+
     res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// "Atur Limit Download/Bypass" — versi lebih presisi dari reset-quota di atas: admin
+// bisa TAMBAH (kasih balik sisa download hari ini), KURANGI (potong sisa download hari
+// ini), atau RESET (balik ke 0 dipakai) counter Game/Bypass secara terpisah. Cuma
+// berlaku untuk role yang limitnya terbatas (Public/Gold) — Platinum & Admin unlimited
+// jadi tidak ada apa-apa yang perlu diatur.
+app.put('/api/admin/users/:discordId/quota', requireAdmin, async (req, res) => {
+  try {
+    const discordId = req.params.discordId;
+    const { type, action, amount } = req.body;
+    if (!['game', 'bypass'].includes(type)) return res.status(400).json({ error: 'Tipe limit harus "game" atau "bypass".' });
+    if (!['add', 'subtract', 'reset'].includes(action)) return res.status(400).json({ error: 'Aksi harus "add", "subtract", atau "reset".' });
+
+    const user = await db.collection('users').findOne({ discordId });
+    if (!user) return res.status(404).json({ error: 'User tidak ditemukan.' });
+
+    const limits = DOWNLOAD_LIMITS[user.role] || DOWNLOAD_LIMITS.public;
+    const limit = limits[type];
+    if (limit === Infinity) return res.status(400).json({ error: `Paket ${user.role.toUpperCase()} unlimited untuk ${type === 'game' ? 'Game' : 'Bypass'}, tidak ada limit yang bisa diatur.` });
+
+    const today = todayDateStrJakarta();
+    const prevUsage = (user.downloadUsage && user.downloadUsage.date === today)
+      ? user.downloadUsage
+      : { date: today, game: 0, bypass: 0 };
+    const usedNow = prevUsage[type] || 0;
+
+    let usedNext = usedNow;
+    if (action === 'reset') {
+      usedNext = 0;
+    } else {
+      const amt = Number(amount);
+      if (!Number.isFinite(amt) || amt <= 0) return res.status(400).json({ error: 'Jumlah harus berupa angka lebih dari 0.' });
+      // "add" limit = kasih balik jatah (mengurangi counter terpakai), "subtract" = potong jatah (menambah counter terpakai)
+      usedNext = action === 'add' ? Math.max(0, usedNow - amt) : Math.min(limit, usedNow + amt);
+    }
+
+    const newUsage = { ...prevUsage, [type]: usedNext };
+    await db.collection('users').updateOne({ discordId }, { $set: { downloadUsage: newUsage } });
+    pushAccountUpdate(discordId).catch(() => {});
+
+    const label = type === 'game' ? 'Game' : 'Bypass';
+    const actionLabel = action === 'reset' ? 'mereset' : action === 'add' ? 'menambah' : 'mengurangi';
+    logActivity({
+      type: 'admin_reset_quota',
+      username: req.admin?.username || 'Admin',
+      description: `Admin ${actionLabel} limit download ${label} ${user.username || discordId} (sisa sekarang: ${Math.max(0, limit - usedNext)}/${limit}).`,
+      meta: { discordId, type, action, amount: amount || null }
+    }).catch(() => {});
+
+    db.collection('users').findOne({ discordId })
+      .then(fresh => computeUserStats(discordId).then(stats => broadcastAdmin('user:update', publicUser(fresh, stats))))
+      .catch(() => {});
+
+    res.json({ success: true, type, used: usedNext, limit, remaining: Math.max(0, limit - usedNext) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// "Suspend / Ban / Aktifkan Kembali" — ubah status akses akun user. 'suspended' &
+// 'banned' langsung memblokir user dari SEMUA endpoint app (lihat requireUser) dan
+// otomatis memutus koneksi realtime yang sedang aktif punya user itu, jadi efeknya
+// langsung kerasa walau usernya lagi online.
+app.put('/api/admin/users/:discordId/status', requireAdmin, async (req, res) => {
+  try {
+    const discordId = req.params.discordId;
+    const { status, reason } = req.body;
+    if (!ACCOUNT_STATUSES.includes(status)) return res.status(400).json({ error: 'Status tidak valid.' });
+
+    const user = await db.collection('users').findOne({ discordId });
+    if (!user) return res.status(404).json({ error: 'User tidak ditemukan.' });
+
+    const oldStatus = user.status || 'active';
+    await db.collection('users').updateOne(
+      { discordId },
+      { $set: { status, statusReason: reason || null, statusUpdatedAt: new Date() } }
+    );
+
+    const STATUS_LABEL = { active: 'Aktif', suspended: 'Suspend', banned: 'Banned' };
+    const STATUS_ICON  = { active: '✅', suspended: '⏸️', banned: '⛔' };
+
+    logActivity({
+      type: 'account_status',
+      username: req.admin?.username || 'Admin',
+      description: `Admin mengubah status akun ${user.username || discordId} dari ${STATUS_LABEL[oldStatus]} ke ${STATUS_LABEL[status]}.${reason ? ` Alasan: ${reason}` : ''}`,
+      meta: { discordId, oldStatus, newStatus: status, reason: reason || null }
+    }).catch(() => {});
+
+    if (status !== 'active') {
+      notifyUser(discordId, {
+        type: 'announcement',
+        title: `Akun Kamu Di-${STATUS_LABEL[status]}`,
+        message: status === 'banned'
+          ? `Akun kamu telah di-banned oleh Admin dan tidak bisa lagi mengakses layanan.${reason ? ` Alasan: ${reason}` : ''}`
+          : `Akun kamu di-suspend sementara oleh Admin.${reason ? ` Alasan: ${reason}` : ''}`,
+        fields: [
+          field('👤 Username', user.username || discordId, true),
+          field('🆔 Discord ID', discordId, true),
+          field(`${STATUS_ICON[status]} Status`, STATUS_LABEL[status], true),
+          ...(reason ? [field('📝 Alasan', reason, false)] : [])
+        ],
+        dm: true, webhook: true
+      }).catch(() => {});
+      // Putuskan koneksi realtime yang sedang aktif biar app langsung logout/blokir.
+      wsSendToUser(discordId, 'account:blocked', { status, reason: reason || null });
+    } else if (oldStatus !== 'active') {
+      notifyUser(discordId, {
+        type: 'announcement',
+        title: 'Akun Kamu Diaktifkan Kembali',
+        message: 'Akun kamu telah diaktifkan kembali oleh Admin. Selamat datang kembali!',
+        fields: [
+          field('👤 Username', user.username || discordId, true),
+          field('🆔 Discord ID', discordId, true)
+        ],
+        dm: true, webhook: true
+      }).catch(() => {});
+    }
+
+    db.collection('users').findOne({ discordId })
+      .then(fresh => computeUserStats(discordId).then(stats => broadcastAdmin('user:update', publicUser(fresh, stats))))
+      .catch(() => {});
+
+    res.json({ success: true, status });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
