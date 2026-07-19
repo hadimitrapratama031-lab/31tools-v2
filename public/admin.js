@@ -476,10 +476,10 @@ function renderTableRows(type, rows, isFilteredEmpty) {
 
   table.innerHTML = `
     <thead><tr>
-      <th style="width:64px;">Cover</th>
+      <th style="width:92px;">Cover</th>
       <th>Nama</th>
       <th style="width:110px;">Role</th>
-      <th style="width:96px;">Aksi</th>
+      <th style="width:116px;">Aksi</th>
     </tr></thead>
     <tbody>
     ${rows.map(item => `
