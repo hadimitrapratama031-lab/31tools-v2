@@ -745,12 +745,17 @@ async function handleInstall(itemType, itemId, itemName) {
       );
 
     } else {
-      // ── BYPASS INSTALL ──
-      // 1. Cari folder game di steamapps via appId (target extract)
-      // 2. Download file dari link manual yang admin set (streamPath — bukan HubCap)
-      // 3. Extract ke folder game tersebut
+      // ── BYPASS INSTALL (sistem persis seperti project lama) ──
+      // 1. Ambil directUrl dari endpoint sederhana (tanpa proxy/stream complexity)
+      // 2. Cari folder game di steamapps via appId
+      // 3. Download langsung dari directUrl ke main.js
+      // 4. Extract ke folder game
 
-      const appId = data.steamAppId || data.appId;
+      dlSetStage('Mengambil link bypass...', 1);
+      const linkData = await api(`/api/bypasses/${itemId}/download-link`);
+      if (!linkData.directUrl) throw new Error(linkData.error || 'Link bypass tidak ditemukan. Pastikan admin sudah mengisi link file bypass.');
+
+      const appId = linkData.steamAppId || data.steamAppId || data.appId;
       if (!appId) throw new Error('App ID belum diisi admin pada bypass ini. Hubungi admin.');
 
       dlSetStage('Mendeteksi Steam...', 1);
@@ -761,20 +766,15 @@ async function handleInstall(itemType, itemId, itemName) {
       const folderResult = await window.electronAPI.findGameFolderByAppId({ steamPath, appId: String(appId) });
       if (!folderResult.found) throw new Error(folderResult.error || `Game dengan App ID ${appId} belum terinstall di Steam. Install gamenya dulu lalu coba lagi.`);
 
-      dlSetStage('Mengunduh bypass dari server...', 2);
-      // Pakai token terbaru dari localStorage (mungkin sudah di-refresh oleh api() sebelumnya)
-      const bypassUrl = `${SERVER_URL}${data.streamPath}`;
-
+      dlSetStage('Mengunduh bypass...', 2);
       result = await window.electronAPI.installBypass({
         folderPath:  folderResult.folderPath,
-        driveUrl:    bypassUrl,
-        directUrl:   data.directUrl || null,  // URL asli Ryuu kalau ada (dikembalikan server untuk download langsung)
+        driveUrl:    linkData.directUrl,   // URL langsung dari admin, bukan lewat proxy server
         userId:      currentUser?.discordId || currentUser?.userId || '',
         deviceId:    getOrCreateDeviceId(),
         gameId:      itemId,
         gameName:    itemName,
         steamAppId:  String(appId),
-        extraHeaders: { Authorization: `Bearer ${localStorage.getItem('token') || ''}` }
       });
       if (result.cancelled) { dlModalHide(); return; }
       if (!result.success)  throw new Error(result.error || 'Install bypass gagal tanpa keterangan.');

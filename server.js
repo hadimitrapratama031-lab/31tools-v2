@@ -565,6 +565,37 @@ app.get('/api/games/:id/stream', async (req, res) => {
 
 // ── DOWNLOAD BYPASS ──
 // ── DOWNLOAD BYPASS (metadata) ──
+// ── BYPASS DOWNLOAD LINK (simple, persis seperti project lama) ──
+// Return directUrl langsung — tidak ada proxy, tidak ada stream complexity.
+// Client (main.js) download langsung dari URL yang admin set.
+app.get('/api/bypasses/:id/download-link', requireUser, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+    const bypass = await db.collection('bypasses').findOne({ _id: new ObjectId(req.params.id) });
+    if (!bypass) return res.status(404).json({ error: 'Bypass tidak ditemukan.' });
+
+    const myLevel     = ROLE_LEVEL[req.user.role]   ?? 0;
+    const bypassLevel = ROLE_LEVEL[bypass.role]     ?? 0;
+    if (myLevel < bypassLevel) {
+      return res.status(403).json({ error: `Bypass ini membutuhkan paket ${bypass.role}.` });
+    }
+
+    const url = bypass.zipUrl || bypass.link || bypass.driveLink || null;
+    if (!url) {
+      return res.status(404).json({ error: 'Link bypass belum diatur admin. Hubungi admin untuk mengisi link file bypass.' });
+    }
+
+    // Return langsung URL-nya ke client — sama persis dengan project lama
+    res.json({
+      directUrl:  url,
+      name:       bypass.name,
+      steamAppId: bypass.steamAppId || bypass.appId || null,
+    });
+  } catch(e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 app.get('/api/bypasses/:id/download', requireUser, async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });

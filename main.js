@@ -190,7 +190,8 @@ function downloadFileWithProgress(url, destPath, onProgress, redirectCount = 0, 
       'drive.google.com',
       'docs.google.com',
       'storage.googleapis.com',
-      // generator.ryuu.lol sudah diproxy di server — client tidak download langsung ke ryuu
+      'generator.ryuu.lol',                   // Ryuu — link bypass langsung dari admin
+      'ryuu.lol',
     ];
     try {
       const parsedUrl = new URL(url);
@@ -382,13 +383,12 @@ function copyDirOverwrite(srcDir, destDir) {
   }
 }
 
-ipcMain.handle('install-bypass', async (event, { folderPath, driveUrl, directUrl, userId, deviceId, gameId, gameName, steamAppId, extraHeaders }) => {
-  const tempZip = path.join(app.getPath('temp'), 'bypass_' + Date.now() + '.zip');
-  const tempDir = path.join(app.getPath('temp'), 'bypass_extract_' + Date.now());
+ipcMain.handle('install-bypass', async (event, { folderPath, driveUrl, userId, deviceId, gameId, gameName, steamAppId }) => {
+  const tempZipPath = path.join(app.getPath('temp'), 'bypass_' + Date.now() + '.zip');
+  const tempExtractDir = path.join(app.getPath('temp'), 'bypass_extract_' + Date.now());
   try {
-    // 1. Validasi folderPath — sudah dicari di app.js via find-game-folder-by-appid
     if (!folderPath || !fs.existsSync(folderPath)) {
-      throw new Error('Folder game tujuan tidak ditemukan: ' + (folderPath || '(kosong)'));
+      throw new Error('Folder game tujuan tidak ditemukan: ' + folderPath);
     }
 
     const resolvedFolder = path.resolve(folderPath);
@@ -409,71 +409,52 @@ ipcMain.handle('install-bypass', async (event, { folderPath, driveUrl, directUrl
       }
     }
 
-    // 2. Tentukan URL & header yang dipakai untuk download
-    // Kalau server mengembalikan directUrl (misal Ryuu), download langsung dengan
-    // header Ryuu yang benar — ini lebih andal dari proxy server yang bisa kena hotlink protection.
-    // Kalau tidak ada directUrl, download lewat stream proxy server dengan Authorization header.
-    let downloadUrl, downloadHeaders;
-    const isRyuu = directUrl && /ryuu\.lol|generator\.ryuu\.lol/.test(directUrl);
+    // Download langsung dari URL yang admin set (persis seperti project lama)
+    await downloadFileWithProgress(driveUrl, tempZipPath, null);
 
-    if (directUrl && isRyuu) {
-      // Ryuu: download langsung dengan header yang Ryuu butuhkan
-      downloadUrl = directUrl;
-      downloadHeaders = {
-        'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-        'Referer':         'https://generator.ryuu.lol/',
-        'Accept':          '*/*',
-        'Accept-Language': 'en-US,en;q=0.9',
-        'Origin':          'https://generator.ryuu.lol',
-      };
-    } else if (directUrl) {
-      // directUrl lain (non-Ryuu) — download langsung tanpa header khusus
-      downloadUrl = directUrl;
-      downloadHeaders = {};
-    } else {
-      // Pakai stream proxy server dengan Authorization JWT
-      downloadUrl = driveUrl;
-      downloadHeaders = extraHeaders || {};
+    // Validasi: file harus diawali signature ZIP (PK\x03\x04)
+    const headBuf = fs.readFileSync(tempZipPath, { encoding: null, flag: 'r' }).slice(0, 4);
+    const isZip = headBuf[0] === 0x50 && headBuf[1] === 0x4B;
+    if (!isZip) {
+      throw new Error('File yang didownload bukan ZIP valid (kemungkinan link bermasalah atau sudah kedaluwarsa)');
     }
 
-    await downloadFileWithProgress(downloadUrl, tempZip, null, 0, downloadHeaders);
+    // Extract ke folder temp dulu — struktur ZIP dipertahankan apa adanya (tidak di-flatten)
+    fs.mkdirSync(tempExtractDir, { recursive: true });
+    await extractZip(tempZipPath, { dir: tempExtractDir });
 
-    // Validasi ZIP
-    const head = fs.readFileSync(tempZip, { encoding: null }).slice(0, 4);
-    if (head[0] !== 0x50 || head[1] !== 0x4B) {
-      throw new Error('File yang didownload bukan ZIP valid. Kemungkinan App ID salah atau file belum tersedia di HubCap.');
-    }
-
-    // 3. Extract ke temp
-    fs.mkdirSync(tempDir, { recursive: true });
-    await extractZip(tempZip, { dir: tempDir });
-
-    // 4. Catat semua file
+    // Walk semua file di temp untuk catat extractedFiles
     const extractedFiles = [];
-    function walkBypass(dir, baseDir) {
-      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+    function walkBypassDir(dir, baseDir) {
+      const entries = fs.readdirSync(dir, { withFileTypes: true });
+      for (const entry of entries) {
         const fullPath = path.join(dir, entry.name);
-        if (entry.isDirectory()) { walkBypass(fullPath, baseDir); continue; }
-        extractedFiles.push(path.relative(baseDir, fullPath).replace(/\\/g, '/'));
+        if (entry.isDirectory()) {
+          walkBypassDir(fullPath, baseDir);
+        } else {
+          const relPath = path.relative(baseDir, fullPath).replace(/\\/g, '/');
+          extractedFiles.push(relPath);
+        }
       }
     }
-    walkBypass(tempDir, tempDir);
+    walkBypassDir(tempExtractDir, tempExtractDir);
 
-    // 5. Copy ke folder game (overwrite)
-    copyDirOverwrite(tempDir, folderPath);
+    // Salin semua isi ke folder game, menimpa file yang sudah ada
+    copyDirOverwrite(tempExtractDir, folderPath);
 
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch(e2) {}
-    try { fs.unlinkSync(tempZip); } catch(e2) {}
+    fs.unlinkSync(tempZipPath);
+    try { fs.rmSync(tempExtractDir, { recursive: true, force: true }); } catch(e2) {}
+
     return { success: true, extractedFiles, folderPath };
   } catch (e) {
-    try { fs.unlinkSync(tempZip); } catch(e2) {}
-    try { fs.rmSync(tempDir, { recursive: true, force: true }); } catch(e2) {}
+    try { fs.unlinkSync(tempZipPath); } catch(e2) {}
+    try { fs.rmSync(tempExtractDir, { recursive: true, force: true }); } catch(e2) {}
     if (e.message === 'CANCELLED') return { success: false, cancelled: true };
     return { success: false, error: e.message };
   }
 });
 
-// ── Remove game (hapus .lua & .manifest) ──
+// ── Remove bypass (hapus file-file spesifik hasil extract dari folder game) ──
 ipcMain.handle('remove-game', (event, { steamPath, extractedFiles }) => {
   try {
     const configDir = path.join(steamPath, 'config');
