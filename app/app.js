@@ -201,6 +201,7 @@ function wireNavigation() {
       e.preventDefault();
       if (_autoRefreshTimer) clearInterval(_autoRefreshTimer);
       localStorage.removeItem('token');
+      localStorage.removeItem('_savedUser');
       location.reload();
     });
   }
@@ -239,27 +240,121 @@ function buildLoginOverlay() {
     boxShadow: '0 40px 80px rgba(10,5,25,0.45)'
   });
 
-  card.innerHTML = `
-    <div style="font-size:42px;margin-bottom:10px;">🎮</div>
-    <h2 id="nvLoginAppName" style="font-family:'Poppins',sans-serif;color:#f3eefc;margin:0 0 8px;font-size:20px;">GameDash</h2>
-    <p style="color:#b6a9d1;font-size:13px;line-height:1.6;margin:0 0 24px;">
-      Login pakai Discord untuk masuk. Akun kamu akan otomatis terdeteksi
-      setelah verifikasi berhasil.
-    </p>
-    <button id="nvBtnLoginDiscord" style="width:100%;border:none;padding:13px;border-radius:12px;
-      background:linear-gradient(90deg,#5865F2,#7c5cff);color:#fff;font-weight:700;font-size:14px;
-      cursor:pointer;box-shadow:0 10px 25px rgba(92,102,255,0.4);display:flex;align-items:center;
-      justify-content:center;gap:8px;">
-      💬 Login dengan Discord
-    </button>
-    <div id="nvLoginStatus" style="margin-top:16px;font-size:12.5px;color:#8f8ab0;min-height:16px;"></div>
-  `;
+  // Cek apakah ada sesi tersimpan
+  const savedToken  = localStorage.getItem('token');
+  const savedUser   = _getSavedUser();
+  const isReturning = !!(savedToken && savedUser);
 
-  overlay.appendChild(card);
-  document.body.appendChild(overlay);
-  loginStatusEl = card.querySelector('#nvLoginStatus');
-  card.querySelector('#nvBtnLoginDiscord').addEventListener('click', startLogin);
+  if (isReturning) {
+    // ── RETURNING USER — tombol masuk langsung tanpa Discord ──
+    card.innerHTML = `
+      <img id="nvReturnAvatar" src="${escapeHtml(savedUser.avatarUrl || '')}"
+        style="width:72px;height:72px;border-radius:50%;object-fit:cover;
+               border:3px solid rgba(255,255,255,0.15);margin-bottom:14px;
+               box-shadow:0 8px 24px rgba(0,0,0,0.4);"
+        onerror="this.style.display='none'">
+      <h2 style="font-family:'Poppins',sans-serif;color:#f3eefc;margin:0 0 4px;font-size:20px;">
+        Selamat datang kembali!
+      </h2>
+      <p style="color:#a78bfa;font-size:14px;font-weight:700;margin:0 0 6px;">
+        ${escapeHtml(savedUser.username || '')}
+      </p>
+      <p style="color:#b6a9d1;font-size:12px;margin:0 0 26px;line-height:1.5;">
+        Tekan tombol di bawah untuk langsung masuk ke aplikasi.
+      </p>
+      <button id="nvBtnQuickLogin" style="width:100%;border:none;padding:14px;border-radius:12px;
+        background:linear-gradient(90deg,#7c5cff,#a855f7);color:#fff;font-weight:700;font-size:14px;
+        cursor:pointer;box-shadow:0 10px 25px rgba(124,92,255,0.45);
+        display:flex;align-items:center;justify-content:center;gap:8px;margin-bottom:12px;">
+        ⚡ Masuk Sekarang
+      </button>
+      <button id="nvBtnSwitchAccount" style="width:100%;border:1px solid rgba(255,255,255,0.12);
+        padding:11px;border-radius:12px;background:transparent;color:#8f8ab0;
+        font-size:12.5px;font-weight:600;cursor:pointer;">
+        Ganti Akun (Login Discord)
+      </button>
+      <div id="nvLoginStatus" style="margin-top:14px;font-size:12px;color:#8f8ab0;min-height:16px;"></div>
+    `;
+
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+    loginStatusEl = card.querySelector('#nvLoginStatus');
+
+    // Tombol masuk langsung
+    card.querySelector('#nvBtnQuickLogin').addEventListener('click', async () => {
+      const btn = card.querySelector('#nvBtnQuickLogin');
+      btn.disabled = true;
+      btn.textContent = 'Memverifikasi...';
+      if (loginStatusEl) { loginStatusEl.textContent = ''; }
+      try {
+        const user = await api('/api/me');
+        hideLogin();
+        enterApp(user);
+      } catch (e) {
+        btn.disabled = false;
+        btn.innerHTML = '⚡ Masuk Sekarang';
+        // Bedakan error jaringan (server offline/tidak bisa dihubungi) dari token yang
+        // BENAR-BENAR tidak valid. Kalau cuma masalah jaringan, jangan hapus sesi —
+        // biarkan user coba lagi begitu koneksi/server sudah normal.
+        const isNetworkError = /fetch|network/i.test(e.message || '');
+        if (isNetworkError) {
+          if (loginStatusEl) {
+            loginStatusEl.textContent = 'Server tidak bisa dihubungi. Cek koneksi internet lalu coba lagi.';
+            loginStatusEl.style.color = '#ff7eb3';
+          }
+          return;
+        }
+        // Token benar-benar tidak valid/akun tidak ditemukan → wajib login Discord ulang
+        localStorage.removeItem('token');
+        localStorage.removeItem('_savedUser');
+        overlay.remove();
+        _installModalEl = null;
+        buildLoginOverlay();
+        showLogin('Sesi kamu sudah berakhir, login ulang dengan Discord.');
+      }
+    });
+
+    // Tombol ganti akun
+    card.querySelector('#nvBtnSwitchAccount').addEventListener('click', () => {
+      localStorage.removeItem('token');
+      localStorage.removeItem('_savedUser');
+      overlay.remove();
+      buildLoginOverlay();
+    });
+
+  } else {
+    // ── FRESH LOGIN — tombol Discord ──
+    card.innerHTML = `
+      <div style="font-size:42px;margin-bottom:10px;">🎮</div>
+      <h2 id="nvLoginAppName" style="font-family:'Poppins',sans-serif;color:#f3eefc;margin:0 0 8px;font-size:20px;">31 Tools</h2>
+      <p style="color:#b6a9d1;font-size:13px;line-height:1.6;margin:0 0 24px;">
+        Login pakai Discord untuk masuk. Akun kamu akan otomatis terdeteksi
+        setelah verifikasi berhasil.
+      </p>
+      <button id="nvBtnLoginDiscord" style="width:100%;border:none;padding:13px;border-radius:12px;
+        background:linear-gradient(90deg,#5865F2,#7c5cff);color:#fff;font-weight:700;font-size:14px;
+        cursor:pointer;box-shadow:0 10px 25px rgba(92,102,255,0.4);display:flex;align-items:center;
+        justify-content:center;gap:8px;">
+        💬 Login dengan Discord
+      </button>
+      <div id="nvLoginStatus" style="margin-top:16px;font-size:12.5px;color:#8f8ab0;min-height:16px;"></div>
+    `;
+
+    overlay.appendChild(card);
+    document.body.appendChild(overlay);
+    loginStatusEl = card.querySelector('#nvLoginStatus');
+    card.querySelector('#nvBtnLoginDiscord').addEventListener('click', startLogin);
+  }
+
   return overlay;
+}
+
+// Simpan & ambil data user dari localStorage supaya nama+avatar bisa ditampilkan di login
+function _getSavedUser() {
+  try { return JSON.parse(localStorage.getItem('_savedUser') || 'null'); } catch(e) { return null; }
+}
+function _saveUser(user) {
+  try { localStorage.setItem('_savedUser', JSON.stringify({ username: user.username, avatarUrl: user.avatarUrl, role: user.role })); } catch(e) {}
 }
 
 function hideLogin() {
@@ -273,12 +368,31 @@ function startLogin() {
   const deviceId = getOrCreateDeviceId();
   const openExternal = window.electronAPI?.openExternal || (url => window.open(url, '_blank'));
   openExternal(`${SERVER_URL}/auth/discord?state=${encodeURIComponent(deviceId)}`);
+
+  const discordBtn = document.getElementById('nvBtnLoginDiscord');
+  if (discordBtn) { discordBtn.disabled = true; discordBtn.innerHTML = '⏳ Menunggu login di browser...'; }
+
   if (loginStatusEl) {
-    loginStatusEl.textContent = 'Menunggu login di browser...';
+    loginStatusEl.innerHTML = 'Selesaikan login di jendela browser yang baru terbuka. <a href="#" id="nvCancelLogin" style="color:#a78bfa;text-decoration:underline;">Batal</a>';
     loginStatusEl.style.color = '#8f8ab0';
+    const cancelLink = loginStatusEl.querySelector('#nvCancelLogin');
+    if (cancelLink) cancelLink.addEventListener('click', (e) => { e.preventDefault(); resetLoginButton('Dibatalkan. Silakan coba lagi.'); });
   }
+
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+
+  // Timeout — kalau setelah 5 menit belum juga berhasil (misal tab browser
+  // ditutup tanpa menyelesaikan login, atau lupa/gagal join Discord), berhenti
+  // polling dan kembalikan tombol ke keadaan semula supaya user bisa coba lagi,
+  // daripada polling diam-diam tanpa batas waktu selamanya.
+  const POLL_TIMEOUT_MS = 5 * 60 * 1000;
+  const pollStartedAt = Date.now();
+
   pollTimer = setInterval(async () => {
+    if (Date.now() - pollStartedAt > POLL_TIMEOUT_MS) {
+      resetLoginButton('Waktu login habis. Silakan coba lagi.');
+      return;
+    }
     try {
       const res = await fetch(`${SERVER_URL}/auth/poll?state=${encodeURIComponent(deviceId)}`);
       const data = await res.json();
@@ -293,28 +407,26 @@ function startLogin() {
   }, 2000);
 }
 
-async function tryAutoLogin() {
-  const token = localStorage.getItem('token');
-  if (!token) { showLogin(); return; }
-
-  try {
-    // Coba /api/me — server otomatis refresh token kalau expired
-    const user = await api('/api/me');
-    hideLogin();
-    enterApp(user);
-  } catch (e) {
-    // Cek apakah error karena network (server offline) bukan karena token invalid
-    const isNetworkError = e.message.includes('fetch') || e.message.includes('network') ||
-                           e.message.includes('Failed to fetch') || e.message.includes('NetworkError');
-    if (isNetworkError) {
-      // Server offline — tetap show login tapi kasih info
-      showLogin('Server tidak bisa dihubungi. Periksa koneksi internet.');
-      return;
-    }
-    // Token benar-benar tidak valid — hapus dan minta login ulang
-    localStorage.removeItem('token');
-    showLogin();
+// Kembalikan tombol "Login dengan Discord" ke keadaan semula (dipakai saat dibatalkan/timeout)
+function resetLoginButton(message) {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  const discordBtn = document.getElementById('nvBtnLoginDiscord');
+  if (discordBtn) { discordBtn.disabled = false; discordBtn.innerHTML = '💬 Login dengan Discord'; }
+  if (loginStatusEl) {
+    loginStatusEl.textContent = message || '';
+    loginStatusEl.style.color = '#ff7eb3';
   }
+}
+
+async function tryAutoLogin() {
+  // PENTING: jangan pernah auto-masuk ke dashboard di sini. App harus SELALU mendarat
+  // di halaman login dulu setiap kali dibuka (termasuk setelah ditutup lalu dibuka lagi).
+  // Kalau ada sesi tersimpan (token + _savedUser di localStorage), buildLoginOverlay()
+  // akan otomatis menampilkan cabang "Selamat datang kembali" dengan tombol
+  // "⚡ Masuk Sekarang" — user tinggal 1x klik TANPA perlu login Discord ulang.
+  // Verifikasi token yang sebenarnya (valid/expired/akun masih ada) baru dilakukan
+  // server-side saat tombol itu ditekan (lewat /api/me), bukan otomatis di sini.
+  showLogin();
 }
 
 // ── MASUK APP ──
@@ -324,6 +436,7 @@ let allBypasses = [];
 
 function enterApp(user) {
   currentUser = user;
+  _saveUser(user); // simpan untuk halaman "Selamat datang kembali"
 
   if (els.profileImg) els.profileImg.src = user.avatarUrl;
   if (els.profileName) els.profileName.textContent = user.username;

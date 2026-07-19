@@ -301,8 +301,31 @@ app.get('/auth/discord', (req, res) => {
 });
 
 app.get('/auth/discord/callback', async (req, res) => {
-  const { code, state } = req.query;
+  const { code, state, error: discordError } = req.query;
+
+  // User menekan "Cancel"/menolak izin di halaman Discord — sebelumnya ini cuma
+  // dapat pesan generik "Request tidak lengkap" yang membingungkan, padahal bukan error.
+  if (discordError) {
+    return res.send(renderInfoPage({
+      emoji: '🚫',
+      title: 'Login Dibatalkan',
+      message: 'Kamu membatalkan proses login di Discord. Kembali ke aplikasi dan coba lagi kalau berubah pikiran.',
+      buttonText: 'Coba Login Lagi',
+      buttonHref: state ? `${SERVER_URL}/auth/discord?state=${encodeURIComponent(state)}` : undefined
+    }));
+  }
+
   if (!code || !state) return res.status(400).send('Request tidak lengkap.');
+
+  if (!db) {
+    return res.status(503).send(renderInfoPage({
+      emoji: '⏳',
+      title: 'Server Belum Siap',
+      message: 'Database masih terhubung, coba lagi dalam beberapa detik.',
+      buttonText: 'Coba Lagi',
+      buttonHref: `${SERVER_URL}/auth/discord?state=${encodeURIComponent(state)}`
+    }));
+  }
 
   try {
     // 1) Tukar "code" dari Discord jadi access token
@@ -323,16 +346,41 @@ app.get('/auth/discord/callback', async (req, res) => {
     });
     const discordUser = profileRes.data; // { id, username, avatar, global_name, ... }
 
-    // 3) WAJIB cek apakah dia anggota server Discord kita (pakai BOT token, bukan token user)
+    // 3) WAJIB cek apakah dia anggota server Discord kita (pakai BOT token, bukan token user).
+    // PENTING: bedakan "benar-benar BUKAN member" (Discord balikin 404 dengan jelas) dari
+    // error lain (bot token salah/kadaluarsa, guild ID salah, bot belum di-invite ke server,
+    // Discord API lagi down, dll). Sebelumnya SEMUA jenis error di sini dianggap sama seperti
+    // "belum join server", jadi user yang SUDAH jadi member pun bisa salah diarahkan ke
+    // halaman "Join Discord Server Dulu" hanya karena verifikasinya gagal karena sebab lain —
+    // inilah salah satu penyebab login "kelihatan tidak berfungsi" padahal akunnya valid.
     const guildId = process.env.DISCORD_GUILD_ID;
     let isMember = false;
+    let memberCheckFailed = false;
     try {
       await axios.get(`https://discord.com/api/guilds/${guildId}/members/${discordUser.id}`, {
         headers: { Authorization: `Bot ${process.env.DISCORD_BOT_TOKEN}` }
       });
-      isMember = true; // kalau request di atas gak error 404, berarti dia member
+      isMember = true;
     } catch (e) {
-      isMember = false;
+      const status = e.response?.status;
+      if (status === 404) {
+        isMember = false; // benar-benar dikonfirmasi Discord: user ini bukan member
+      } else {
+        // Bukan 404 (401/403/429/network/dll) — verifikasi TIDAK BISA dipastikan, jangan
+        // asumsikan "bukan member". Log detailnya biar gampang ditelusuri dari sisi admin.
+        memberCheckFailed = true;
+        console.error('[Auth] Gagal verifikasi member Discord:', status, e.response?.data || e.message);
+      }
+    }
+
+    if (memberCheckFailed) {
+      return res.status(502).send(renderInfoPage({
+        emoji: '⚠️',
+        title: 'Verifikasi Gagal Sementara',
+        message: 'Server tidak bisa memastikan status member Discord kamu saat ini (kemungkinan gangguan sementara). Akun kamu TIDAK ditolak — coba login lagi dalam beberapa saat.',
+        buttonText: 'Coba Login Lagi',
+        buttonHref: `${SERVER_URL}/auth/discord?state=${encodeURIComponent(state)}`
+      }));
     }
 
     if (!isMember) {
@@ -384,14 +432,16 @@ app.get('/auth/discord/callback', async (req, res) => {
     return res.send(renderInfoPage({
       emoji: '✅',
       title: 'Login Berhasil!',
-      message: `Selamat datang, ${user.username}. Kamu bisa kembali ke aplikasi sekarang — halaman ini boleh ditutup.`,
+      message: `Selamat datang, ${user.username}. Kamu bisa kembali ke aplikasi sekarang — halaman ini boleh ditutup. Lain kali buka app, kamu tinggal tekan "Masuk Sekarang" tanpa perlu login Discord ulang.`,
     }));
   } catch (e) {
     console.error('Discord OAuth error:', e.response?.data || e.message);
     return res.status(500).send(renderInfoPage({
       emoji: '⚠️',
       title: 'Gagal Login',
-      message: 'Ada masalah pas nyoba login lewat Discord. Coba lagi dari aplikasinya.'
+      message: 'Ada masalah pas nyoba login lewat Discord. Coba lagi dari aplikasinya.',
+      buttonText: 'Coba Login Lagi',
+      buttonHref: state ? `${SERVER_URL}/auth/discord?state=${encodeURIComponent(state)}` : undefined
     }));
   }
 });
@@ -477,7 +527,7 @@ function renderInfoPage({ emoji, title, message, buttonText, buttonHref, seconda
       <div class="emoji">${emoji}</div>
       <h1>${title}</h1>
       <p>${message}</p>
-      ${buttonText ? `<a class="btn" href="${buttonHref}" target="_blank" rel="noopener">${buttonText}</a>` : ''}
+      ${(buttonText && buttonHref) ? `<a class="btn" href="${buttonHref}" target="_blank" rel="noopener">${buttonText}</a>` : ''}
       ${secondaryButtonText ? `<div class="secondary">${secondaryText}<br><a class="btn" style="margin-top:8px;" href="${secondaryHref}">${secondaryButtonText}</a></div>` : ''}
     </div>
   </body></html>`;
