@@ -823,6 +823,7 @@
   .role-pill.public{ color:#ffffff; border:1px solid rgba(255,255,255,.32); }
   .role-pill.gold{ color:#ffd27a; border:1px solid rgba(255,196,90,.55); }
   .role-pill.platinum{ color:#c9b9ff; border:1px solid rgba(168,139,255,.55); }
+  .role-pill.admin{ color:#86efac; border:1px solid rgba(74,222,128,.55); }
 
   /* ---------------- BADGE ONLINE/OFFLINE (pojok kanan-atas kartu) ---------------- */
   .online-badge-slot{ position:absolute; top:9px; right:9px; z-index:3; }

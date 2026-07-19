@@ -25,7 +25,13 @@
     <p>Masukkan password admin untuk mengakses panel.</p>
     <input class="login-input" type="password" id="adminPassword" placeholder="Password admin" autocomplete="current-password">
     <button class="btn btn-primary btn-block" id="btnAdminLogin">Masuk</button>
+    <div class="login-divider"><span>atau</span></div>
+    <button class="btn btn-discord btn-block" id="btnAdminLoginDiscord">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="currentColor"><path d="M20.317 4.369a19.79 19.79 0 0 0-4.885-1.515.074.074 0 0 0-.079.037c-.21.375-.444.864-.608 1.25a18.27 18.27 0 0 0-5.487 0 12.64 12.64 0 0 0-.617-1.25.077.077 0 0 0-.079-.037A19.74 19.74 0 0 0 3.677 4.37a.07.07 0 0 0-.032.027C.533 9.046-.32 13.58.099 18.058a.082.082 0 0 0 .031.056 19.9 19.9 0 0 0 5.993 3.03.078.078 0 0 0 .084-.028 14.09 14.09 0 0 0 1.226-1.994.076.076 0 0 0-.041-.106 13.1 13.1 0 0 1-1.872-.892.077.077 0 0 1-.008-.128c.126-.094.252-.192.372-.291a.074.074 0 0 1 .077-.01c3.928 1.793 8.18 1.793 12.062 0a.074.074 0 0 1 .078.01c.12.099.246.198.373.292a.077.077 0 0 1-.006.127 12.3 12.3 0 0 1-1.873.892.076.076 0 0 0-.04.107c.36.698.772 1.362 1.225 1.993a.076.076 0 0 0 .084.029 19.84 19.84 0 0 0 6.002-3.03.077.077 0 0 0 .032-.055c.5-5.177-.838-9.674-3.549-13.66a.061.061 0 0 0-.031-.028ZM8.02 15.33c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.418 2.157-2.418 1.21 0 2.176 1.094 2.157 2.418 0 1.334-.955 2.419-2.157 2.419Zm7.975 0c-1.183 0-2.157-1.085-2.157-2.419 0-1.333.955-2.418 2.157-2.418 1.21 0 2.176 1.094 2.157 2.418 0 1.334-.946 2.419-2.157 2.419Z"/></svg>
+      Masuk dengan Discord
+    </button>
     <div class="login-error" id="loginError"></div>
+    <div class="login-hint" id="loginDiscordStatus"></div>
   </div>
 </div>
 
@@ -313,7 +319,7 @@
             <div class="filter-chips" id="usersRoleFilter"></div>
           </div>
         </div>
-        <table id="tableUsers"></table>
+        <div class="users-grid" id="tableUsers"></div>
         <div class="pagination" id="usersPagination" style="display:none;"></div>
       </div>
     </section>
@@ -382,6 +388,11 @@
             <div class="form-group">
               <label class="form-label">💎 Paket Platinum ↔ Role Discord</label>
               <select class="form-input" id="vrRolePlatinum"><option value="">— pilih role Discord —</option></select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">👑 Paket Admin ↔ Role Discord</label>
+              <select class="form-input" id="vrRoleAdmin"><option value="">— pilih role Discord —</option></select>
+              <div style="font-size:11px;color:var(--text-3);margin-top:4px;">Siapapun yang pegang role Discord ini otomatis jadi Admin di app (dan bisa login ke panel admin ini pakai akun Discord-nya). Bot juga otomatis kasih role ini kalau paket seseorang di-set jadi Admin dari panel.</div>
             </div>
             <div class="vr-toggle-row">
               <label class="vr-toggle">
@@ -632,12 +643,16 @@
       <!-- Role segmented -->
       <div class="form-group">
         <label class="form-label">Paket Baru</label>
-        <div class="segmented" id="srRoleSegment" style="display:flex;gap:0;">
+        <div class="segmented" id="srRoleSegment" style="display:flex;gap:0;flex-wrap:wrap;">
           <button class="segmented-opt" data-role="public"   onclick="_srSetRole(this,'public')">🌐 Public</button>
           <button class="segmented-opt active" data-role="gold" onclick="_srSetRole(this,'gold')">🥇 Gold</button>
           <button class="segmented-opt" data-role="platinum" onclick="_srSetRole(this,'platinum')">💎 Platinum</button>
+          <button class="segmented-opt" data-role="admin" onclick="_srSetRole(this,'admin')">👑 Admin</button>
         </div>
         <input type="hidden" id="srRole" value="gold" />
+        <div style="font-size:11px;color:var(--text-3,var(--text-faint));margin-top:6px;">
+          👑 Admin = user ini juga bisa masuk panel admin ini (lewat login Discord), selama role Discord "Admin"-nya (kalau di-mapping di halaman Verify Role) masih dipegang.
+        </div>
       </div>
 
     </div>

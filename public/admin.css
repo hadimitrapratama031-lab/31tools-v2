@@ -98,6 +98,25 @@ a { color: inherit; text-decoration: none; }
 .login-input:focus { outline: none; border-color: var(--violet); }
 .login-input::placeholder { color: var(--text-faint); }
 .login-error { margin-top: 10px; font-size: 12.5px; color: var(--red); min-height: 16px; }
+.login-divider {
+  display: flex; align-items: center; gap: 10px;
+  margin: 16px 0; color: var(--text-faint); font-size: 11.5px;
+  text-transform: uppercase; letter-spacing: .08em;
+}
+.login-divider::before, .login-divider::after {
+  content: ''; flex: 1; height: 1px; background: var(--line);
+}
+.login-hint { margin-top: 12px; font-size: 12px; color: var(--text-dim); line-height: 1.6; min-height: 0; }
+.login-hint.error { color: var(--red); }
+.login-hint.success { color: var(--green); }
+
+.btn-discord {
+  padding: 12px 20px;
+  background: #5865F2; color: #fff;
+  box-shadow: 0 8px 22px rgba(88,101,242,.35);
+}
+.btn-discord:hover { background: #4954c7; box-shadow: 0 12px 28px rgba(88,101,242,.5); transform: translateY(-1px); }
+.btn-discord:disabled { opacity: .6; cursor: not-allowed; transform: none; }
 
 /* ─── BUTTONS ─── */
 .btn {
@@ -430,10 +449,26 @@ table td {
 /* Kolom dengan lebar fixed supaya tabel tidak berantakan.
    PENTING: box-sizing global-nya border-box, jadi width di sini SUDAH TERMASUK
    padding kiri+kanan td (18px+18px=36px) — kolom cover harus cukup lebar untuk
-   menampung padding itu + gambar cover-nya, kalau tidak gambar akan kepotong. */
-table th:nth-child(1), table td:nth-child(1) { width: 88px; }
-table th:nth-child(3), table td:nth-child(3) { width: 130px; }
-table th:nth-child(4), table td:nth-child(4) { width: 112px; }
+   menampung padding itu + gambar cover-nya, kalau tidak gambar akan kepotong.
+
+   PENTING #2 (bugfix): aturan ini SEBELUMNYA ditulis generik untuk SEMUA tabel
+   ("table th:nth-child(1)"), padahal cuma didesain untuk kolom cover Game/Bypass.
+   Akibatnya tabel LAIN yang kolom pertamanya bukan cover kecil (mis. kolom "User"
+   di Manajemen Users & Log Sinkronisasi Role, isinya avatar+nama+Discord ID) ikut
+   kepaksa 88px — teks jadi kepotong/tumpuk sampai kelihatan berantakan. Sekarang
+   di-scope KHUSUS ke #tableGames & #tableBypasses saja. */
+#tableGames th:nth-child(1), #tableGames td:nth-child(1),
+#tableBypasses th:nth-child(1), #tableBypasses td:nth-child(1) { width: 88px; }
+#tableGames th:nth-child(3), #tableGames td:nth-child(3),
+#tableBypasses th:nth-child(3), #tableBypasses td:nth-child(3) { width: 130px; }
+#tableGames th:nth-child(4), #tableGames td:nth-child(4),
+#tableBypasses th:nth-child(4), #tableBypasses td:nth-child(4) { width: 112px; }
+
+/* Log Sinkronisasi Role — lebar kolom sendiri (bukan warisan dari Game/Bypass). */
+#tableRoleLogs th:nth-child(1), #tableRoleLogs td:nth-child(1) { width: 220px; }
+#tableRoleLogs th:nth-child(2), #tableRoleLogs td:nth-child(2) { width: auto; }
+#tableRoleLogs th:nth-child(3), #tableRoleLogs td:nth-child(3) { width: 130px; }
+#tableRoleLogs th:nth-child(4), #tableRoleLogs td:nth-child(4) { width: 120px; }
 /* Kolom Nama (kolom ke-2) sengaja TIDAK dikasih width tetap supaya otomatis
    mengisi sisa ruang — tapi ISI di dalamnya (cell-name/cell-desc) dibatasi
    max-width sendiri (lihat di bawah) supaya teks tidak melebar sampai ratusan
@@ -472,6 +507,7 @@ table tbody tr:hover td { background: rgba(123,92,255,.05); }
 .tag.public   { background: rgba(255,255,255,.1); color: var(--text-dim); box-shadow:none; }
 .tag.gold     { background: linear-gradient(135deg, #ffd76a, #ff9d3d); color: #3a2405; }
 .tag.platinum { background: linear-gradient(135deg, #7dd3fc, #a78bfa); color: #1c1440; }
+.tag.admin    { background: linear-gradient(135deg, #4ade80, #22c55e); color: #06280f; }
 .tag.game     { background: rgba(123,92,255,.2); color: #a78bfa; box-shadow:none; }
 .tag.bypass   { background: rgba(61,217,245,.15); color: var(--cyan); box-shadow:none; }
 
@@ -481,7 +517,57 @@ table tbody tr:hover td { background: rgba(123,92,255,.05); }
   text-align: center; padding: 50px 20px;
   color: var(--text-faint); font-size: 13.5px; line-height: 1.7;
 }
+.empty-cell--grid { grid-column: 1 / -1; }
 .empty-icon { font-size: 36px; margin-bottom: 10px; display: block; }
+
+/* ─── USERS — CARD GRID (Manajemen Users) ───
+   Menggantikan tabel: tiap user dapat "ruang"-nya sendiri (avatar, nama, Discord ID,
+   paket, aksi masing-masing di baris/blok terpisah) supaya tidak ada yang kepotong
+   atau tumpuk walau nama/ID-nya panjang. */
+.users-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(270px, 1fr));
+  gap: 14px;
+  padding: 18px;
+}
+.user-card {
+  position: relative;
+  background: var(--navy-700);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 16px;
+  transition: border-color .18s, transform .18s;
+  overflow: hidden;
+}
+.user-card:hover { border-color: var(--line-hi); transform: translateY(-2px); }
+.user-card-top {
+  display: flex; align-items: flex-start; gap: 10px; margin-bottom: 12px;
+}
+.user-card-avatar {
+  width: 42px; height: 42px; border-radius: 50%; object-fit: cover;
+  background: var(--grad-primary); flex-shrink: 0; display: block;
+}
+.user-card-avatar--fallback {
+  display: flex; align-items: center; justify-content: center;
+  font-weight: 800; font-size: 15px; color: #fff;
+  background: linear-gradient(135deg,#7b5cff,#e64bb8);
+}
+.user-card-headtext { min-width: 0; flex: 1; padding-top: 1px; }
+.user-card-name {
+  font-weight: 700; font-size: 14px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.user-card-role { flex-shrink: 0; }
+.user-card-id {
+  display: flex; align-items: center; gap: 6px;
+  font-family: 'Courier New', monospace; font-size: 11.5px;
+  color: var(--text-faint); letter-spacing: .02em;
+  background: rgba(255,255,255,.03); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 7px 10px; margin-bottom: 12px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.user-card-id span { overflow: hidden; text-overflow: ellipsis; }
+.user-card-action { width: 100%; }
 
 /* ─── ROLE SELECT ─── */
 select.role-select {
@@ -719,6 +805,7 @@ textarea.form-input { resize: vertical; min-height: 72px; }
 .row-role-accent.public::before   { background: rgba(255,255,255,.18); }
 .row-role-accent.gold::before     { background: linear-gradient(180deg, #ffd76a, #ff9d3d); }
 .row-role-accent.platinum::before { background: linear-gradient(180deg, #7dd3fc, #a78bfa); }
+.row-role-accent.admin::before    { background: linear-gradient(180deg, #4ade80, #22c55e); }
 
 .cell-time { font-size: 11px; color: var(--text-faint); margin-top: 4px; display: flex; align-items: center; gap: 4px; }
 

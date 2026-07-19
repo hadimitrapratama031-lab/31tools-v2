@@ -114,7 +114,10 @@ module.exports = function createRoleSync({ getDb, ROLE_LEVEL }) {
       discordRoleMap: {
         public:   process.env.DISCORD_ROLE_ID_PUBLIC   || null,
         gold:     process.env.DISCORD_ROLE_ID_GOLD     || null,
-        platinum: process.env.DISCORD_ROLE_ID_PLATINUM || null
+        platinum: process.env.DISCORD_ROLE_ID_PLATINUM || null,
+        // Role Discord yang, kalau dipegang user, otomatis menjadikan role app-nya 'admin'
+        // (dan sebaliknya: di-set 'admin' dari panel → role Discord ini ikut ditambahkan).
+        admin:    process.env.DISCORD_ROLE_ID_ADMIN    || null
       },
       webhookUrl: process.env.DISCORD_WEBHOOK_URL || null,
       autoSyncFromDiscord: true, // kalau role Discord diubah manual, ikut update role di app
@@ -131,7 +134,8 @@ module.exports = function createRoleSync({ getDb, ROLE_LEVEL }) {
       discordRoleMap: {
         public:   patch.discordRoleMap?.public   !== undefined ? (patch.discordRoleMap.public   || null) : current.discordRoleMap?.public   || null,
         gold:     patch.discordRoleMap?.gold      !== undefined ? (patch.discordRoleMap.gold     || null) : current.discordRoleMap?.gold     || null,
-        platinum: patch.discordRoleMap?.platinum  !== undefined ? (patch.discordRoleMap.platinum || null) : current.discordRoleMap?.platinum  || null
+        platinum: patch.discordRoleMap?.platinum  !== undefined ? (patch.discordRoleMap.platinum || null) : current.discordRoleMap?.platinum  || null,
+        admin:    patch.discordRoleMap?.admin     !== undefined ? (patch.discordRoleMap.admin    || null) : current.discordRoleMap?.admin     || null
       },
       webhookUrl: patch.webhookUrl !== undefined ? (patch.webhookUrl || null) : (current.webhookUrl || null),
       autoSyncFromDiscord: patch.autoSyncFromDiscord !== undefined ? !!patch.autoSyncFromDiscord : (current.autoSyncFromDiscord !== false),
@@ -143,8 +147,8 @@ module.exports = function createRoleSync({ getDb, ROLE_LEVEL }) {
   }
 
   // ── WEBHOOK ──
-  const ROLE_COLOR = { public: 0x8f8ab0, gold: 0xffd76a, platinum: 0xa78bfa };
-  const ROLE_ICON  = { public: '🌐', gold: '🥇', platinum: '💎' };
+  const ROLE_COLOR = { public: 0x8f8ab0, gold: 0xffd76a, platinum: 0xa78bfa, admin: 0x4ade80 };
+  const ROLE_ICON  = { public: '🌐', gold: '🥇', platinum: '💎', admin: '👑' };
 
   async function sendWebhook({ title, description, color, fields }) {
     const settings = await getSettings();

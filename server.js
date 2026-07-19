@@ -186,7 +186,10 @@ async function streamHubcapManifest(appId, res, filenameHint) {
 }
 
 // Urutan level role — dipakai buat cek "role X boleh akses item level berapa"
-const ROLE_LEVEL = { public: 0, gold: 1, platinum: 2 };
+// 'admin' sengaja ditaruh paling atas (level tertinggi) — otomatis bisa akses
+// semua game/bypass apapun paketnya, DAN dipakai buat gerbang masuk admin panel
+// (lihat requireAdmin di bawah).
+const ROLE_LEVEL = { public: 0, gold: 1, platinum: 2, admin: 3 };
 
 if (!JWT_SECRET) console.warn('⚠️  JWT_SECRET belum diisi di .env — token login TIDAK AMAN.');
 
@@ -269,16 +272,51 @@ async function requireUser(req, res, next) {
   }
 }
 
-// Dipakai di route ADMIN WEB — cukup satu password bersama (dari .env)
-function requireAdmin(req, res, next) {
+// Dipakai di route ADMIN WEB. Ada 2 cara sah buat lolos jadi admin:
+//   1) LOGIN PASSWORD LAMA — token JWT { role: 'admin' } dari /api/admin/login
+//      (satu password bersama dari .env, tanpa terikat akun Discord manapun).
+//   2) LOGIN DISCORD — token JWT biasa { discordId } (sama seperti token app),
+//      DIIZINKAN masuk admin panel KALAU DAN HANYA KALAU role user itu di
+//      database saat ini adalah 'admin'. Role 'admin' ini sendiri diisi lewat
+//      "Set Paket" admin panel ATAU otomatis mengikuti role Discord user kalau
+//      role Discord itu sudah di-mapping ke tier 'admin' di halaman Verify Role
+//      (persis seperti mapping Gold/Platinum, lihat discordRoleSync.js).
+// Konsekuensinya: cabut role Discord "Admin" seseorang (atau ubah paketnya di
+// panel jadi bukan admin) = akses admin panel orang itu otomatis ikut hilang
+// di request berikutnya, karena role selalu dicek ulang ke DB, bukan disimpan
+// permanen di dalam token.
+async function requireAdmin(req, res, next) {
   if (!JWT_SECRET) return res.status(500).json({ error: 'JWT_SECRET belum diset.' });
   try {
     const authHeader = req.headers.authorization || '';
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
     if (!token) return res.status(401).json({ error: 'Belum login admin.' });
-    const payload = jwt.verify(token, JWT_SECRET);
-    if (payload.role !== 'admin') return res.status(403).json({ error: 'Bukan token admin.' });
-    next();
+
+    let payload;
+    try {
+      payload = jwt.verify(token, JWT_SECRET);
+    } catch (e) {
+      return res.status(401).json({ error: 'Token admin tidak valid.' });
+    }
+
+    // 1) Token admin lama (password bersama) — tidak terikat discordId sama sekali.
+    if (payload.role === 'admin' && !payload.discordId) {
+      req.admin = { via: 'password' };
+      return next();
+    }
+
+    // 2) Token akun Discord — cek role user itu di DB sekarang juga.
+    if (payload.discordId) {
+      if (!db) return res.status(503).json({ error: 'Database belum siap, coba lagi sebentar.' });
+      const user = await db.collection('users').findOne({ discordId: payload.discordId });
+      if (user && user.role === 'admin') {
+        req.user = user;
+        req.admin = { via: 'discord', discordId: user.discordId, username: user.username, avatarUrl: user.avatarUrl };
+        return next();
+      }
+    }
+
+    return res.status(403).json({ error: 'Akun ini tidak punya akses admin.' });
   } catch (e) {
     return res.status(401).json({ error: 'Token admin tidak valid.' });
   }
@@ -1132,7 +1170,32 @@ app.post('/api/admin/login', (req, res) => {
 // Tanpa ini, token yang sudah expired/invalid tetap nampilin shell tapi semua
 // datanya gagal load (401 di semua request) — kelihatan kayak "stuck".
 app.get('/api/admin/verify', requireAdmin, (req, res) => {
-  res.json({ success: true });
+  res.json({ success: true, admin: req.admin || { via: 'password' } });
+});
+
+// Dipanggil admin.js setelah login lewat Discord OAuth (alur sama seperti login app biasa,
+// lihat /auth/poll) — cuma buat kasih pesan yang jelas kalau ternyata akun Discord itu BUKAN
+// admin, alih-alih baru ketahuan belakangan pas request lain kena 403 generik.
+app.get('/api/admin/verify-discord-token', async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
+    if (!token) return res.status(401).json({ error: 'Token tidak ada.' });
+    const payload = jwt.verify(token, JWT_SECRET);
+    if (!payload?.discordId) return res.status(400).json({ error: 'Bukan token akun Discord.' });
+    if (!db) return res.status(503).json({ error: 'Database belum siap, coba lagi.' });
+    const user = await db.collection('users').findOne({ discordId: payload.discordId });
+    if (!user) return res.status(404).json({ error: 'Akun tidak ditemukan.' });
+    if (user.role !== 'admin') {
+      return res.status(403).json({
+        error: `Akun Discord "${user.username}" ini belum punya role Admin.`,
+        role: user.role
+      });
+    }
+    res.json({ success: true, admin: { via: 'discord', discordId: user.discordId, username: user.username, avatarUrl: user.avatarUrl } });
+  } catch (e) {
+    res.status(401).json({ error: 'Token tidak valid.' });
+  }
 });
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1329,12 +1392,13 @@ app.put('/api/admin/users/:discordId/role', requireAdmin, async (req, res) => {
     discordSync = await roleSync.syncAppRoleToDiscord(discordId, role);
 
     // 2. Kirim DM embed ke user
-    const ROLE_COLOR = { public: 0x8f8ab0, gold: 0xffd76a, platinum: 0xa78bfa };
-    const ROLE_ICON  = { public: '🌐', gold: '🥇', platinum: '💎' };
+    const ROLE_COLOR = { public: 0x8f8ab0, gold: 0xffd76a, platinum: 0xa78bfa, admin: 0x4ade80 };
+    const ROLE_ICON  = { public: '🌐', gold: '🥇', platinum: '💎', admin: '👑' };
     const ROLE_DESC  = {
       public:   'Akses Public — limit harian berlaku.',
       gold:     'Akses Gold — limit harian lebih besar.',
-      platinum: 'Akses Platinum — download UNLIMITED!'
+      platinum: 'Akses Platinum — download UNLIMITED!',
+      admin:    'Akses Admin — kelola panel admin & akses semua fitur.'
     };
     dmResult = await sendDiscordDM(discordId, {
       embeds: [{

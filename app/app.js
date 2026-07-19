@@ -532,7 +532,7 @@ async function refreshCurrentUserRole() {
   } catch (e) {} // jangan ganggu app kalau cuma gagal cek role sekali (misal lagi no-internet sebentar)
 }
 
-const ROLE_BADGE_ICON = { public: '🌐', gold: '🥇', platinum: '💎' };
+const ROLE_BADGE_ICON = { public: '🌐', gold: '🥇', platinum: '💎', admin: '👑' };
 function roleBadgeHtml(role) {
   const icon = ROLE_BADGE_ICON[role] || '🌐';
   return `<span class="role-pill ${role}"><span class="rp-icon">${icon}</span>${escapeHtml(role)}</span>`;
@@ -1564,7 +1564,7 @@ function showHistoriToast(msg) {
 
 // ── Toast khusus notif "role/paket kamu diperbarui" — dipanggil dari
 // refreshCurrentUserRole() begitu terdeteksi role berubah.
-const ROLE_TOAST_LABEL = { public: 'Public', gold: 'Gold', platinum: 'Platinum' };
+const ROLE_TOAST_LABEL = { public: 'Public', gold: 'Gold', platinum: 'Platinum', admin: 'Admin' };
 const ROLE_TOAST_DESC  = {
   public:   'Akses kamu kembali ke mode Public.',
   gold:     'Kamu sekarang bisa akses semua konten Gold! 🎉',

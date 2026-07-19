@@ -6,7 +6,7 @@ function escapeHtml(str) {
   return div.innerHTML;
 }
 
-const ROLE_TAG_ICON = { public: '🌐', gold: '🥇', platinum: '💎' };
+const ROLE_TAG_ICON = { public: '🌐', gold: '🥇', platinum: '💎', admin: '👑' };
 function roleTagHtml(role) {
   const icon = ROLE_TAG_ICON[role] || '';
   return `<span class="tag ${role}">${icon} ${escapeHtml(role)}</span>`;
@@ -65,6 +65,82 @@ document.getElementById('btnAdminLogout').addEventListener('click', () => {
   localStorage.removeItem('adminToken');
   location.reload();
 });
+
+// ─── LOGIN VIA DISCORD (Admin) ───
+// Alurnya sama persis kayak login di app Electron (lihat main.js): buka tab baru ke
+// /auth/discord?state=..., lalu polling /auth/poll?state=... tiap 2 detik sampai
+// token siap. Bedanya di sini: begitu token didapat, kita cek dulu ke
+// /api/admin/verify-discord-token — token Discord CUMA disimpan sebagai adminToken
+// kalau role user itu di database memang 'admin' (lihat requireAdmin di server.js).
+document.getElementById('btnAdminLoginDiscord').addEventListener('click', doDiscordAdminLogin);
+
+let _discordLoginPollTimer = null;
+async function doDiscordAdminLogin() {
+  const btn = document.getElementById('btnAdminLoginDiscord');
+  const statusEl = document.getElementById('loginDiscordStatus');
+  const errEl = document.getElementById('loginError');
+  errEl.textContent = '';
+  statusEl.className = 'login-hint';
+  statusEl.textContent = '';
+
+  const state = 'admin_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+  const authWindow = window.open(`${SERVER_URL}/auth/discord?state=${encodeURIComponent(state)}`, '_blank', 'width=480,height=760');
+  if (!authWindow) {
+    statusEl.className = 'login-hint error';
+    statusEl.textContent = 'Popup diblokir browser. Izinkan popup untuk halaman ini, lalu klik tombol sekali lagi.';
+    return;
+  }
+
+  const originalText = btn.innerHTML;
+  btn.disabled = true;
+  btn.textContent = 'Menunggu login di tab Discord...';
+  statusEl.className = 'login-hint';
+  statusEl.textContent = 'Selesaikan login di tab yang baru terbuka — halaman ini otomatis lanjut begitu login berhasil.';
+
+  const deadline = Date.now() + 3 * 60 * 1000; // 3 menit timeout, cukup buat login manual
+  clearInterval(_discordLoginPollTimer);
+
+  const stop = (msg, isError) => {
+    clearInterval(_discordLoginPollTimer);
+    btn.disabled = false;
+    btn.innerHTML = originalText;
+    statusEl.className = isError ? 'login-hint error' : 'login-hint';
+    statusEl.textContent = msg || '';
+  };
+
+  _discordLoginPollTimer = setInterval(async () => {
+    if (Date.now() > deadline) return stop('Waktu login habis. Coba lagi.', true);
+    if (authWindow.closed) return stop('Tab Discord ditutup sebelum login selesai. Coba lagi.', true);
+
+    try {
+      const res = await fetch(`${SERVER_URL}/auth/poll?state=${encodeURIComponent(state)}`);
+      const data = await res.json();
+      if (!data.ready) return; // masih nunggu user login di tab satunya
+
+      clearInterval(_discordLoginPollTimer);
+
+      // Login Discord berhasil — sekarang pastikan akun ini benar admin sebelum dipakai.
+      try {
+        const check = await fetch(`${SERVER_URL}/api/admin/verify-discord-token`, {
+          headers: { Authorization: `Bearer ${data.token}` }
+        });
+        const checkData = await check.json().catch(() => ({}));
+        if (!check.ok) return stop(checkData.error || 'Akun ini belum punya akses admin.', true);
+
+        localStorage.setItem('adminToken', data.token);
+        btn.disabled = false;
+        btn.innerHTML = originalText;
+        statusEl.className = 'login-hint success';
+        statusEl.textContent = `✓ Login sebagai ${checkData.admin?.username || 'Admin'}.`;
+        showShell();
+      } catch (e2) {
+        stop('Gagal memverifikasi akses admin: ' + e2.message, true);
+      }
+    } catch (e) {
+      // hiccup jaringan sesaat — biarkan interval berikutnya coba lagi
+    }
+  }, 2000);
+}
 
 function showShell() {
   document.getElementById('loginWrap').style.display = 'none';
@@ -316,12 +392,12 @@ function timeAgo(dateStr) {
 }
 
 function roleCounts(rows) {
-  const c = { total: rows.length, public: 0, gold: 0, platinum: 0 };
-  rows.forEach(r => { if (c[r.role] !== undefined) c[r.role]++; });
+  const c = { total: rows.length, public: 0, gold: 0, platinum: 0, admin: 0 };
+  rows.forEach(r => { if (c[r.role] === undefined) c[r.role] = 0; c[r.role]++; });
   return c;
 }
 
-function renderPageStats(containerId, counts, labels) {
+function renderPageStats(containerId, counts, labels, opts = {}) {
   const el = document.getElementById(containerId);
   if (!el) return;
   const items = [
@@ -330,6 +406,8 @@ function renderPageStats(containerId, counts, labels) {
     { key: 'gold',     icon: '🥇', color: 'rgba(255,215,106,.16)', value: counts.gold,     label: 'Gold' },
     { key: 'platinum', icon: '💎', color: 'rgba(167,139,250,.16)', value: counts.platinum, label: 'Platinum' },
   ];
+  // Pil "Admin" cuma relevan di halaman Users (game/bypass gak butuh paket Admin).
+  if (opts.showAdmin) items.push({ key: 'admin', icon: '👑', color: 'rgba(74,222,128,.16)', value: counts.admin || 0, label: 'Admin' });
   el.innerHTML = items.map(it => `
     <div class="page-stat-pill">
       <div class="page-stat-pill-icon" style="background:${it.color};">${it.icon}</div>
@@ -341,7 +419,7 @@ function renderPageStats(containerId, counts, labels) {
   `).join('');
 }
 
-function renderRoleChips(containerId, counts, activeRole, onSelect) {
+function renderRoleChips(containerId, counts, activeRole, onSelect, opts = {}) {
   const el = document.getElementById(containerId);
   if (!el) return;
   const chips = [
@@ -350,6 +428,7 @@ function renderRoleChips(containerId, counts, activeRole, onSelect) {
     { key: 'gold',     label: '🥇 Gold',     count: counts.gold },
     { key: 'platinum', label: '💎 Platinum', count: counts.platinum },
   ];
+  if (opts.showAdmin) chips.push({ key: 'admin', label: '👑 Admin', count: counts.admin || 0 });
   el.innerHTML = chips.map(c => `
     <button class="filter-chip ${activeRole === c.key ? 'active' : ''}" data-role="${c.key}">
       ${c.label} <span class="count">${c.count}</span>
@@ -863,8 +942,8 @@ const usersUiState = { role: 'all', search: '', page: 1 };
 let usersDataCache = [];
 
 async function renderUsers() {
-  const table = document.getElementById('tableUsers');
-  table.innerHTML = `<tr><td class="empty-cell" colspan="3"><span class="empty-icon">⏳</span>Memuat data...</td></tr>`;
+  const grid = document.getElementById('tableUsers');
+  grid.innerHTML = `<div class="empty-cell empty-cell--grid"><span class="empty-icon">⏳</span>Memuat data...</div>`;
   try {
     const rows = await api('/api/admin/users');
     usersDataCache = rows;
@@ -881,19 +960,19 @@ async function renderUsers() {
       };
     }
   } catch (e) {
-    table.innerHTML = `<tr><td class="empty-cell" colspan="3"><span class="empty-icon">⚠️</span>Gagal memuat: ${escapeHtml(e.message)}</td></tr>`;
+    grid.innerHTML = `<div class="empty-cell empty-cell--grid"><span class="empty-icon">⚠️</span>Gagal memuat: ${escapeHtml(e.message)}</div>`;
   }
 }
 
 function applyUsersFilters() {
   const rows = usersDataCache;
   const counts = roleCounts(rows);
-  renderPageStats('usersStats', counts, { total: 'Total User' });
+  renderPageStats('usersStats', counts, { total: 'Total User' }, { showAdmin: true });
   renderRoleChips('usersRoleFilter', counts, usersUiState.role, (role) => {
     usersUiState.role = role;
     usersUiState.page = 1;
     applyUsersFilters();
-  });
+  }, { showAdmin: true });
 
   let filtered = usersUiState.role === 'all' ? rows : rows.filter(r => r.role === usersUiState.role);
   if (usersUiState.search.trim()) {
@@ -911,48 +990,40 @@ function applyUsersFilters() {
   });
 }
 
+// Manajemen Users ditampilkan sebagai GRID KARTU (bukan tabel baris) — sebelumnya
+// tabelnya kepaksa pakai lebar kolom fixed 88px yang aslinya didesain buat kolom
+// cover Game/Bypass, jadi avatar+nama+Discord ID user ikut kepotong & tumpuk.
+// Kartu per-user kasih tiap info (avatar, nama, Discord ID, paket, aksi) ruang
+// sendiri-sendiri, jadi gak akan nabrak walau nama/ID-nya panjang.
 function renderUsersRows(rows, isFilteredEmpty) {
-  const table = document.getElementById('tableUsers');
+  const grid = document.getElementById('tableUsers');
   if (!rows.length) {
-    table.innerHTML = isFilteredEmpty
-      ? `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">🔍</span>Tidak ada user yang cocok.</td></tr>`
-      : `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">👤</span>Belum ada user yang login.</td></tr>`;
+    grid.innerHTML = isFilteredEmpty
+      ? `<div class="empty-cell empty-cell--grid"><span class="empty-icon">🔍</span>Tidak ada user yang cocok.</div>`
+      : `<div class="empty-cell empty-cell--grid"><span class="empty-icon">👤</span>Belum ada user yang login.</div>`;
     return;
   }
-  table.innerHTML = `
-    <thead><tr>
-      <th style="min-width:180px;">User</th>
-      <th style="min-width:160px;max-width:180px;">Discord ID</th>
-      <th style="width:110px;">Paket</th>
-      <th style="width:130px;text-align:right;">Aksi</th>
-    </tr></thead>
-    <tbody>
-    ${rows.map(u => `
-      <tr class="row-role-accent ${u.role}">
-        <td>
-          <div style="display:flex;align-items:center;gap:10px;">
-            ${u.avatarUrl
-              ? `<img class="cell-avatar" src="${escapeHtml(u.avatarUrl)}" style="flex-shrink:0;">`
-              : `<div class="cell-avatar" style="flex-shrink:0;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;background:linear-gradient(135deg,#7b5cff,#e64bb8);">${(u.username||'?')[0].toUpperCase()}</div>`}
-            <div style="min-width:0;">
-              <div class="cell-name" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;" title="${escapeHtml(u.username)}">${escapeHtml(u.username)}</div>
-              ${u.createdAt ? `<div class="cell-time">🕓 ${timeAgo(u.createdAt)}</div>` : ''}
-            </div>
-          </div>
-        </td>
-        <td>
-          <span style="font-family:'Courier New',monospace;font-size:11.5px;color:var(--text-faint);letter-spacing:.02em;word-break:break-all;">${escapeHtml(u.discordId)}</span>
-        </td>
-        <td>${roleTagHtml(u.role)}</td>
-        <td style="text-align:right;">
-          <button class="btn btn-sm btn-outline" onclick="openSetRoleModal('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}','${escapeHtml(u.role)}')">
-            Set Paket
-          </button>
-        </td>
-      </tr>
-    `).join('')}
-    </tbody>
-  `;
+  grid.innerHTML = rows.map(u => `
+    <div class="user-card row-role-accent ${escapeHtml(u.role)}">
+      <div class="user-card-top">
+        ${u.avatarUrl
+          ? `<img class="user-card-avatar" src="${escapeHtml(u.avatarUrl)}" alt="">`
+          : `<div class="user-card-avatar user-card-avatar--fallback">${escapeHtml((u.username || '?')[0].toUpperCase())}</div>`}
+        <div class="user-card-headtext">
+          <div class="user-card-name" title="${escapeHtml(u.username)}">${escapeHtml(u.username)}</div>
+          ${u.createdAt ? `<div class="cell-time">🕓 Login ${timeAgo(u.createdAt)}</div>` : ''}
+        </div>
+        <div class="user-card-role">${roleTagHtml(u.role)}</div>
+      </div>
+      <div class="user-card-id" title="${escapeHtml(u.discordId)}">
+        <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 3.5V7M16 3.5V7"/></svg>
+        <span>${escapeHtml(u.discordId)}</span>
+      </div>
+      <button class="btn btn-sm btn-outline user-card-action" onclick="openSetRoleModal('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}','${escapeHtml(u.role)}')">
+        Set Paket
+      </button>
+    </div>
+  `).join('');
 }
 
 // ─── MODAL SET ROLE — dengan Discord ID search ───
@@ -1373,6 +1444,7 @@ async function loadRoleSyncSettings() {
   const pubSel  = document.getElementById('vrRolePublic');
   const goldSel = document.getElementById('vrRoleGold');
   const platSel = document.getElementById('vrRolePlatinum');
+  const adminSel = document.getElementById('vrRoleAdmin');
   const webhookInput = document.getElementById('vrWebhookUrl');
   const autoSyncEl = document.getElementById('vrAutoSync');
   const resetOnLeaveEl = document.getElementById('vrResetOnLeave');
@@ -1392,6 +1464,7 @@ async function loadRoleSyncSettings() {
     platSel.innerHTML = optionsHtml;
     goldSel.value = settings.discordRoleMap?.gold     || '';
     platSel.value = settings.discordRoleMap?.platinum || '';
+    if (adminSel) { adminSel.innerHTML = optionsHtml; adminSel.value = settings.discordRoleMap?.admin || ''; }
     webhookInput.value = settings.webhookUrl || '';
     autoSyncEl.checked = settings.autoSyncFromDiscord !== false;
     resetOnLeaveEl.checked = settings.resetRoleOnLeave !== false;
@@ -1425,13 +1498,14 @@ function wireVerifyRoleButtons() {
     const publicRole = (document.getElementById('vrRolePublic')?.value || '').trim() || null;
     const gold = document.getElementById('vrRoleGold').value;
     const platinum = document.getElementById('vrRolePlatinum').value;
+    const admin = (document.getElementById('vrRoleAdmin')?.value || '').trim() || null;
     const autoSyncFromDiscord = document.getElementById('vrAutoSync').checked;
     const resetRoleOnLeave = document.getElementById('vrResetOnLeave').checked;
     btn.disabled = true; btn.textContent = 'Menyimpan...';
     try {
       await api('/api/admin/role-sync/settings', {
         method: 'PUT',
-        body: JSON.stringify({ discordRoleMap: { public: publicRole, gold, platinum }, autoSyncFromDiscord, resetRoleOnLeave })
+        body: JSON.stringify({ discordRoleMap: { public: publicRole, gold, platinum, admin }, autoSyncFromDiscord, resetRoleOnLeave })
       });
       showToast('Mapping role berhasil disimpan.', 'success');
     } catch (e) {
@@ -1521,16 +1595,17 @@ async function loadRoleSyncLogs() {
         <th>User</th>
         <th>Perubahan</th>
         <th>Sumber</th>
-        <th style="width:130px;">Waktu</th>
+        <th style="width:120px;">Waktu</th>
       </tr></thead>
       <tbody>
       ${rows.map(r => `
         <tr>
           <td>
-            <div class="cell-name">${escapeHtml(r.username || r.discordId)}</div>
-            <div style="color:var(--text-faint);font-size:11.5px;">${escapeHtml(r.discordId)}</div>
+            <div class="cell-name" style="max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;" title="${escapeHtml(r.username || r.discordId)}">${escapeHtml(r.username || r.discordId)}</div>
+            <div style="color:var(--text-faint);font-size:11.5px;max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;" title="${escapeHtml(r.discordId)}">${escapeHtml(r.discordId)}</div>
           </td>
-          <td>${roleTagHtml(r.oldRole || 'public')} → ${roleTagHtml(r.newRole)}
+          <td>
+            <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap;">${roleTagHtml(r.oldRole || 'public')} → ${roleTagHtml(r.newRole)}</div>
             ${r.discordSynced === false ? `<div style="color:var(--red);font-size:11px;margin-top:4px;">⚠️ Sync Discord gagal${r.discordSyncReason ? ' ('+escapeHtml(r.discordSyncReason)+')' : ''}</div>` : ''}
           </td>
           <td><span class="tag source-${r.source}">${ROLE_SOURCE_LABEL[r.source] || r.source}</span></td>
