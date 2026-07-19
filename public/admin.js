@@ -476,30 +476,31 @@ function renderTableRows(type, rows, isFilteredEmpty) {
 
   table.innerHTML = `
     <thead><tr>
-      <th style="width:92px;">Cover</th>
+      <th>Cover</th>
       <th>Nama</th>
-      <th style="width:110px;">Role</th>
-      <th style="width:116px;">Aksi</th>
+      <th>Role</th>
+      <th>Aksi</th>
     </tr></thead>
     <tbody>
     ${rows.map(item => `
       <tr class="row-role-accent ${item.role}">
-        <td>${item.imageUrl
-          ? `<img class="cell-img" src="${escapeHtml(item.imageUrl)}" onerror="this.style.display='none'">`
-          : `<div class="cell-img" style="display:flex;align-items:center;justify-content:center;color:var(--text-faint);font-size:20px;">🎮</div>`}
+        <td style="width:72px;">
+          ${item.imageUrl
+            ? `<img class="cell-img" src="${escapeHtml(item.imageUrl)}" onerror="this.style.display='none'">`
+            : `<div class="cell-img" style="display:flex;align-items:center;justify-content:center;color:var(--text-faint);font-size:20px;">🎮</div>`}
         </td>
         <td>
-          <div class="cell-name">${escapeHtml(item.name)}</div>
+          <div class="cell-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</div>
           ${item.description ? `<div class="cell-desc">${escapeHtml(item.description)}</div>` : ''}
-          <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">
+          <div style="margin-top:5px;display:flex;gap:5px;flex-wrap:wrap;max-width:100%;">
             ${item.sizeLabel ? `<span class="chip">💾 ${escapeHtml(item.sizeLabel)}</span>` : ''}
-            ${item.appId ? `<span class="chip">🆔 ${escapeHtml(item.appId)}</span>` : ''}
-            ${item.link ? `<span class="chip chip-ok">🔗 Ada link</span>` : ''}
+            ${item.appId     ? `<span class="chip">🆔 ${escapeHtml(item.appId)}</span>` : ''}
+            ${(item.zipUrl || item.link) ? `<span class="chip chip-ok">🔗 Ada link</span>` : ''}
           </div>
-          ${item.createdAt ? `<div class="cell-time">🕓 Ditambahkan ${timeAgo(item.createdAt)}</div>` : ''}
+          ${item.createdAt ? `<div class="cell-time">🕓 ${timeAgo(item.createdAt)}</div>` : ''}
         </td>
-        <td>${roleTagHtml(item.role)}</td>
-        <td class="row-actions">
+        <td style="width:120px;">${roleTagHtml(item.role)}</td>
+        <td style="width:96px;" class="row-actions">
           <button class="icon-btn" title="Edit" onclick='openItemModal("${type}", ${JSON.stringify(item).replace(/'/g, "&#39;")})'>${editIcon}</button>
           <button class="icon-btn danger" title="Hapus" onclick="deleteItem('${type}','${item._id}')">${trashIcon}</button>
         </td>

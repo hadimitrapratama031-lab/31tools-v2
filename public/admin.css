@@ -415,7 +415,7 @@ a { color: inherit; text-decoration: none; }
   font-size: 12.5px; font-family: 'Inter', sans-serif; width: 160px;
 }
 .table-search input::placeholder { color: var(--text-faint); }
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
+table { width: 100%; border-collapse: collapse; font-size: 13px; table-layout: fixed; }
 table th {
   text-align: left; padding: 12px 18px;
   color: var(--text-faint); font-weight: 700; font-size: 11px;
@@ -424,19 +424,28 @@ table th {
   background: rgba(255,255,255,.02);
 }
 table td {
-  padding: 13px 18px; border-bottom: 1px solid var(--line);
-  vertical-align: middle;
+  padding: 12px 18px; border-bottom: 1px solid var(--line);
+  vertical-align: top;
 }
+/* Kolom dengan lebar fixed supaya tabel tidak berantakan */
+table th:nth-child(1), table td:nth-child(1) { width: 72px; }
+table th:nth-child(3), table td:nth-child(3) { width: 120px; }
+table th:nth-child(4), table td:nth-child(4) { width: 96px; }
 table tr:last-child td { border-bottom: none; }
 table tbody tr { transition: background .15s; }
 table tbody tr:hover td { background: rgba(123,92,255,.05); }
 
 .cell-img {
-  width: 38px; height: 52px; border-radius: 8px; object-fit: cover;
+  width: 46px; height: 64px; border-radius: 9px; object-fit: cover;
   background: var(--navy-700); display: block;
+  box-shadow: 0 4px 12px rgba(0,0,0,.3); flex-shrink: 0;
 }
-.cell-name { font-weight: 600; font-size: 13.5px; margin-bottom: 2px; }
-.cell-desc { font-size: 11.5px; color: var(--text-faint); }
+.cell-name { font-weight: 600; font-size: 13.5px; margin-bottom: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cell-desc {
+  font-size: 11.5px; color: var(--text-faint);
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; max-width: 100%;
+}
 .cell-avatar {
   width: 32px; height: 32px; border-radius: 50%; object-fit: cover;
   background: var(--grad-primary); display: block; flex-shrink: 0;
@@ -652,11 +661,6 @@ textarea.form-input { resize: vertical; min-height: 72px; }
 }
 
 /* ─── ROW POLISH ─── */
-.cell-img {
-  width: 46px; height: 64px; border-radius: 9px; object-fit: cover;
-  background: var(--navy-700); display: block;
-  box-shadow: 0 4px 12px rgba(0,0,0,.3);
-}
 .row-role-accent { position: relative; }
 .row-role-accent::before {
   content: ''; position: absolute; left: 0; top: 8px; bottom: 8px; width: 3px; border-radius: 3px;
