@@ -915,42 +915,165 @@ function renderUsersRows(rows, isFilteredEmpty) {
   const table = document.getElementById('tableUsers');
   if (!rows.length) {
     table.innerHTML = isFilteredEmpty
-      ? `<tr><td class="empty-cell" colspan="3"><span class="empty-icon">🔍</span>Tidak ada user yang cocok.</td></tr>`
-      : `<tr><td class="empty-cell" colspan="3"><span class="empty-icon">👤</span>Belum ada user yang login.</td></tr>`;
+      ? `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">🔍</span>Tidak ada user yang cocok.</td></tr>`
+      : `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">👤</span>Belum ada user yang login.</td></tr>`;
     return;
   }
   table.innerHTML = `
     <thead><tr>
-      <th>User</th>
-      <th>Discord ID</th>
-      <th style="width:150px;">Role</th>
+      <th style="min-width:180px;">User</th>
+      <th style="min-width:160px;max-width:180px;">Discord ID</th>
+      <th style="width:110px;">Paket</th>
+      <th style="width:130px;text-align:right;">Aksi</th>
     </tr></thead>
     <tbody>
     ${rows.map(u => `
       <tr class="row-role-accent ${u.role}">
-        <td style="display:flex;align-items:center;gap:12px;">
-          ${u.avatarUrl
-            ? `<img class="cell-avatar" src="${escapeHtml(u.avatarUrl)}">`
-            : `<div class="cell-avatar" style="display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;background:linear-gradient(135deg,#7b5cff,#e64bb8);">${(u.username||'?')[0].toUpperCase()}</div>`}
-          <div>
-            <div class="cell-name">${escapeHtml(u.username)}</div>
-            <span style="margin-top:3px;display:inline-block;">${roleTagHtml(u.role)}</span>
-            ${u.createdAt ? `<div class="cell-time">🕓 Bergabung ${timeAgo(u.createdAt)}</div>` : ''}
+        <td>
+          <div style="display:flex;align-items:center;gap:10px;">
+            ${u.avatarUrl
+              ? `<img class="cell-avatar" src="${escapeHtml(u.avatarUrl)}" style="flex-shrink:0;">`
+              : `<div class="cell-avatar" style="flex-shrink:0;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;background:linear-gradient(135deg,#7b5cff,#e64bb8);">${(u.username||'?')[0].toUpperCase()}</div>`}
+            <div style="min-width:0;">
+              <div class="cell-name" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis;max-width:140px;" title="${escapeHtml(u.username)}">${escapeHtml(u.username)}</div>
+              ${u.createdAt ? `<div class="cell-time">🕓 ${timeAgo(u.createdAt)}</div>` : ''}
+            </div>
           </div>
         </td>
-        <td style="color:var(--text-faint);font-size:12.5px;">${escapeHtml(u.discordId)}</td>
         <td>
-          <select class="role-select" onchange="changeUserRole('${escapeHtml(u.discordId)}', this.value)">
-            <option value="public"   ${u.role==='public'   ? 'selected':''}>🌐 Public</option>
-            <option value="gold"     ${u.role==='gold'     ? 'selected':''}>🥇 Gold</option>
-            <option value="platinum" ${u.role==='platinum' ? 'selected':''}>💎 Platinum</option>
-          </select>
+          <span style="font-family:'Courier New',monospace;font-size:11.5px;color:var(--text-faint);letter-spacing:.02em;word-break:break-all;">${escapeHtml(u.discordId)}</span>
+        </td>
+        <td>${roleTagHtml(u.role)}</td>
+        <td style="text-align:right;">
+          <button class="btn btn-sm btn-outline" onclick="openSetRoleModal('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}','${escapeHtml(u.role)}')">
+            Set Paket
+          </button>
         </td>
       </tr>
     `).join('')}
     </tbody>
   `;
 }
+
+// ─── MODAL SET ROLE — dengan Discord ID search ───
+let _setRoleTarget = null; // { discordId, username, currentRole }
+
+function openSetRoleModal(discordId, username, currentRole) {
+  _setRoleTarget = { discordId, username, currentRole };
+  _fillSetRoleModal(discordId, username, currentRole);
+  document.getElementById('setRoleModalBackdrop').style.display = 'flex';
+}
+window.openSetRoleModal = openSetRoleModal;
+
+function _fillSetRoleModal(discordId, username, currentRole) {
+  document.getElementById('srDiscordId').value = discordId || '';
+  document.getElementById('srUserPreview').innerHTML = discordId
+    ? `<div class="sr-preview-filled">
+         <div class="sr-preview-name">${escapeHtml(username || discordId)}</div>
+         <div class="sr-preview-id">${escapeHtml(discordId)}</div>
+         <div class="sr-preview-current">Paket saat ini: ${roleTagHtml(currentRole || 'public')}</div>
+       </div>`
+    : '';
+  const roleEl = document.getElementById('srRole');
+  if (roleEl) roleEl.value = currentRole || 'public';
+  document.getElementById('srStatus').innerHTML = '';
+}
+
+function closeSetRoleModal() {
+  document.getElementById('setRoleModalBackdrop').style.display = 'none';
+  _setRoleTarget = null;
+}
+window.closeSetRoleModal = closeSetRoleModal;
+
+async function searchUserByDiscordId() {
+  const discordId = document.getElementById('srDiscordId').value.trim();
+  const previewEl = document.getElementById('srUserPreview');
+  const statusEl  = document.getElementById('srStatus');
+  if (!discordId) { showToast('Masukkan Discord ID dulu.', 'error'); return; }
+
+  const btn = document.getElementById('btnSrSearch');
+  btn.textContent = 'Mencari...'; btn.disabled = true;
+  previewEl.innerHTML = '';
+  statusEl.innerHTML = '';
+
+  try {
+    const rows = await api('/api/admin/users');
+    const found = rows.find(u => u.discordId === discordId || u.username?.toLowerCase() === discordId.toLowerCase());
+    if (!found) {
+      previewEl.innerHTML = `<div class="sr-preview-empty">⚠️ User dengan Discord ID <code>${escapeHtml(discordId)}</code> belum pernah login ke app.</div>`;
+      _setRoleTarget = null;
+      return;
+    }
+    _setRoleTarget = { discordId: found.discordId, username: found.username, currentRole: found.role };
+    _fillSetRoleModal(found.discordId, found.username, found.role);
+    statusEl.innerHTML = `<span style="color:var(--green);">✓ User ditemukan.</span>`;
+  } catch (e) {
+    statusEl.innerHTML = `<span style="color:var(--red);">✕ ${escapeHtml(e.message)}</span>`;
+  } finally {
+    btn.textContent = '🔍 Cari'; btn.disabled = false;
+  }
+}
+window.searchUserByDiscordId = searchUserByDiscordId;
+
+async function doSetRole() {
+  if (!_setRoleTarget) { showToast('Cari user dulu.', 'error'); return; }
+  const role    = document.getElementById('srRole').value;
+  const btn     = document.getElementById('btnSrSave');
+  const statusEl = document.getElementById('srStatus');
+  if (!role) { showToast('Pilih paket dulu.', 'error'); return; }
+
+  btn.textContent = 'Menyimpan...'; btn.disabled = true;
+  statusEl.innerHTML = '';
+
+  try {
+    const result = await api(`/api/admin/users/${_setRoleTarget.discordId}/role`, {
+      method: 'PUT', body: JSON.stringify({ role })
+    });
+
+    // Update cache
+    const cached = usersDataCache.find(x => x.discordId === _setRoleTarget.discordId);
+    if (cached) cached.role = role;
+    applyUsersFilters();
+    closeSetRoleModal();
+
+    const ds = result?.discordSync;
+    if (!ds || ds.ok) {
+      showToast(`✅ Paket ${_setRoleTarget.username} diubah ke ${role}${ds?.ok ? ' — Discord disinkron ✓' : ''}.`, 'success');
+    } else if (ds.reason === 'not_configured') {
+      showToast(`Paket diubah ke ${role}. Mapping Discord belum diatur.`, 'default');
+    } else if (ds.reason === 'not_member') {
+      showToast(`Paket diubah ke ${role}. User bukan member Discord.`, 'default');
+    } else {
+      showToast(`Paket diubah ke ${role}, sync Discord gagal: ${ds.reason}`, 'error');
+    }
+  } catch (e) {
+    statusEl.innerHTML = `<span style="color:var(--red);">✕ ${escapeHtml(e.message)}</span>`;
+    showToast('Gagal mengubah paket: ' + e.message, 'error');
+  } finally {
+    btn.textContent = '💾 Simpan'; btn.disabled = false;
+  }
+}
+window.doSetRole = doSetRole;
+
+// Highlight segmented button di modal Set Role
+function _srSetRole(btn, role) {
+  document.getElementById('srRole').value = role;
+  document.querySelectorAll('#srRoleSegment .segmented-opt').forEach(b => b.classList.remove('active'));
+  btn.classList.add('active');
+}
+window._srSetRole = _srSetRole;
+
+// Sinkron highlight saat openSetRoleModal dipanggil dengan currentRole
+window.openSetRoleModal = function(discordId, username, currentRole) {
+  _setRoleTarget = discordId ? { discordId, username, currentRole } : null;
+  _fillSetRoleModal(discordId, username, currentRole);
+  // Highlight segmented
+  document.querySelectorAll('#srRoleSegment .segmented-opt').forEach(b => {
+    b.classList.toggle('active', b.dataset.role === (currentRole || 'gold'));
+  });
+  document.getElementById('srRole').value = currentRole || 'gold';
+  document.getElementById('setRoleModalBackdrop').style.display = 'flex';
+};
 
 async function changeUserRole(discordId, role) {
   try {

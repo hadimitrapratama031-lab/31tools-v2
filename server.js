@@ -1104,6 +1104,17 @@ app.get('/api/me', requireUser, (req, res) => {
   res.json(resp);
 });
 
+// ── Endpoint polling cepat KHUSUS role check — jauh lebih ringan dari /api/me
+// (tidak load semua field user, tidak perlu token refresh). Dipakai client setiap
+// 3 detik untuk deteksi perubahan paket secara realtime. Kalau role sama, cukup
+// return { changed: false } tanpa data tambahan supaya network overhead minimal.
+app.get('/api/me/role-check', requireUser, (req, res) => {
+  res.json({
+    role:          req.user.role,
+    roleUpdatedAt: req.user.roleUpdatedAt || null
+  });
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 // ADMIN — LOGIN
 // ══════════════════════════════════════════════════════════════════════════

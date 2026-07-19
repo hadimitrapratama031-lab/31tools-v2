@@ -289,8 +289,14 @@
           <div class="page-header-icon" style="background:rgba(230,75,184,.16);">👤</div>
           <div>
             <div class="page-header-title">Manajemen Users</div>
-            <div class="page-header-desc">Lihat & ubah role semua user yang pernah login.</div>
+            <div class="page-header-desc">Lihat & ubah paket semua user yang pernah login.</div>
           </div>
+        </div>
+        <div class="page-header-actions" style="margin-left:auto;">
+          <button class="btn btn-primary" onclick="openSetRoleModal('','','public')" style="display:flex;align-items:center;gap:6px;">
+            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>
+            Set Paket User
+          </button>
         </div>
       </div>
 
@@ -596,6 +602,52 @@
 </div>
 
 <div class="toast-container" id="toastContainer"></div>
+
+<!-- ═══ MODAL: SET PAKET USER ═══ -->
+<div class="modal-backdrop" id="setRoleModalBackdrop" style="display:none;" onclick="if(event.target===this)closeSetRoleModal()">
+  <div class="modal" style="max-width:460px;">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">👤 Set Paket User</div>
+        <div class="modal-subtitle">Cari user via Discord ID lalu pilih paket baru.</div>
+      </div>
+      <button class="modal-close" onclick="closeSetRoleModal()">×</button>
+    </div>
+    <div class="modal-body" style="display:flex;flex-direction:column;gap:16px;">
+
+      <!-- Search -->
+      <div class="form-group">
+        <label class="form-label">Discord ID</label>
+        <div style="display:flex;gap:8px;">
+          <input id="srDiscordId" class="form-input" placeholder="Contoh: 123456789012345678" style="flex:1;"
+            onkeydown="if(event.key==='Enter'){event.preventDefault();searchUserByDiscordId()}" />
+          <button id="btnSrSearch" class="btn btn-secondary" onclick="searchUserByDiscordId()" style="white-space:nowrap;flex-shrink:0;padding:0 16px;">🔍 Cari</button>
+        </div>
+        <div id="srStatus" style="margin-top:6px;font-size:12.5px;min-height:18px;"></div>
+      </div>
+
+      <!-- User Preview -->
+      <div id="srUserPreview"></div>
+
+      <!-- Role segmented -->
+      <div class="form-group">
+        <label class="form-label">Paket Baru</label>
+        <div class="segmented" id="srRoleSegment" style="display:flex;gap:0;">
+          <button class="segmented-opt" data-role="public"   onclick="_srSetRole(this,'public')">🌐 Public</button>
+          <button class="segmented-opt active" data-role="gold" onclick="_srSetRole(this,'gold')">🥇 Gold</button>
+          <button class="segmented-opt" data-role="platinum" onclick="_srSetRole(this,'platinum')">💎 Platinum</button>
+        </div>
+        <input type="hidden" id="srRole" value="gold" />
+      </div>
+
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeSetRoleModal()">Batal</button>
+      <button id="btnSrSave" class="btn btn-primary" onclick="doSetRole()">💾 Simpan Paket</button>
+    </div>
+  </div>
+</div>
+
 <script src="admin.js"></script>
 </body>
 </html>

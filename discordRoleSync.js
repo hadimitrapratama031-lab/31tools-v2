@@ -230,7 +230,6 @@ module.exports = function createRoleSync({ getDb, ROLE_LEVEL }) {
     const settings = await getSettings();
     const roleMap = settings.discordRoleMap || {};
 
-    // Semua tier yang punya roleId ter-konfigurasi (termasuk public kalau ada)
     const configuredTiers = ALL_TIERS.filter(t => roleMap[t]);
     if (configuredTiers.length === 0) {
       return { ok: false, reason: 'not_configured', added: null, removed: [], errors: [] };
@@ -245,18 +244,50 @@ module.exports = function createRoleSync({ getDb, ROLE_LEVEL }) {
     }
     const currentRoleIds = new Set(member.roles || []);
 
+    // ── LOGIKA ROLE DISCORD (diperbaiki) ──
+    //
+    // ATURAN:
+    //  • Role public (jika dikonfigurasi) → SELALU ada, tidak pernah dicabut saat upgrade.
+    //    Ini biasanya dipakai sebagai "verified member" role — tidak ada alasan dicabut
+    //    hanya karena user upgrade ke Gold/Platinum.
+    //
+    //  • Set ke public  → tambah role public (kalau belum), cabut gold & platinum.
+    //  • Set ke gold    → tambah role gold, role public TETAP, role platinum dicabut.
+    //  • Set ke platinum → tambah role platinum, role public TETAP, role gold DICABUT
+    //    (karena platinum sudah mencakup semua hak gold — tidak perlu dobel role tier).
+    //
+    // Konsekuensi: user yang upgrade ke gold tetap punya role public di Discord,
+    // dan saat naik ke platinum, gold-nya baru dicabut (diganti platinum).
+
     const result = { ok: true, added: null, removed: [], errors: [] };
+
     for (const tier of configuredTiers) {
       const roleId = roleMap[tier];
       try {
         if (tier === newRole) {
-          // Assign role tier yang sesuai (kalau belum punya)
-          if (!currentRoleIds.has(roleId)) await addMemberRole(discordId, roleId);
+          // Tambahkan role tier yang sesuai kalau belum punya
+          if (!currentRoleIds.has(roleId)) {
+            await addMemberRole(discordId, roleId);
+          }
           result.added = tier;
-        } else if (currentRoleIds.has(roleId)) {
-          // Cabut role tier lain yang masih nempel
-          await removeMemberRole(discordId, roleId);
-          result.removed.push(tier);
+        } else if (tier === 'public') {
+          // Role public: JANGAN pernah dicabut saat upgrade (gold/platinum), hanya dicabut
+          // kalau newRole memang 'public' dan kemudian gold/platinum yang dicabut.
+          // Tapi kalau newRole = 'public', kita sudah tangani di blok tier === newRole di atas.
+          // Jadi di sini: kalau tier = 'public' DAN newRole BUKAN 'public' → SKIP (tidak cabut).
+          // (tidak ada aksi)
+        } else {
+          // Untuk gold dan platinum: cabut kalau user tidak berhak lagi.
+          // Contoh: user naik ke platinum → gold dicabut. User turun ke public → gold & platinum dicabut.
+          const tierLevel    = ROLE_LEVEL[tier]    ?? 0;
+          const newRoleLevel = ROLE_LEVEL[newRole] ?? 0;
+          // Cabut kalau tier ini LEBIH TINGGI dari newRole (downgrade) ATAU tier ini LEBIH RENDAH
+          // tapi bukan public (contoh: sudah platinum, naik dari gold → gold dicabut).
+          // Ringkasnya: cabut semua tier gold/platinum yang bukan newRole.
+          if (tier !== newRole && currentRoleIds.has(roleId)) {
+            await removeMemberRole(discordId, roleId);
+            result.removed.push(tier);
+          }
         }
       } catch (e) {
         result.errors.push(`${tier}: ${e.message}`);

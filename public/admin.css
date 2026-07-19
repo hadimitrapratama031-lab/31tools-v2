@@ -1123,3 +1123,35 @@ textarea.form-input { resize: vertical; min-height: 72px; }
 .tag.source-discord     { background: rgba(88,101,242,.18); color: #8ea1ff; box-shadow: none; }
 .tag.source-left_guild  { background: rgba(248,113,113,.14); color: var(--red); box-shadow: none; }
 .tag.source-resync      { background: rgba(61,217,245,.15); color: var(--cyan); box-shadow: none; }
+/* ── Set Role Modal — User preview ── */
+.sr-preview-filled {
+  background: var(--glass);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 4px;
+}
+.sr-preview-name  { font-size: 14px; font-weight: 700; color: var(--text-main); }
+.sr-preview-id    { font-family: 'Courier New', monospace; font-size: 11.5px; color: var(--text-faint); }
+.sr-preview-current { margin-top: 4px; font-size: 12px; color: var(--text-dim); display: flex; align-items: center; gap: 6px; }
+.sr-preview-empty {
+  font-size: 12.5px; color: var(--text-faint);
+  background: rgba(248,113,113,.06); border: 1px solid rgba(248,113,113,.2);
+  border-radius: var(--radius-sm); padding: 10px 14px;
+}
+.sr-preview-empty code { background: rgba(255,255,255,.08); border-radius: 4px; padding: 1px 5px; font-size: 11.5px; }
+
+/* ── Table action buttons ── */
+.btn-sm { padding: 5px 12px; font-size: 12px; border-radius: 8px; }
+.btn-outline {
+  background: transparent;
+  border: 1px solid rgba(255,255,255,0.15);
+  color: var(--text-dim);
+  font-size: 12px; font-weight: 600; font-family: inherit;
+  padding: 5px 12px; border-radius: 8px; cursor: pointer;
+  transition: background .15s, border-color .15s, color .15s;
+}
+.btn-outline:hover { background: rgba(255,255,255,.07); border-color: rgba(167,139,250,.4); color: var(--text-main); }
+
+/* ── Page header actions slot ── */
+.page-header-actions { display: flex; align-items: center; gap: 8px; }
