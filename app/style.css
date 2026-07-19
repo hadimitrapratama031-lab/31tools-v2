@@ -759,6 +759,23 @@
     box-shadow:0 6px 18px rgba(139,123,255,.45), inset 0 1px 0 rgba(255,255,255,.4);
   }
 
+  /* ---------------- BADGE ONLINE/OFFLINE (pojok kanan-atas kartu) ---------------- */
+  .online-badge-slot{ position:absolute; top:10px; right:10px; z-index:3; }
+  .online-pill{
+    display:inline-flex;align-items:center;gap:5px;
+    font-size:10px;font-weight:800;text-transform:uppercase;letter-spacing:.03em;
+    padding:5px 10px;border-radius:99px;
+    box-shadow:0 6px 16px rgba(0,0,0,.4), inset 0 1px 0 rgba(255,255,255,.2);
+    backdrop-filter:blur(8px);
+  }
+  .online-pill .op-dot{ width:6px;height:6px;border-radius:50%;background:currentColor;flex-shrink:0; }
+  .online-pill.online{
+    background:rgba(61,220,151,.22); color:#5cf0a8; border:1px solid rgba(61,220,151,.45);
+  }
+  .online-pill.offline{
+    background:rgba(20,16,32,.72); color:#c8c2de; border:1px solid rgba(255,255,255,.16);
+  }
+
   .game-info{padding:12px 14px 14px;}
   .game-info h4{
     margin:0 0 8px;font-size:13.5px;font-weight:700;color:var(--text-main);
@@ -997,38 +1014,48 @@
    Layout & gaya diambil dari referensi desain (2 kolom: cover+info
    box kiri, judul/deskripsi/tag/system requirements kanan).
    ═══════════════════════════════════════════════════════════ */
+.detail-page { height: 100%; display: flex; flex-direction: column; gap: 0; min-height: 0; }
+.detail-scroll {
+  flex: 1; min-height: 0; overflow-y: auto; padding-right: 6px;
+  display: flex; flex-direction: column; gap: 18px;
+}
+
 .detail-back {
   display: inline-flex; align-items: center; gap: 8px; width: fit-content;
   background: transparent; border: none;
   color: var(--text-dim); font-size: 13.5px; font-weight: 700;
-  padding: 4px 0 18px; cursor: pointer;
+  padding: 4px 0 4px; cursor: pointer;
   font-family: 'Manrope', sans-serif; transition: all .15s ease;
 }
 .detail-back span { font-size: 16px; line-height: 1; }
 .detail-back:hover { color: var(--text-main); transform: translateX(-2px); }
 
 .detail-grid {
-  display: grid; grid-template-columns: 420px 1fr; gap: 28px;
+  display: grid; grid-template-columns: 760px 1fr; gap: 28px;
   align-items: start;
 }
 
 /* ── KOLOM KIRI: cover + info grid ── */
 .detail-col-left { display: flex; flex-direction: column; gap: 14px; }
 .detail-cover {
-  width: 100%; aspect-ratio: 16/9; border-radius: 14px; overflow: hidden;
+  width: 100%; aspect-ratio: 2.1/1; border-radius: 14px; overflow: hidden;
   background: linear-gradient(140deg,#241d24 0%,#12263f 100%) center/cover no-repeat;
   box-shadow: 0 16px 40px rgba(0,0,0,.35); border: 1px solid rgba(255,255,255,.06);
 }
 .detail-info-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
 .detail-info-box {
   background: var(--card); border: 1px solid rgba(255,255,255,.05);
-  border-radius: 12px; padding: 13px 16px;
+  border-radius: 12px; padding: 13px 16px; min-width: 0;
 }
 .dib-label {
   font-size: 10.5px; font-weight: 700; letter-spacing: .06em; text-transform: uppercase;
   color: var(--text-faint); margin-bottom: 6px;
 }
-.dib-value { font-size: 13.5px; font-weight: 700; color: var(--text-main); line-height: 1.4; }
+.dib-value {
+  font-size: 13.5px; font-weight: 700; color: var(--text-main); line-height: 1.4;
+  overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+  -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+}
 
 /* ── KOLOM KANAN: judul, deskripsi, tag, system requirements ── */
 .detail-col-right { min-width: 0; }
@@ -1049,9 +1076,43 @@
 .detail-tag {
   background: rgba(168,59,143,.16); border: 1px solid rgba(168,59,143,.35);
   color: #f0b8e2; font-size: 11px; font-weight: 700; padding: 6px 13px; border-radius: 99px;
+  white-space: nowrap;
 }
 .detail-tag.plain {
   background: rgba(255,255,255,.06); border-color: rgba(255,255,255,.1); color: var(--text-dim);
+}
+
+/* ── BANNER "Online Multiplayer" / "Single Player" di halaman detail ── */
+.detail-online-banner {
+  display: flex; align-items: flex-start; gap: 14px;
+  padding: 16px 18px; border-radius: 14px; margin-bottom: 22px;
+}
+.detail-online-banner.is-online {
+  background: linear-gradient(120deg, rgba(61,220,151,.16), rgba(61,217,245,.10));
+  border: 1px solid rgba(61,220,151,.35);
+}
+.detail-online-banner.is-offline {
+  background: rgba(255,255,255,.04);
+  border: 1px solid rgba(255,255,255,.09);
+}
+.detail-online-banner__icon {
+  flex-shrink: 0; width: 40px; height: 40px; border-radius: 12px;
+  display: flex; align-items: center; justify-content: center; font-size: 19px;
+}
+.detail-online-banner.is-online .detail-online-banner__icon {
+  background: rgba(61,220,151,.2); box-shadow: 0 0 0 1px rgba(61,220,151,.35);
+}
+.detail-online-banner.is-offline .detail-online-banner__icon {
+  background: rgba(255,255,255,.07); box-shadow: 0 0 0 1px rgba(255,255,255,.1);
+}
+.detail-online-banner__title {
+  font-family: 'Poppins', sans-serif; font-weight: 800; font-size: 14px;
+  margin-bottom: 4px; letter-spacing: .01em;
+}
+.detail-online-banner.is-online .detail-online-banner__title { color: #5cf0a8; }
+.detail-online-banner.is-offline .detail-online-banner__title { color: var(--text-main); }
+.detail-online-banner__text {
+  font-size: 12.5px; line-height: 1.7; color: var(--text-dim); margin: 0;
 }
 
 .detail-reqs-title {
@@ -1061,26 +1122,31 @@
 .detail-reqs-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
 .detail-reqs-box {
   background: var(--card); border: 1px solid rgba(255,255,255,.05);
-  border-radius: 14px; padding: 16px 18px; max-height: 210px; overflow-y: auto;
+  border-radius: 14px; padding: 16px 18px; max-height: 230px; overflow-y: auto;
+  border-left: 3px solid var(--accent);
 }
 .drb-label {
   font-size: 10.5px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase;
   color: var(--text-faint); margin-bottom: 10px;
 }
-.drb-body { font-size: 12.5px; line-height: 1.9; color: var(--text-dim); }
+.drb-body { font-size: 12.5px; line-height: 1.95; color: var(--text-dim); }
 .drb-body b, .drb-body strong { color: var(--text-main); font-weight: 700; }
-.drb-row { margin-bottom: 2px; }
+.drb-row { margin-bottom: 3px; }
+.drb-row .drb-tag { color: var(--text-main); font-weight: 700; }
 
+/* ── ACTION BAR: SELALU nempel di paling bawah halaman (bukan ikut discroll) ── */
 .detail-action-bar {
-  position: sticky; bottom: 0; padding: 20px 0 4px; margin-top: 26px;
-  background: linear-gradient(0deg, var(--bg-purple-1) 60%, transparent 100%);
+  flex-shrink: 0; display: flex; gap: 12px;
+  padding: 16px 0 2px; margin-top: 4px;
+}
+.detail-install-btn, .detail-install-bypass-btn {
+  flex: 1; padding: 15px; border: none; border-radius: 14px;
+  font-size: 14.5px; font-weight: 800; font-family: 'Manrope', sans-serif;
+  cursor: pointer; transition: all .18s ease;
 }
 .detail-install-btn {
-  width: 100%; padding: 15px; border: none; border-radius: 14px;
   background: linear-gradient(90deg,#7c5cff,#5b8dff); color: #fff;
-  font-size: 14.5px; font-weight: 800; font-family: 'Manrope', sans-serif;
-  cursor: pointer; box-shadow: 0 10px 26px rgba(124,92,255,.45);
-  transition: all .18s ease;
+  box-shadow: 0 10px 26px rgba(124,92,255,.45);
 }
 .detail-install-btn:hover { transform: translateY(-2px); box-shadow: 0 14px 32px rgba(124,92,255,.55); }
 .detail-install-btn:active { transform: translateY(0); }
@@ -1090,7 +1156,20 @@
 }
 .detail-install-btn.locked:hover { transform: none; }
 
-.detail-skel { position: relative; overflow: hidden; background: rgba(255,255,255,.06); }
+.detail-install-bypass-btn {
+  flex: 0 0 auto; min-width: 200px;
+  background: rgba(168,59,143,.16); color: #f0b8e2;
+  border: 1px solid rgba(168,59,143,.4);
+}
+.detail-install-bypass-btn:hover { background: rgba(168,59,143,.26); transform: translateY(-2px); }
+.detail-install-bypass-btn:active { transform: translateY(0); }
+.detail-install-bypass-btn.locked {
+  background: rgba(255,255,255,.06); color: var(--text-dim);
+  border: 1px solid rgba(255,255,255,.12); cursor: not-allowed;
+}
+.detail-install-bypass-btn.locked:hover { transform: none; }
+
+.detail-skel { position: relative; overflow: hidden; background: rgba(255,255,255,.06); color: transparent !important; }
 .detail-skel::after {
   content: ''; position: absolute; inset: 0;
   background: linear-gradient(90deg, transparent, rgba(255,255,255,.08), transparent);
@@ -1102,4 +1181,6 @@
   .detail-grid { grid-template-columns: 1fr; }
   .detail-title { font-size: 22px; }
   .detail-reqs-grid { grid-template-columns: 1fr; }
+  .detail-action-bar { flex-direction: column; }
+  .detail-install-bypass-btn { min-width: 0; }
 }

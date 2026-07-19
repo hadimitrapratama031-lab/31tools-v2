@@ -368,6 +368,7 @@
             <div class="appid-preview-meta">
               <span class="chip" id="appIdPreviewSize">Ukuran: —</span>
               <span class="chip" id="appIdPreviewManifest">Manifest: —</span>
+              <span class="chip" id="appIdPreviewOnline" style="display:none;">Tipe: —</span>
             </div>
             <a class="appid-preview-link" id="appIdPreviewLink" href="#" target="_blank" rel="noopener">Lihat di Steam Store ↗</a>
           </div>
@@ -413,18 +414,39 @@
 
       <div class="modal-divider"><span>Detail Item</span></div>
 
+      <div class="form-group">
+        <label class="form-label">Nama</label>
+        <input class="form-input" type="text" id="itemName" placeholder="Nama game atau bypass">
+      </div>
+
       <div class="form-row">
         <div class="form-group" style="flex:1;">
-          <label class="form-label">Nama</label>
-          <input class="form-input" type="text" id="itemName" placeholder="Nama game atau bypass">
+          <label class="form-label">Role Minimum <span style="color:var(--text-faint);font-weight:400;">— siapa yang boleh akses</span></label>
+          <div class="segmented" id="itemRoleSegment" data-value="public">
+            <button type="button" class="segmented-opt" data-role="public">
+              <span class="segmented-opt-icon">🌐</span> Public
+            </button>
+            <button type="button" class="segmented-opt" data-role="gold">
+              <span class="segmented-opt-icon">🥇</span> Gold
+            </button>
+            <button type="button" class="segmented-opt" data-role="platinum">
+              <span class="segmented-opt-icon">💎</span> Platinum
+            </button>
+          </div>
+          <input type="hidden" id="itemRole" value="public">
         </div>
-        <div class="form-group" style="width:170px;">
-          <label class="form-label">Role Minimum</label>
-          <select class="form-input" id="itemRole" style="cursor:pointer;">
-            <option value="public">🌐 Public</option>
-            <option value="gold">🥇 Gold</option>
-            <option value="platinum">💎 Platinum</option>
-          </select>
+        <div class="form-group" style="flex:1;">
+          <label class="form-label">Tipe Game <span style="color:var(--text-faint);font-weight:400;">— online atau offline</span></label>
+          <div class="segmented segmented-online" id="itemOnlineSegment" data-value="true">
+            <button type="button" class="segmented-opt segmented-opt--online" data-online="true">
+              <span class="segmented-opt-icon">🌐</span> Online
+            </button>
+            <button type="button" class="segmented-opt segmented-opt--offline" data-online="false">
+              <span class="segmented-opt-icon">📴</span> Offline
+            </button>
+          </div>
+          <input type="hidden" id="itemIsOnline" value="true">
+          <div class="segmented-hint" id="itemOnlineHint"></div>
         </div>
       </div>
 
@@ -453,7 +475,7 @@
           <input type="checkbox" id="itemAlsoBypass" style="width:16px;height:16px;margin:0;accent-color:#7b5cff;">
           <span>
             🛡️ Sekalian tambahkan sebagai <b>Bypass</b>
-            <div class="bypass-toggle-sub">Nama, deskripsi, cover, &amp; role otomatis sama dengan Game di atas — kalau Role Game-nya <b>Public</b>, Bypass-nya juga otomatis <b>Public</b>.</div>
+            <div class="bypass-toggle-sub">Nama, deskripsi, cover, role, &amp; tipe Online/Offline otomatis sama dengan Game di atas — kalau Role Game-nya <b>Public</b>, Bypass-nya juga otomatis <b>Public</b>.</div>
           </span>
         </label>
         <div class="form-group" id="bypassContentRow" style="display:none;margin-top:10px;">

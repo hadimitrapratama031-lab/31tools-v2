@@ -203,62 +203,76 @@
     </div>
 
     <!-- ═══════════ PAGE: DETAIL GAME/BYPASS (dibuka saat klik kartu) ═══════════ -->
-    <div class="page-content" id="pageGameDetail" style="display:none;">
-      <button class="detail-back" id="detailBackBtn"><span>←</span> Back to Games</button>
+    <div class="page-content detail-page" id="pageGameDetail" style="display:none;">
 
-      <div class="detail-grid">
+      <div class="detail-scroll">
+        <button class="detail-back" id="detailBackBtn"><span>←</span> Back to Games</button>
 
-        <!-- KOLOM KIRI: cover besar + info grid (Release Date / Metacritic / Developer / Publisher) -->
-        <div class="detail-col-left">
-          <div class="detail-cover" id="detailCover"></div>
+        <div class="detail-grid">
 
-          <div class="detail-info-grid" id="detailInfoGrid">
-            <div class="detail-info-box">
-              <div class="dib-label">Release Date</div>
-              <div class="dib-value" id="dibRelease">—</div>
-            </div>
-            <div class="detail-info-box">
-              <div class="dib-label">Metacritic</div>
-              <div class="dib-value" id="dibMetacritic">—</div>
-            </div>
-            <div class="detail-info-box">
-              <div class="dib-label">Developer</div>
-              <div class="dib-value" id="dibDeveloper">—</div>
-            </div>
-            <div class="detail-info-box">
-              <div class="dib-label">Publisher</div>
-              <div class="dib-value" id="dibPublisher">—</div>
+          <!-- KOLOM KIRI: cover besar + info grid (Release Date / Metacritic / Developer / Publisher) -->
+          <div class="detail-col-left">
+            <div class="detail-cover" id="detailCover"></div>
+
+            <div class="detail-info-grid" id="detailInfoGrid">
+              <div class="detail-info-box">
+                <div class="dib-label">Release Date</div>
+                <div class="dib-value" id="dibRelease">—</div>
+              </div>
+              <div class="detail-info-box">
+                <div class="dib-label">Metacritic</div>
+                <div class="dib-value" id="dibMetacritic">—</div>
+              </div>
+              <div class="detail-info-box">
+                <div class="dib-label">Developer</div>
+                <div class="dib-value" id="dibDeveloper">—</div>
+              </div>
+              <div class="detail-info-box">
+                <div class="dib-label">Publisher</div>
+                <div class="dib-value" id="dibPublisher">—</div>
+              </div>
             </div>
           </div>
-        </div>
 
-        <!-- KOLOM KANAN: judul, steam id, deskripsi, tag, system requirements -->
-        <div class="detail-col-right">
-          <h1 class="detail-title" id="detailTitle">—</h1>
-          <div class="detail-steamid" id="detailSteamId" style="display:none;">STEAM ID: <span id="detailSteamIdVal">—</span></div>
+          <!-- KOLOM KANAN: judul, steam id, deskripsi, tag, system requirements -->
+          <div class="detail-col-right">
+            <h1 class="detail-title" id="detailTitle">—</h1>
+            <div class="detail-steamid" id="detailSteamId" style="display:none;">STEAM ID: <span id="detailSteamIdVal">—</span></div>
 
-          <p class="detail-description" id="detailDescription">—</p>
+            <p class="detail-description" id="detailDescription">—</p>
 
-          <div class="detail-tags" id="detailTags"></div>
+            <div class="detail-tags" id="detailTags"></div>
 
-          <div class="detail-reqs-wrap" id="detailReqsWrap" style="display:none;">
-            <h3 class="detail-reqs-title">System Requirements</h3>
-            <div class="detail-reqs-grid">
-              <div class="detail-reqs-box">
-                <div class="drb-label">Minimum</div>
-                <div class="drb-body" id="detailReqsMin"></div>
+            <!-- Banner Online Multiplayer / Offline — muncul sesuai tipe game yang admin set -->
+            <div class="detail-online-banner" id="detailOnlineBanner" style="display:none;">
+              <div class="detail-online-banner__icon" id="detailOnlineBannerIcon">🌐</div>
+              <div class="detail-online-banner__body">
+                <div class="detail-online-banner__title" id="detailOnlineBannerTitle">Online Multiplayer</div>
+                <div class="detail-online-banner__text" id="detailOnlineBannerText">—</div>
               </div>
-              <div class="detail-reqs-box">
-                <div class="drb-label">Recommended</div>
-                <div class="drb-body" id="detailReqsRec"></div>
+            </div>
+
+            <div class="detail-reqs-wrap" id="detailReqsWrap" style="display:none;">
+              <h3 class="detail-reqs-title">System Requirements</h3>
+              <div class="detail-reqs-grid">
+                <div class="detail-reqs-box">
+                  <div class="drb-label">Minimum</div>
+                  <div class="drb-body" id="detailReqsMin"></div>
+                </div>
+                <div class="detail-reqs-box">
+                  <div class="drb-label">Recommended</div>
+                  <div class="drb-body" id="detailReqsRec"></div>
+                </div>
               </div>
             </div>
           </div>
         </div>
       </div>
 
+      <!-- Selalu nempel di paling bawah halaman (gak ikut kescroll bareng konten) -->
       <div class="detail-action-bar">
         <button class="detail-install-btn" id="detailInstallBtn">Install</button>
+        <button class="detail-install-bypass-btn" id="detailInstallBypassBtn" style="display:none;">🛡️ Install Bypass</button>
       </div>
     </div>
 

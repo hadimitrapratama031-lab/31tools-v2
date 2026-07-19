@@ -587,7 +587,7 @@ function parseSteamRequirements(html) {
     const strongMatch = inner.match(/<strong>(.*?)<\/strong>\s*:?\s*(.*)/is);
     const stripTags = s => s.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&').replace(/&nbsp;/g, ' ').trim();
     if (strongMatch) {
-      const label = stripTags(strongMatch[1]);
+      const label = stripTags(strongMatch[1]).replace(/:+\s*$/, ''); // buang ':' bawaan Steam biar gak dobel pas dirender
       const value = stripTags(strongMatch[2]);
       if (label || value) items.push({ label, value });
     } else {
@@ -1013,6 +1013,7 @@ app.get('/api/bypasses', requireUser, async (req, res) => {
       sizeLabel: b.sizeLabel || '',
       appId: b.appId || b.steamAppId || null,
       steamAppId: b.steamAppId || b.appId || null,
+      gameId: b.gameId || null, // dipakai client buat cocokin tombol "Install Bypass" di halaman detail Game
       isOnline: b.isOnline !== false, createdAt: b.createdAt || null,
     })));
   } catch (e) {
@@ -1124,7 +1125,7 @@ app.get('/api/admin/games', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/admin/games', requireAdmin, async (req, res) => {
-  const { name, description, imageUrl, role, appId, storeUrl, manifestUrl, sizeBytes, sizeLabel } = req.body;
+  const { name, description, imageUrl, role, appId, storeUrl, manifestUrl, sizeBytes, sizeLabel, isOnline } = req.body;
   if (!name || !ROLE_LEVEL.hasOwnProperty(role)) return res.status(400).json({ error: 'Nama & role wajib diisi dengan benar.' });
   const doc = {
     name,
@@ -1136,6 +1137,10 @@ app.post('/api/admin/games', requireAdmin, async (req, res) => {
     manifestUrl: manifestUrl || null,
     sizeBytes: sizeBytes || null,
     sizeLabel: sizeLabel || null,
+    // Tipe game: Online (bisa multiplayer online) / Offline (singleplayer murni).
+    // Default TRUE (online) kalau admin tidak eksplisit set false, biar konsisten
+    // dengan behaviour lama sebelum field ini ada di form (games lama semua online).
+    isOnline: isOnline === false ? false : true,
     createdAt: new Date()
   };
   const result = await db.collection('games').insertOne(doc);
@@ -1144,7 +1149,7 @@ app.post('/api/admin/games', requireAdmin, async (req, res) => {
 
 app.put('/api/admin/games/:id', requireAdmin, async (req, res) => {
   if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
-  const { name, description, imageUrl, role, appId, storeUrl, manifestUrl, sizeBytes, sizeLabel } = req.body;
+  const { name, description, imageUrl, role, appId, storeUrl, manifestUrl, sizeBytes, sizeLabel, isOnline } = req.body;
   const update = {};
   if (name !== undefined) update.name = name;
   if (description !== undefined) update.description = description;
@@ -1154,6 +1159,7 @@ app.put('/api/admin/games/:id', requireAdmin, async (req, res) => {
   if (manifestUrl !== undefined) update.manifestUrl = manifestUrl || null;
   if (sizeBytes !== undefined) update.sizeBytes = sizeBytes || null;
   if (sizeLabel !== undefined) update.sizeLabel = sizeLabel || null;
+  if (isOnline !== undefined) update.isOnline = isOnline === false ? false : true;
   if (role !== undefined) {
     if (!ROLE_LEVEL.hasOwnProperty(role)) return res.status(400).json({ error: 'Role tidak valid.' });
     update.role = role;
@@ -1177,7 +1183,7 @@ app.get('/api/admin/bypasses', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/admin/bypasses', requireAdmin, async (req, res) => {
-  const { name, description, imageUrl, role, link, zipUrl, appId, gameId } = req.body;
+  const { name, description, imageUrl, role, link, zipUrl, appId, gameId, isOnline } = req.body;
   if (!name || !ROLE_LEVEL.hasOwnProperty(role)) return res.status(400).json({ error: 'Nama & role wajib diisi dengan benar.' });
   const doc = {
     name,
@@ -1188,6 +1194,9 @@ app.post('/api/admin/bypasses', requireAdmin, async (req, res) => {
     zipUrl: zipUrl || link || null, // URL ZIP bypass (bisa GitHub dll) — di-proxy server, tidak pernah ke client
     appId:  appId  || null, // Steam App ID — menentukan folder extract tujuan di PC user
     gameId: (gameId && ObjectId.isValid(gameId)) ? gameId : null,
+    // Tipe bypass: Online (bypass buat game yang punya mode online multiplayer) / Offline.
+    // Default TRUE kalau tidak eksplisit di-set false.
+    isOnline: isOnline === false ? false : true,
     createdAt: new Date()
   };
   const result = await db.collection('bypasses').insertOne(doc);
@@ -1196,7 +1205,7 @@ app.post('/api/admin/bypasses', requireAdmin, async (req, res) => {
 
 app.put('/api/admin/bypasses/:id', requireAdmin, async (req, res) => {
   if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
-  const { name, description, imageUrl, role, link, zipUrl, appId } = req.body;
+  const { name, description, imageUrl, role, link, zipUrl, appId, isOnline } = req.body;
   const update = {};
   if (name        !== undefined) update.name        = name;
   if (description !== undefined) update.description = description;
@@ -1204,6 +1213,7 @@ app.put('/api/admin/bypasses/:id', requireAdmin, async (req, res) => {
   if (link        !== undefined) update.link        = link   || null;
   if (zipUrl      !== undefined) update.zipUrl      = zipUrl || link || null;
   if (appId       !== undefined) update.appId       = appId  || null;
+  if (isOnline    !== undefined) update.isOnline    = isOnline === false ? false : true;
   if (role !== undefined) {
     if (!ROLE_LEVEL.hasOwnProperty(role)) return res.status(400).json({ error: 'Role tidak valid.' });
     update.role = role;
@@ -1312,6 +1322,11 @@ app.get('/api/admin/appid-lookup/:appId', requireAdmin, async (req, res) => {
     sizeLabel: null,
     hasManifest: null,
     hubcapConfigured: !!HUBCAP_API_KEY,
+    // Deteksi otomatis tipe game (Online/Offline) dari kategori Steam-nya, biar toggle
+    // di form admin bisa langsung ke-set default sesuai game aslinya — admin tetap bisa
+    // ubah manual kalau deteksinya kurang pas.
+    categories: [],
+    isOnlineSuggested: null,
     warnings: []
   };
 
@@ -1327,6 +1342,15 @@ app.get('/api/admin/appid-lookup/:appId', requireAdmin, async (req, res) => {
       result.name = d.name || null;
       result.imageUrl = d.header_image || null;
       result.description = (d.short_description || '').slice(0, 300) || null;
+
+      // Kategori Steam (mis. "Single-player", "Multi-player", "Online Co-op", "Online PvP", dst)
+      // dipakai buat nebak apakah game ini punya mode online multiplayer atau murni offline.
+      const catNames = (d.categories || []).map(c => c.description).filter(Boolean);
+      result.categories = catNames;
+      const ONLINE_HINT = /online|multi-?player|co-?op|pvp|mmo/i;
+      const hasOnlineHint = catNames.some(c => ONLINE_HINT.test(c));
+      // Kalau kategorinya CUMA "Single-player" tanpa hint online sama sekali → offline.
+      result.isOnlineSuggested = catNames.length ? hasOnlineHint : null;
     } else {
       result.warnings.push('App ID tidak ditemukan di Steam Store.');
     }

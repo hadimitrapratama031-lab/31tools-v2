@@ -523,6 +523,7 @@ function renderTableRows(type, rows, isFilteredEmpty) {
     const roleLabel  = roleClass === 'platinum' ? '💠 Platinum' : roleClass === 'gold' ? '⭐ Gold' : '🌐 Public';
     const hasLink    = !!(item.zipUrl || item.link || item.manifestUrl);
     const placeholderIcon = isGame ? '🎮' : '🛡️';
+    const isOnline   = item.isOnline !== false;
 
     return `<div class="item-card item-card--${roleClass}">
       <!-- Cover -->
@@ -532,6 +533,9 @@ function renderTableRows(type, rows, isFilteredEmpty) {
           : `<span class="item-card__cover-fallback">${placeholderIcon}</span>`}
         <div class="item-card__role-badge item-card__role-badge--${roleClass}">${roleLabel}</div>
         ${hasLink ? `<div class="item-card__link-dot" title="File tersedia">${linkSvg}</div>` : ''}
+        <div class="item-card__online-badge item-card__online-badge--${isOnline ? 'online' : 'offline'}">
+          <span class="item-card__online-badge-dot"></span>${isOnline ? 'Online' : 'Offline'}
+        </div>
       </div>
 
       <!-- Body -->
@@ -591,7 +595,10 @@ function openItemModal(type, item) {
 
   document.getElementById('itemName').value = item?.name || '';
   document.getElementById('itemDescription').value = item?.description || '';
-  document.getElementById('itemRole').value = item?.role || 'public';
+  setSegmentValue(roleSegmentEl, roleHiddenEl, 'role', item?.role || 'public');
+  setSegmentValue(onlineSegmentEl, onlineHiddenEl, 'online', item?.isOnline === false ? 'false' : 'true');
+  document.getElementById('itemOnlineHint').textContent = '';
+  document.getElementById('itemOnlineHint').className = 'segmented-hint';
   document.getElementById('itemImageUrl').value = item?.imageUrl || '';
   document.getElementById('itemSizeLabel').value = item?.sizeLabel || '';
   document.getElementById('itemAppId').value = item?.appId || '';
@@ -636,6 +643,32 @@ window.openItemModal = openItemModal;
 
 document.getElementById('itemAlsoBypass').addEventListener('change', (e) => {
   document.getElementById('bypassContentRow').style.display = e.target.checked ? 'block' : 'none';
+});
+
+// ─── SEGMENTED PICKER: Role Minimum & Tipe Game (Online/Offline) ───
+// Pengganti <select> polos — lebih enak diklik & langsung kelihatan pilihannya tanpa dropdown.
+function setSegmentValue(segmentEl, hiddenInputEl, datasetKey, value) {
+  segmentEl.dataset.value = value;
+  hiddenInputEl.value = value;
+  segmentEl.querySelectorAll('.segmented-opt').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset[datasetKey] === String(value));
+  });
+}
+
+const roleSegmentEl = document.getElementById('itemRoleSegment');
+const roleHiddenEl  = document.getElementById('itemRole');
+roleSegmentEl.querySelectorAll('.segmented-opt').forEach(btn => {
+  btn.addEventListener('click', () => setSegmentValue(roleSegmentEl, roleHiddenEl, 'role', btn.dataset.role));
+});
+
+const onlineSegmentEl = document.getElementById('itemOnlineSegment');
+const onlineHiddenEl  = document.getElementById('itemIsOnline');
+onlineSegmentEl.querySelectorAll('.segmented-opt').forEach(btn => {
+  btn.addEventListener('click', () => {
+    setSegmentValue(onlineSegmentEl, onlineHiddenEl, 'online', btn.dataset.online);
+    document.getElementById('itemOnlineHint').textContent = '';
+    document.getElementById('itemOnlineHint').className = 'segmented-hint';
+  });
 });
 
 function closeModal() {
@@ -695,6 +728,25 @@ async function doAppIdLookup() {
       document.getElementById('appIdPreviewManifest').textContent = 'Manifest: ' + manifestText;
       document.getElementById('appIdPreviewManifest').className = 'chip ' + (data.hasManifest === true ? 'chip-ok' : data.hasManifest === false ? 'chip-bad' : '');
       document.getElementById('appIdPreviewLink').href = data.storeUrl || '#';
+
+      // Chip tipe game (Online/Offline) — hasil deteksi otomatis dari kategori Steam
+      const onlineChip = document.getElementById('appIdPreviewOnline');
+      if (data.isOnlineSuggested !== null && data.isOnlineSuggested !== undefined) {
+        onlineChip.style.display = 'inline-block';
+        onlineChip.textContent = 'Tipe: ' + (data.isOnlineSuggested ? '🌐 Online Multiplayer' : '📴 Offline / Singleplayer');
+        onlineChip.className = 'chip ' + (data.isOnlineSuggested ? 'chip-ok' : '');
+      } else {
+        onlineChip.style.display = 'none';
+      }
+    }
+
+    // Auto-set toggle Online/Offline sesuai hasil deteksi kategori Steam — admin tetap
+    // bebas ubah manual sesudahnya kalau deteksinya kurang tepat.
+    if (data.isOnlineSuggested !== null && data.isOnlineSuggested !== undefined) {
+      setSegmentValue(onlineSegmentEl, onlineHiddenEl, 'online', data.isOnlineSuggested ? 'true' : 'false');
+      const hintEl = document.getElementById('itemOnlineHint');
+      hintEl.textContent = `💡 Terdeteksi otomatis dari kategori Steam${data.categories?.length ? ' (' + data.categories.slice(0, 3).join(', ') + (data.categories.length > 3 ? ', ...' : '') + ')' : ''} — ubah manual kalau kurang tepat.`;
+      hintEl.className = 'segmented-hint is-suggested';
     }
 
     statusEl.innerHTML = data.warnings?.length
@@ -715,6 +767,7 @@ document.getElementById('btnSaveItem').addEventListener('click', async () => {
     name:        document.getElementById('itemName').value.trim(),
     description: document.getElementById('itemDescription').value.trim(),
     role:        document.getElementById('itemRole').value,
+    isOnline:    document.getElementById('itemIsOnline').value === 'true',
     imageUrl:    document.getElementById('itemImageUrl').value.trim() || null,
     sizeLabel:   document.getElementById('itemSizeLabel').value.trim() || null
   };
@@ -753,6 +806,7 @@ document.getElementById('btnSaveItem').addEventListener('click', async () => {
           name:        body.name,
           description: body.description,
           role:        body.role,
+          isOnline:    body.isOnline,
           imageUrl:    body.imageUrl,
           // App ID otomatis ikut dari game — ini yang menentukan folder extract di PC user
           appId:       body.appId || null,

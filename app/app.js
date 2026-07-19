@@ -480,12 +480,33 @@ function roleBadgeHtml(role) {
   return `<span class="role-pill ${role}"><span class="rp-icon">${icon}</span>${escapeHtml(role)}</span>`;
 }
 
+// Badge Online/Offline di pojok kanan-atas kartu game/bypass — dari field isOnline
+// yang diatur admin (default online kalau field-nya belum pernah di-set sama sekali).
+function onlineBadgeHtml(isOnline) {
+  const online = isOnline !== false;
+  return `<span class="online-pill ${online ? 'online' : 'offline'}">
+    <span class="op-dot"></span>${online ? 'Online' : 'Offline'}
+  </span>`;
+}
+
 // ── Cek apakah role user cukup buat akses item ini ──
 const CLIENT_ROLE_LEVEL = { public: 0, gold: 1, platinum: 2, admin: 3 };
 function hasAccess(itemRole) {
   const myLevel   = CLIENT_ROLE_LEVEL[currentUser?.role] ?? 0;
   const itemLevel = CLIENT_ROLE_LEVEL[itemRole] ?? 0;
   return myLevel >= itemLevel;
+}
+
+// ── Cari Bypass yang berkaitan dengan Game ini (buat tombol "Install Bypass" kedua) ──
+// Prioritas: bypass yang gameId-nya cocok (dibuat via "Sekalian jadi Bypass" di admin),
+// fallback: bypass yang App ID Steam-nya sama persis dengan game ini.
+function findLinkedBypass(gameItem) {
+  const gid = String(gameItem._id);
+  let match = allBypasses.find(b => b.gameId && String(b.gameId) === gid);
+  if (!match && gameItem.appId) {
+    match = allBypasses.find(b => b.appId && String(b.appId) === String(gameItem.appId));
+  }
+  return match || null;
 }
 
 // ── HALAMAN DETAIL GAME/BYPASS ──
@@ -542,6 +563,8 @@ function openDetailPage(item, itemType) {
     `<span class="detail-tag plain">${itemType === 'game' ? '🎮 Game' : '🛡️ Bypass'}</span>` +
     (item.sizeLabel ? `<span class="detail-tag plain">💾 ${escapeHtml(item.sizeLabel)}</span>` : '');
 
+  renderOnlineBanner(item, itemType);
+
   document.getElementById('detailReqsWrap').style.display = 'none';
 
   const installBtn = document.getElementById('detailInstallBtn');
@@ -555,6 +578,28 @@ function openDetailPage(item, itemType) {
     installBtn.className = 'detail-install-btn';
     installBtn.textContent = itemType === 'game' ? '⚡ Install Game' : '🛡️ Aktifkan Bypass';
     installBtn.onclick = () => handleInstall(itemType, item._id, item.name);
+  }
+
+  // ── Tombol "Install Bypass" kedua — cuma muncul di halaman detail GAME,
+  // dan cuma kalau memang ada Bypass yang terhubung ke game ini ──
+  const bypassBtn = document.getElementById('detailInstallBypassBtn');
+  const linkedBypass = itemType === 'game' ? findLinkedBypass(item) : null;
+  if (linkedBypass) {
+    bypassBtn.style.display = '';
+    const bypassLocked = !hasAccess(linkedBypass.role);
+    if (bypassLocked) {
+      bypassBtn.disabled  = true;
+      bypassBtn.className = 'detail-install-bypass-btn locked';
+      bypassBtn.textContent = `🔒 Bypass butuh paket ${linkedBypass.role}`;
+      bypassBtn.onclick = null;
+    } else {
+      bypassBtn.disabled  = false;
+      bypassBtn.className = 'detail-install-bypass-btn';
+      bypassBtn.textContent = '🛡️ Install Bypass';
+      bypassBtn.onclick = () => handleInstall('bypass', linkedBypass._id, linkedBypass.name);
+    }
+  } else {
+    bypassBtn.style.display = 'none';
   }
 
   showPage('gameDetail');
@@ -579,6 +624,51 @@ function openDetailPage(item, itemType) {
   }
 }
 window.openDetailPage = openDetailPage;
+
+// ── Banner "Online Multiplayer" / "Single Player" di halaman detail ──
+// Beberapa varian teks online biar gak monoton kalau dibuka bolak-balik — dipilih
+// konsisten per item (pakai hash nama/ID-nya), bukan acak tiap render.
+const ONLINE_BANNER_COPIES = [
+  {
+    title: '🌐 Bisa Dimainkan Online Multiplayer',
+    text: 'Game ini mendukung mode online — ajak teman satu squad atau ketemu pemain baru dari seluruh dunia, dan rasakan serunya main bareng secara real-time, bukan cuma sendirian.'
+  },
+  {
+    title: '🌐 Online Multiplayer Ready',
+    text: 'Nggak cuma seru dimainkan sendiri — game ini siap dimainkan online bareng teman. Gaskeun mabar, koordinasi strategi, dan taklukkan tantangannya bareng-bareng.'
+  },
+  {
+    title: '🌐 Mendukung Mode Online',
+    text: 'Koneksikan diri kamu ke server online dan mainkan bareng pemain lain kapan saja. Cocok buat kamu yang suka kompetisi seru atau kerja sama tim secara real-time.'
+  }
+];
+const OFFLINE_BANNER_COPY = {
+  title: '📴 Single Player / Offline',
+  text: 'Game ini didesain untuk dimainkan sendirian tanpa perlu koneksi online — cocok buat kamu yang mau fokus menikmati cerita dan gameplay-nya dengan tenang, kapan saja.'
+};
+
+function renderOnlineBanner(item, itemType) {
+  const banner = document.getElementById('detailOnlineBanner');
+  if (!banner) return;
+  const isOnline = item.isOnline !== false;
+
+  banner.style.display = 'flex';
+  banner.className = 'detail-online-banner ' + (isOnline ? 'is-online' : 'is-offline');
+
+  let copy;
+  if (isOnline) {
+    let hash = 0;
+    const seed = String(item._id || item.name || '');
+    for (let i = 0; i < seed.length; i++) hash = (hash * 31 + seed.charCodeAt(i)) >>> 0;
+    copy = ONLINE_BANNER_COPIES[hash % ONLINE_BANNER_COPIES.length];
+  } else {
+    copy = OFFLINE_BANNER_COPY;
+  }
+
+  document.getElementById('detailOnlineBannerIcon').textContent = isOnline ? '🌐' : '📴';
+  document.getElementById('detailOnlineBannerTitle').textContent = copy.title;
+  document.getElementById('detailOnlineBannerText').textContent = copy.text;
+}
 
 function applySteamDetails(d, item, itemType) {
   if (d.headerImage) {
@@ -642,6 +732,7 @@ function renderGameCard(item, idx) {
     <div class="game-card${locked ? ' locked' : ''}" data-idx="${idx}">
       <div class="game-art${item.imageUrl ? '' : ' ' + artClassForId(item._id || item.name)}" style="${art}">
         <div class="badge-slot">${roleBadgeHtml(item.role)}</div>
+        <div class="online-badge-slot">${onlineBadgeHtml(item.isOnline)}</div>
         ${locked ? `<div class="lock-overlay">🔒</div>` : ''}
       </div>
       <div class="game-info">
@@ -674,6 +765,7 @@ function renderBypassCard(item, idx) {
     <div class="game-card${locked ? ' locked' : ''}" data-idx="${idx}">
       <div class="game-art${item.imageUrl ? '' : ' ' + artClassForId(item._id || item.name)}" style="${art}">
         <div class="badge-slot">${roleBadgeHtml(item.role)}</div>
+        <div class="online-badge-slot">${onlineBadgeHtml(item.isOnline)}</div>
         ${locked ? `<div class="lock-overlay">🔒</div>` : ''}
       </div>
       <div class="game-info">
