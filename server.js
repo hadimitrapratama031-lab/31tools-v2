@@ -410,6 +410,73 @@ function wsBroadcastAll(event, data) {
   }
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// REALTIME — Admin Dashboard hub (terpisah dari wsClients di atas, karena admin
+// bisa login pakai password bersama yang TIDAK terikat discordId sama sekali).
+// Dipakai supaya Dashboard admin (stat card, grafik, activity feed) otomatis
+// ter-update tanpa refresh, begitu ada aktivitas baru yang tercatat di
+// activityLogs (lihat logActivity di bawah).
+// ══════════════════════════════════════════════════════════════════════════
+const adminWsClients = new Set();
+function wsRegisterAdmin(ws) { adminWsClients.add(ws); }
+function wsUnregisterAdmin(ws) { adminWsClients.delete(ws); }
+function broadcastAdmin(event, data) {
+  const payload = JSON.stringify({ event, data });
+  for (const ws of adminWsClients) {
+    if (ws.readyState === WebSocket.OPEN) ws.send(payload);
+  }
+}
+
+// Ikon default per jenis aktivitas — SATU-SATUNYA sumber kebenaran urutan/jenis
+// aktivitas yang muncul di panel "Aktivitas Terbaru" & dipakai juga buat hitung
+// grafik login (type: 'login').
+const ACTIVITY_ICON = {
+  login: '🔑',
+  logout: '🚪',
+  install: '⬇️',
+  download_failed: '⚠️',
+  purchase: '💳',
+  renewal: '🔄',
+  request_game: '🎯',
+  admin_add_game: '➕',
+  admin_edit_game: '✏️',
+  admin_delete_game: '🗑️',
+  admin_add_bypass: '➕',
+  admin_edit_bypass: '✏️',
+  admin_delete_bypass: '🗑️',
+  admin_reset_quota: '♻️',
+  announcement: '📢',
+  system_error: '🚨'
+};
+
+// Catat satu entri aktivitas ke koleksi `activityLogs` (dipakai buat panel
+// "Aktivitas Terbaru" DAN grafik "Login 7 Hari Terakhir" di Dashboard admin).
+// Best-effort — kalau gagal simpan (mis. DB belum siap), jangan sampai
+// menghambat/gagalkan proses utama yang memanggilnya.
+async function logActivity({ type, username, discordId, description, meta = {} }) {
+  const doc = {
+    type,
+    icon: ACTIVITY_ICON[type] || 'ℹ️',
+    username: username || null,
+    discordId: discordId || null,
+    description: description || '',
+    meta,
+    createdAt: new Date()
+  };
+  try {
+    if (!db) return doc;
+    const result = await db.collection('activityLogs').insertOne(doc);
+    doc._id = result.insertedId;
+  } catch (e) {
+    console.warn('[Activity] Gagal simpan activity log:', e.message);
+  }
+  // Push realtime ke semua admin yang lagi buka Dashboard — dashboard tinggal
+  // prepend item ini ke Activity Feed & re-fetch angka statistik yang relevan,
+  // TANPA perlu refresh halaman/login ulang/restart server.
+  broadcastAdmin('activity', doc);
+  return doc;
+}
+
 // Kirim ulang status akun (role, masa aktif, limit download) ke user secara realtime.
 // Dipanggil setiap kali ada perubahan di server yang mempengaruhi data itu, supaya
 // client TIDAK PERLU refresh/restart/login ulang untuk lihat perubahannya.
@@ -584,6 +651,8 @@ async function connectDB() {
     await db.collection('roleSyncLogs').createIndex({ discordId: 1 });
     await db.collection('notifications').createIndex({ discordId: 1, createdAt: -1 });
     await db.collection('notifications').createIndex({ discordId: 1, read: 1 });
+    await db.collection('activityLogs').createIndex({ createdAt: -1 });
+    await db.collection('activityLogs').createIndex({ type: 1, createdAt: -1 });
   } catch (e) {
     console.error('❌ Gagal konek MongoDB:', e.message);
     // TIDAK process.exit() — server tetap jalan supaya endpoint /health dan interactions tetap bisa diakses
@@ -835,6 +904,16 @@ app.get('/auth/discord/callback', async (req, res) => {
 
     const user = await db.collection('users').findOne({ discordId: discordUser.id });
     const isNewAccount = user.createdAt && new Date(user.createdAt).getTime() === now.getTime();
+
+    // Catat aktivitas login (dipakai Dashboard admin: "Login hari ini", grafik
+    // "Login 7 Hari Terakhir", dan Activity Feed) — best-effort, tidak pernah
+    // menghambat proses login user kalau gagal simpan.
+    logActivity({
+      type: 'login',
+      username: user.username,
+      discordId: user.discordId,
+      description: `${user.username} login${isNewAccount ? ' (akun baru)' : ''}.`
+    }).catch(() => {});
 
     // Webhook kategori "Login Akun" (opsional, default OFF supaya tidak spam kalau
     // trafik tinggi) — best-effort, tidak pernah menghambat proses login user.
@@ -1516,6 +1595,15 @@ app.post('/api/history', requireUser, async (req, res) => {
 
     const itemNameResolved = item?.name || fallbackName || 'Item';
     const itemImageResolved = item?.imageUrl || fallbackImage || null;
+
+    logActivity({
+      type: 'install',
+      username: req.user.username,
+      discordId: req.user.discordId,
+      description: `${req.user.username} meng-install ${itemType === 'game' ? 'game' : 'bypass'} "${itemNameResolved}".`,
+      meta: { itemType, itemId }
+    }).catch(() => {});
+
     notifyUser(req.user.discordId, {
       type: 'download_success',
       title: 'Download Berhasil',
@@ -1545,6 +1633,15 @@ app.post('/api/history', requireUser, async (req, res) => {
 app.post('/api/downloads/failed', requireUser, async (req, res) => {
   try {
     const { itemType, itemName, itemImage, reason } = req.body;
+
+    logActivity({
+      type: 'download_failed',
+      username: req.user.username,
+      discordId: req.user.discordId,
+      description: `Download "${itemName || 'item'}" (${itemType === 'game' ? 'Game' : 'Bypass'}) gagal untuk ${req.user.username}.`,
+      meta: { itemType, itemName, reason }
+    }).catch(() => {});
+
     notifyUser(req.user.discordId, {
       type: 'download_failed',
       title: 'Download Gagal',
@@ -1703,6 +1800,139 @@ app.get('/api/admin/verify-discord-token', async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
+// ADMIN — DASHBOARD (statistik realtime)
+// ══════════════════════════════════════════════════════════════════════════
+// Jakarta (WIB) selalu UTC+7 tanpa DST, jadi batas hari/minggu/bulan bisa
+// dihitung langsung tanpa library timezone tambahan.
+function jakartaMidnightUTC(daysAgo = 0) {
+  const JAK_OFFSET_MS = 7 * 60 * 60 * 1000;
+  const jakartaMs = Date.now() + JAK_OFFSET_MS;
+  const d = new Date(jakartaMs);
+  d.setUTCHours(0, 0, 0, 0);
+  d.setUTCDate(d.getUTCDate() - daysAgo);
+  return new Date(d.getTime() - JAK_OFFSET_MS);
+}
+function jakartaMonthStartUTC() {
+  const JAK_OFFSET_MS = 7 * 60 * 60 * 1000;
+  const d = new Date(Date.now() + JAK_OFFSET_MS);
+  d.setUTCDate(1);
+  d.setUTCHours(0, 0, 0, 0);
+  return new Date(d.getTime() - JAK_OFFSET_MS);
+}
+
+// Cache singkat (4 detik) — dashboard bisa dibuka di beberapa tab admin
+// sekaligus & di-refresh tiap kali ada event WebSocket masuk; cache ini
+// mencegah query berat yang sama ditembak berkali-kali dalam rentang waktu
+// yang sangat singkat, tanpa membuat datanya jadi basi.
+let _dashboardCache = { data: null, at: 0 };
+const DASHBOARD_CACHE_MS = 4000;
+
+app.get('/api/admin/dashboard', requireAdmin, async (req, res) => {
+  try {
+    if (!db) return res.status(503).json({ error: 'Database belum siap, coba lagi sebentar.' });
+
+    if (_dashboardCache.data && (Date.now() - _dashboardCache.at) < DASHBOARD_CACHE_MS) {
+      return res.json({ ..._dashboardCache.data, admin: await buildAdminInfo(req.admin) });
+    }
+
+    const todayStart   = jakartaMidnightUTC(0);
+    const weekStart    = jakartaMidnightUTC(6);   // termasuk hari ini = 7 hari
+    const prevWeekStart = jakartaMidnightUTC(13);
+    const monthStart   = jakartaMonthStartUTC();
+
+    const [
+      totalUsers, usersToday, usersWeek,
+      roleCountsAgg,
+      totalGames, gamesActive,
+      totalBypasses, bypassesActive,
+      gamesWithBypassIds,
+      installsToday, installsWeek, installsMonth, installsTotal,
+      loginsToday, loginsWeek, loginsPrevWeek,
+      loginTrendAgg,
+      recentActivity
+    ] = await Promise.all([
+      db.collection('users').countDocuments({}),
+      db.collection('users').countDocuments({ createdAt: { $gte: todayStart } }),
+      db.collection('users').countDocuments({ createdAt: { $gte: weekStart } }),
+      db.collection('users').aggregate([{ $group: { _id: '$role', count: { $sum: 1 } } }]).toArray(),
+      db.collection('games').countDocuments({}),
+      db.collection('games').countDocuments({ isOnline: { $ne: false } }),
+      db.collection('bypasses').countDocuments({}),
+      db.collection('bypasses').countDocuments({ isOnline: { $ne: false } }),
+      db.collection('bypasses').distinct('gameId', { gameId: { $ne: null } }),
+      db.collection('history').countDocuments({ createdAt: { $gte: todayStart } }),
+      db.collection('history').countDocuments({ createdAt: { $gte: weekStart } }),
+      db.collection('history').countDocuments({ createdAt: { $gte: monthStart } }),
+      db.collection('history').countDocuments({}),
+      db.collection('activityLogs').countDocuments({ type: 'login', createdAt: { $gte: todayStart } }),
+      db.collection('activityLogs').countDocuments({ type: 'login', createdAt: { $gte: weekStart } }),
+      db.collection('activityLogs').countDocuments({ type: 'login', createdAt: { $gte: prevWeekStart, $lt: weekStart } }),
+      db.collection('activityLogs').aggregate([
+        { $match: { type: 'login', createdAt: { $gte: weekStart } } },
+        { $group: {
+            _id: { $dateToString: { format: '%Y-%m-%d', date: '$createdAt', timezone: 'Asia/Jakarta' } },
+            count: { $sum: 1 }
+          } },
+        { $sort: { _id: 1 } }
+      ]).toArray(),
+      db.collection('activityLogs').find({}).sort({ createdAt: -1 }).limit(20).toArray()
+    ]);
+
+    const roleCounts = { public: 0, gold: 0, platinum: 0, admin: 0 };
+    for (const r of roleCountsAgg) { if (r._id && roleCounts.hasOwnProperty(r._id)) roleCounts[r._id] = r.count; }
+    const premiumTotal = roleCounts.gold + roleCounts.platinum;
+    const pct = (n) => totalUsers > 0 ? Math.round((n / totalUsers) * 1000) / 10 : 0;
+
+    const data = {
+      // Total Users
+      totalUsers, usersToday, usersWeek,
+      loginsToday, loginsWeek, loginsPrevWeek,
+      loginTrend: loginTrendAgg,
+
+      // Total Game
+      totalGames, gamesActive, gamesInactive: totalGames - gamesActive,
+      totalBypasses, bypassesActive, bypassesInactive: totalBypasses - bypassesActive,
+      gamesWithBypass: gamesWithBypassIds.length,
+
+      // Gold Aktif
+      totalPublic: roleCounts.public, activeGold: roleCounts.gold, activePlatinum: roleCounts.platinum,
+      pctPublic: pct(roleCounts.public), pctGold: pct(roleCounts.gold), pctPlatinum: pct(roleCounts.platinum),
+      premiumTotal,
+
+      // Total Install
+      installsToday, installsWeek, installsMonth, totalInstalls: installsTotal,
+
+      // Activity feed
+      recentActivity
+    };
+
+    _dashboardCache = { data, at: Date.now() };
+    res.json({ ...data, admin: await buildAdminInfo(req.admin) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Info admin yang lagi login, dipakai panel "Selamat Datang" (nama, role, waktu
+// login terakhir). Password-based admin tidak terikat akun manapun jadi cuma
+// ditampilkan sebagai "Administrator" generik.
+async function buildAdminInfo(admin) {
+  if (!admin) return { username: 'Administrator', role: 'Super Admin', lastLoginAt: null };
+  if (admin.via === 'password') return { username: 'Administrator', role: 'Super Admin', lastLoginAt: null };
+  try {
+    const user = await db.collection('users').findOne({ discordId: admin.discordId });
+    return {
+      username: admin.username || 'Admin',
+      role: 'Admin',
+      lastLoginAt: user?.lastLoginAt || null,
+      avatarUrl: admin.avatarUrl || null
+    };
+  } catch {
+    return { username: admin.username || 'Admin', role: 'Admin', lastLoginAt: null };
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // ADMIN — GAME (CRUD)
 // ══════════════════════════════════════════════════════════════════════════
 app.get('/api/admin/games', requireAdmin, async (req, res) => {
@@ -1730,6 +1960,14 @@ app.post('/api/admin/games', requireAdmin, async (req, res) => {
     createdAt: new Date()
   };
   const result = await db.collection('games').insertOne(doc);
+
+  logActivity({
+    type: 'admin_add_game',
+    username: req.admin?.username || 'Admin',
+    description: `Admin menambahkan game baru "${doc.name}".`,
+    meta: { gameId: result.insertedId, name: doc.name }
+  }).catch(() => {});
+
   res.json({ ...doc, _id: result.insertedId });
 });
 
@@ -1751,12 +1989,29 @@ app.put('/api/admin/games/:id', requireAdmin, async (req, res) => {
     update.role = role;
   }
   await db.collection('games').updateOne({ _id: new ObjectId(req.params.id) }, { $set: update });
+
+  logActivity({
+    type: 'admin_edit_game',
+    username: req.admin?.username || 'Admin',
+    description: `Admin mengubah data game "${update.name || req.params.id}".`,
+    meta: { gameId: req.params.id, update }
+  }).catch(() => {});
+
   res.json({ success: true });
 });
 
 app.delete('/api/admin/games/:id', requireAdmin, async (req, res) => {
   if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+  const game = await db.collection('games').findOne({ _id: new ObjectId(req.params.id) });
   await db.collection('games').deleteOne({ _id: new ObjectId(req.params.id) });
+
+  logActivity({
+    type: 'admin_delete_game',
+    username: req.admin?.username || 'Admin',
+    description: `Admin menghapus game "${game?.name || req.params.id}".`,
+    meta: { gameId: req.params.id, name: game?.name }
+  }).catch(() => {});
+
   res.json({ success: true });
 });
 
@@ -1786,6 +2041,14 @@ app.post('/api/admin/bypasses', requireAdmin, async (req, res) => {
     createdAt: new Date()
   };
   const result = await db.collection('bypasses').insertOne(doc);
+
+  logActivity({
+    type: 'admin_add_bypass',
+    username: req.admin?.username || 'Admin',
+    description: `Admin menambahkan bypass baru "${doc.name}".`,
+    meta: { bypassId: result.insertedId, name: doc.name }
+  }).catch(() => {});
+
   res.json({ ...doc, _id: result.insertedId });
 });
 
@@ -1805,12 +2068,29 @@ app.put('/api/admin/bypasses/:id', requireAdmin, async (req, res) => {
     update.role = role;
   }
   await db.collection('bypasses').updateOne({ _id: new ObjectId(req.params.id) }, { $set: update });
+
+  logActivity({
+    type: 'admin_edit_bypass',
+    username: req.admin?.username || 'Admin',
+    description: `Admin mengubah data bypass "${update.name || req.params.id}".`,
+    meta: { bypassId: req.params.id, update }
+  }).catch(() => {});
+
   res.json({ success: true });
 });
 
 app.delete('/api/admin/bypasses/:id', requireAdmin, async (req, res) => {
   if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+  const bypass = await db.collection('bypasses').findOne({ _id: new ObjectId(req.params.id) });
   await db.collection('bypasses').deleteOne({ _id: new ObjectId(req.params.id) });
+
+  logActivity({
+    type: 'admin_delete_bypass',
+    username: req.admin?.username || 'Admin',
+    description: `Admin menghapus bypass "${bypass?.name || req.params.id}".`,
+    meta: { bypassId: req.params.id, name: bypass?.name }
+  }).catch(() => {});
+
   res.json({ success: true });
 });
 
@@ -2009,6 +2289,16 @@ app.put('/api/admin/users/:discordId/role', requireAdmin, async (req, res) => {
       })]
     });
 
+    // Catat aktivitas "Pembelian Paket" — dipakai Dashboard admin (stat Gold/Platinum
+    // realtime & Activity Feed). Cuma dicatat kalau rolenya beneran berubah.
+    logActivity({
+      type: 'purchase',
+      username,
+      discordId,
+      description: `Admin mengubah paket ${username} dari ${oldRole.toUpperCase()} ke ${role.toUpperCase()}.`,
+      meta: { oldRole, newRole: role }
+    }).catch(() => {});
+
     // 3. Log + webhook detail ke channel Discord (via roleSync — log audit Verify Role)
     await roleSync.logRoleChange({
       discordId, username, oldRole, newRole: role,
@@ -2089,6 +2379,16 @@ app.put('/api/admin/users/:discordId/active-period', requireAdmin, async (req, r
       dm: true, webhook: false
     }).catch(() => {});
 
+    logActivity({
+      type: 'renewal',
+      username: user.username || discordId,
+      discordId,
+      description: clear
+        ? `Admin mereset masa aktif paket ${user.username || discordId}.`
+        : `Admin memperpanjang masa aktif paket ${user.username || discordId} sampai ${fmtDateTimeWIB(activeUntil)}.`,
+      meta: { role: user.role, activeUntil }
+    }).catch(() => {});
+
     // Webhook kategori "Perpanjangan Paket" — channel Discord terpisah, khusus buat
     // notif tiap kali admin memperpanjang/mereset masa aktif paket user (best-effort).
     webhookManager.sendCategoryWebhook('renewal', {
@@ -2124,6 +2424,14 @@ app.put('/api/admin/users/:discordId/reset-quota', requireAdmin, async (req, res
       { $set: { downloadUsage: { date: todayDateStrJakarta(), game: 0, bypass: 0 } } }
     );
     pushAccountUpdate(discordId).catch(() => {});
+
+    logActivity({
+      type: 'admin_reset_quota',
+      username: req.admin?.username || 'Admin',
+      description: `Admin mereset limit download harian ${user.username || discordId}.`,
+      meta: { discordId }
+    }).catch(() => {});
+
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2141,6 +2449,12 @@ app.post('/api/admin/notifications/send', requireAdmin, async (req, res) => {
 
     if (!target || target === 'all') {
       const count = await notifyAllUsers({ title, message, dm: !!dm, webhook: webhook !== false });
+      logActivity({
+        type: 'announcement',
+        username: req.admin?.username || 'Admin',
+        description: `Admin mengirim broadcast "${title}" ke ${count} user.`,
+        meta: { target: 'all', title, sentTo: count }
+      }).catch(() => {});
       return res.json({ success: true, sentTo: count });
     }
 
@@ -2154,6 +2468,12 @@ app.post('/api/admin/notifications/send', requireAdmin, async (req, res) => {
       ],
       dm: !!dm, webhook: !!webhook
     });
+    logActivity({
+      type: 'announcement',
+      username: req.admin?.username || 'Admin',
+      description: `Admin mengirim pesan "${title}" ke ${user.username || target}.`,
+      meta: { target, title }
+    }).catch(() => {});
     res.json({ success: true, sentTo: 1 });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2520,8 +2840,38 @@ wss.on('connection', (ws, req) => {
   try {
     const url = new URL(req.url, 'http://localhost');
     const token = url.searchParams.get('token');
+    const isAdminConn = url.searchParams.get('admin') === '1';
     if (!token || !JWT_SECRET) { ws.close(4001, 'no token'); return; }
     const payload = jwt.verify(token, JWT_SECRET);
+
+    // ── Koneksi Dashboard Admin ── token admin lama (password bersama, tanpa
+    // discordId) ATAU token akun Discord yang role-nya 'admin' di DB.
+    if (isAdminConn) {
+      (async () => {
+        try {
+          if (payload.role === 'admin' && !payload.discordId) {
+            // token password admin — valid langsung, tidak terikat akun manapun
+          } else if (payload.discordId) {
+            if (!db) { ws.close(4001, 'db not ready'); return; }
+            const user = await db.collection('users').findOne({ discordId: payload.discordId });
+            if (!user || user.role !== 'admin') { ws.close(4003, 'not admin'); return; }
+          } else {
+            ws.close(4001, 'invalid token'); return;
+          }
+
+          wsRegisterAdmin(ws);
+          ws.send(JSON.stringify({ event: 'connected', data: { ok: true } }));
+          ws.on('close', () => wsUnregisterAdmin(ws));
+          ws.on('error', () => wsUnregisterAdmin(ws));
+          ws.isAlive = true;
+          ws.on('pong', () => { ws.isAlive = true; });
+        } catch (e) {
+          ws.close(4001, 'auth failed');
+        }
+      })();
+      return;
+    }
+
     const discordId = payload.discordId;
     if (!discordId) { ws.close(4001, 'invalid token'); return; }
 
@@ -2556,6 +2906,10 @@ setInterval(() => {
 // ══════════════════════════════════════════════════════════════════════════
 process.on('unhandledRejection', (reason) => {
   console.error('[Unhandled Rejection]', reason);
+  logActivity({
+    type: 'system_error',
+    description: `Unhandled Promise Rejection: ${String(reason?.message || reason).slice(0, 200)}`
+  }).catch(() => {});
   webhookManager.sendCategoryWebhook('system_error', {
     embed: buildEmbed({
       status: 'error',
@@ -2570,6 +2924,10 @@ process.on('unhandledRejection', (reason) => {
 });
 process.on('uncaughtException', (err) => {
   console.error('[Uncaught Exception]', err);
+  logActivity({
+    type: 'system_error',
+    description: `Uncaught Exception: ${String(err?.message || err).slice(0, 200)}`
+  }).catch(() => {});
   webhookManager.sendCategoryWebhook('system_error', {
     embed: buildEmbed({
       status: 'error',

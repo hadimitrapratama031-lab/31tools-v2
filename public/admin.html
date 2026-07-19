@@ -118,6 +118,7 @@
           </div>
           <div class="stat-card-value" id="dashStatUsers">—</div>
           <div class="stat-card-sub"><span class="badge-up">↑</span>&nbsp;Login hari ini:&nbsp;<b id="dashStatLogins">—</b></div>
+          <div class="stat-card-sub2">User baru: <b id="dashStatUsersToday">—</b> hari ini · <b id="dashStatUsersWeek">—</b> minggu ini</div>
         </div>
         <div class="stat-card">
           <div class="stat-card-glow" style="background:#e64bb8;"></div>
@@ -129,6 +130,7 @@
           </div>
           <div class="stat-card-value" id="dashStatGames">—</div>
           <div class="stat-card-sub">Bypass:&nbsp;<b id="dashStatBypasses">—</b></div>
+          <div class="stat-card-sub2">Aktif: <b id="dashStatGamesActive">—</b> · Nonaktif: <b id="dashStatGamesInactive">—</b> · Punya bypass: <b id="dashStatGamesWithBypass">—</b></div>
         </div>
         <div class="stat-card">
           <div class="stat-card-glow" style="background:#ffd76a;"></div>
@@ -140,6 +142,7 @@
           </div>
           <div class="stat-card-value" id="dashStatGold">—</div>
           <div class="stat-card-sub">Platinum:&nbsp;<b id="dashStatPlat">—</b></div>
+          <div class="stat-card-sub2">Public: <b id="dashStatPublic">—</b> · <b id="dashStatPctGold">—</b>% Gold · <b id="dashStatPctPlat">—</b>% Platinum</div>
         </div>
         <div class="stat-card">
           <div class="stat-card-glow" style="background:#3dd9f5;"></div>
@@ -150,7 +153,8 @@
             Total Install
           </div>
           <div class="stat-card-value" id="dashStatInstalls">—</div>
-          <div class="stat-card-sub">Minggu ini:&nbsp;<b id="dashStatWeek">—</b>&nbsp;login</div>
+          <div class="stat-card-sub">Minggu ini:&nbsp;<b id="dashStatWeek">—</b>&nbsp;install</div>
+          <div class="stat-card-sub2">Hari ini: <b id="dashStatInstallsToday">—</b> · Bulan ini: <b id="dashStatInstallsMonth">—</b></div>
         </div>
       </div>
 
@@ -158,9 +162,20 @@
         <div style="display:flex;flex-direction:column;gap:16px;">
           <div class="welcome-banner">
             <div>
-              <h2>Selamat datang, Admin! 👋</h2>
+              <h2>Selamat datang, <span id="welcomeAdminName">Admin</span>! 👋</h2>
               <p>Pantau semua aktivitas dan kelola konten dari sini.</p>
-              <button class="btn btn-secondary btn-sm" onclick="loadPage('games')" style="margin-top:4px;">→ Kelola Game</button>
+              <div class="welcome-meta">
+                <span class="welcome-meta-item">👤 <b id="welcomeAdminRole">—</b></span>
+                <span class="welcome-meta-item">🕒 Login terakhir: <b id="welcomeLastLogin">—</b></span>
+              </div>
+              <div class="quick-actions">
+                <button class="btn btn-secondary btn-sm" onclick="loadPage('games')">🎮 Kelola Game</button>
+                <button class="btn btn-secondary btn-sm" onclick="loadPage('users')">👥 Kelola User</button>
+                <button class="btn btn-secondary btn-sm" onclick="loadPage('users')">📦 Paket</button>
+                <button class="btn btn-secondary btn-sm" onclick="loadPage('history')">🕓 Histori</button>
+                <button class="btn btn-secondary btn-sm" onclick="quickActionRequestGame()">🎯 Request Game</button>
+                <button class="btn btn-secondary btn-sm" onclick="quickActionBroadcast()">📢 Broadcast</button>
+              </div>
             </div>
             <div class="welcome-jellyfish">🎮</div>
             <div class="welcome-banner-orb"></div>
@@ -216,18 +231,22 @@
         <div class="mini-stat">
           <div class="mini-stat-label"><span class="mini-stat-dot" style="background:#7b5cff;"></span>Paket Aktif</div>
           <div class="mini-stat-value" id="miniActivePackage">—</div>
+          <div class="mini-stat-sub">Public <b id="miniPubCount">—</b> · Gold <b id="miniGoldCount">—</b> · Platinum <b id="miniPlatCount">—</b></div>
         </div>
         <div class="mini-stat">
           <div class="mini-stat-label"><span class="mini-stat-dot" style="background:#e64bb8;"></span>Install Total</div>
           <div class="mini-stat-value" id="miniInstallTotal">—</div>
+          <div class="mini-stat-sub">Hari ini <b id="miniInstallToday">—</b> · Minggu <b id="miniInstallWeek">—</b> · Bulan <b id="miniInstallMonth">—</b></div>
         </div>
         <div class="mini-stat">
           <div class="mini-stat-label"><span class="mini-stat-dot" style="background:#ffd76a;"></span>Total Game</div>
           <div class="mini-stat-value" id="miniTotalGames">—</div>
+          <div class="mini-stat-sub">Aktif <b id="miniGamesActive">—</b> · Nonaktif <b id="miniGamesInactive">—</b></div>
         </div>
         <div class="mini-stat">
           <div class="mini-stat-label"><span class="mini-stat-dot" style="background:#3dd9f5;"></span>Total Bypass</div>
           <div class="mini-stat-value" id="miniTotalBypasses">—</div>
+          <div class="mini-stat-sub">Aktif <b id="miniBypassActive">—</b> · Nonaktif <b id="miniBypassInactive">—</b></div>
         </div>
       </div>
     </section>

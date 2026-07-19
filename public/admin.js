@@ -63,6 +63,7 @@ async function doLogin() {
 
 document.getElementById('btnAdminLogout').addEventListener('click', () => {
   localStorage.removeItem('adminToken');
+  if (_adminWs) { try { _adminWs.onclose = null; _adminWs.close(); } catch {} }
   location.reload();
 });
 
@@ -146,6 +147,7 @@ function showShell() {
   document.getElementById('loginWrap').style.display = 'none';
   document.getElementById('shell').style.display = 'flex';
   loadPage('games');
+  connectAdminWS();
 }
 
 // ── Cek sesi saat halaman di-refresh/dibuka ──
@@ -224,62 +226,120 @@ function loadPage(page) {
 document.getElementById('btnAddItem').addEventListener('click', () => openItemModal(currentPage, null));
 
 // ─── DASHBOARD ───
+let _dashboardLoaded = false;
+
+function setDashLoading(isLoading) {
+  document.querySelectorAll('#pageDashboard .stat-card-value, #pageDashboard .mini-stat-value').forEach(el => {
+    el.classList.toggle('skeleton', isLoading && el.textContent === '—');
+  });
+}
+
 async function renderDashboard() {
+  setDashLoading(true);
   try {
-    const d = await api('/api/admin/dashboard').catch(() => null)
-           || await api('/api/admin/stats').catch(() => ({}));
-
-    // Stats
-    setText('dashStatUsers',    d.totalUsers    ?? d.users    ?? '—');
-    setText('dashStatLogins',   d.loginsToday   ?? '—');
-    setText('dashStatGames',    d.totalGames    ?? '—');
-    setText('dashStatBypasses', d.totalBypasses ?? '—');
-    setText('dashStatGold',     d.activeGold    ?? '—');
-    setText('dashStatPlat',     d.activePlatinum ?? '—');
-    setText('dashStatInstalls', d.totalInstalls ?? '—');
-    setText('dashStatWeek',     d.loginsWeek    ?? '—');
-
-    // Mini stats
-    const totalPremium = (d.activeGold ?? 0) + (d.activePlatinum ?? 0);
-    setText('miniActivePackage', totalPremium || '—');
-    setText('miniInstallTotal',  d.totalInstalls ?? '—');
-    setText('miniTotalGames',    d.totalGames ?? '—');
-    setText('miniTotalBypasses', d.totalBypasses ?? '—');
-
-    // Donut
-    const totalU = (d.totalUsers ?? 0) || 1;
-    const gold   = d.activeGold ?? 0;
-    const plat   = d.activePlatinum ?? 0;
-    const pub    = Math.max(0, totalU - gold - plat);
-    const CIRC   = 2 * Math.PI * 48; // ~301.6
-    const pctPub  = (pub  / totalU) * CIRC;
-    const pctGold = (gold / totalU) * CIRC;
-    const pctPlat = (plat / totalU) * CIRC;
-    setDonut('donutPublic', pctPub,  0);
-    setDonut('donutGold',   pctGold, pctPub);
-    setDonut('donutPlat',   pctPlat, pctPub + pctGold);
-    setText('donutPct', totalU > 0 ? Math.round(((gold + plat) / totalU) * 100) + '%' : '—');
-    setText('donutLegPublic', pub);
-    setText('donutLegGold',   gold);
-    setText('donutLegPlat',   plat);
-
-    // Chart subtitle
-    document.getElementById('dashChartSub').textContent = `Total login: ${d.loginsWeek ?? '—'} minggu ini`;
-
-    // Draw login chart
-    if (d.loginTrend) drawLoginChart(d.loginTrend);
-
-    // Recent activity
-    renderActivity(d.recentActivity || d.loginTrend || []);
-
+    const d = await api('/api/admin/dashboard');
+    applyDashboardData(d);
+    _dashboardLoaded = true;
   } catch(e) {
     showToast('Gagal memuat dashboard: ' + e.message, 'error');
+  } finally {
+    setDashLoading(false);
   }
+}
+
+function bump(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.classList.remove('stat-bump');
+  void el.offsetWidth; // restart animasi
+  el.classList.add('stat-bump');
+}
+
+function applyDashboardData(d) {
+  // Welcome panel
+  if (d.admin) {
+    setText('welcomeAdminName', d.admin.username || 'Admin');
+    setText('welcomeAdminRole', d.admin.role || '—');
+    setText('welcomeLastLogin', d.admin.lastLoginAt ? timeAgo(d.admin.lastLoginAt) : 'Sesi ini');
+    const sideName = document.querySelector('.sidebar-user-name');
+    const sideRole = document.querySelector('.sidebar-user-role');
+    if (sideName) sideName.textContent = d.admin.username || 'Administrator';
+    if (sideRole) sideRole.textContent = d.admin.role || 'Super Admin';
+  }
+
+  // Total Users
+  setText('dashStatUsers',     d.totalUsers    ?? '—');
+  setText('dashStatLogins',    d.loginsToday   ?? '—');
+  setText('dashStatUsersToday', d.usersToday   ?? '—');
+  setText('dashStatUsersWeek',  d.usersWeek    ?? '—');
+
+  // Total Game
+  setText('dashStatGames',           d.totalGames    ?? '—');
+  setText('dashStatBypasses',        d.totalBypasses ?? '—');
+  setText('dashStatGamesActive',     d.gamesActive   ?? '—');
+  setText('dashStatGamesInactive',   d.gamesInactive ?? '—');
+  setText('dashStatGamesWithBypass', d.gamesWithBypass ?? '—');
+
+  // Gold Aktif
+  setText('dashStatGold',     d.activeGold    ?? '—');
+  setText('dashStatPlat',     d.activePlatinum ?? '—');
+  setText('dashStatPublic',   d.totalPublic   ?? '—');
+  setText('dashStatPctGold',  d.pctGold       ?? '—');
+  setText('dashStatPctPlat',  d.pctPlatinum   ?? '—');
+
+  // Total Install
+  setText('dashStatInstalls',      d.totalInstalls  ?? '—');
+  setText('dashStatWeek',          d.installsWeek   ?? '—');
+  setText('dashStatInstallsToday', d.installsToday  ?? '—');
+  setText('dashStatInstallsMonth', d.installsMonth  ?? '—');
+
+  // Mini stats (Statistik Bawah)
+  setText('miniActivePackage', d.premiumTotal ?? '—');
+  setText('miniPubCount',  d.totalPublic    ?? '—');
+  setText('miniGoldCount', d.activeGold     ?? '—');
+  setText('miniPlatCount', d.activePlatinum ?? '—');
+
+  setText('miniInstallTotal', d.totalInstalls ?? '—');
+  setText('miniInstallToday', d.installsToday ?? '—');
+  setText('miniInstallWeek',  d.installsWeek  ?? '—');
+  setText('miniInstallMonth', d.installsMonth ?? '—');
+
+  setText('miniTotalGames',    d.totalGames    ?? '—');
+  setText('miniGamesActive',   d.gamesActive   ?? '—');
+  setText('miniGamesInactive', d.gamesInactive ?? '—');
+
+  setText('miniTotalBypasses',   d.totalBypasses    ?? '—');
+  setText('miniBypassActive',    d.bypassesActive   ?? '—');
+  setText('miniBypassInactive',  d.bypassesInactive ?? '—');
+
+  // Donut — Distribusi Role
+  const totalU = (d.totalUsers ?? 0) || 1;
+  const gold   = d.activeGold ?? 0;
+  const plat   = d.activePlatinum ?? 0;
+  const pub    = d.totalPublic ?? Math.max(0, totalU - gold - plat);
+  const CIRC   = 2 * Math.PI * 48; // ~301.6
+  setDonut('donutPublic', (pub  / totalU) * CIRC, 0);
+  setDonut('donutGold',   (gold / totalU) * CIRC, (pub / totalU) * CIRC);
+  setDonut('donutPlat',   (plat / totalU) * CIRC, ((pub + gold) / totalU) * CIRC);
+  setText('donutPct', totalU > 0 ? Math.round(((gold + plat) / totalU) * 100) + '%' : '—');
+  setText('donutLegPublic', pub);
+  setText('donutLegGold',   gold);
+  setText('donutLegPlat',   plat);
+
+  // Chart subtitle + grafik login
+  document.getElementById('dashChartSub').textContent = `Total login: ${d.loginsWeek ?? '—'} minggu ini` +
+    (typeof d.loginsPrevWeek === 'number' ? ` (minggu lalu: ${d.loginsPrevWeek})` : '');
+  if (d.loginTrend) drawLoginChart(d.loginTrend);
+
+  // Aktivitas Terbaru
+  renderActivity(d.recentActivity || []);
 }
 
 function setText(id, val) {
   const el = document.getElementById(id);
-  if (el) el.textContent = val;
+  if (!el) return;
+  el.classList.remove('skeleton');
+  if (el.textContent !== String(val)) { el.textContent = val; bump(id); }
 }
 
 function setDonut(id, dash, offset) {
@@ -290,6 +350,26 @@ function setDonut(id, dash, offset) {
   el.style.strokeDashoffset = -offset;
 }
 
+const ACTIVITY_ICON_FALLBACK = {
+  login: '🔑', logout: '🚪', install: '⬇️', download_failed: '⚠️',
+  purchase: '💳', renewal: '🔄', request_game: '🎯',
+  admin_add_game: '➕', admin_edit_game: '✏️', admin_delete_game: '🗑️',
+  admin_add_bypass: '➕', admin_edit_bypass: '✏️', admin_delete_bypass: '🗑️',
+  admin_reset_quota: '♻️', announcement: '📢', system_error: '🚨'
+};
+
+function activityItemHtml(item) {
+  const icon = item.icon || ACTIVITY_ICON_FALLBACK[item.type] || 'ℹ️';
+  const desc = escapeHtml(item.description || item.type || '');
+  const when = escapeHtml(timeAgo(item.createdAt));
+  const isError = item.type === 'system_error' || item.type === 'download_failed';
+  return `<div class="activity-item${isError ? ' activity-item-error' : ''}" data-id="${item._id || ''}">
+    <span class="activity-icon">${icon}</span>
+    <span class="activity-text">${desc}</span>
+    <span class="activity-time" data-created="${escapeHtml(item.createdAt || '')}">${when}</span>
+  </div>`;
+}
+
 function renderActivity(data) {
   const el = document.getElementById('dashActivity');
   if (!el) return;
@@ -297,15 +377,83 @@ function renderActivity(data) {
     el.innerHTML = '<div class="activity-item"><span style="color:var(--text-faint);font-size:12.5px;">Belum ada aktivitas.</span></div>';
     return;
   }
-  // loginTrend format: { _id: 'YYYY-MM-DD', count: N }
-  const colors = ['#7b5cff','#e64bb8','#3dd9f5','#ffd76a','#4ade80','#f87171','#a78bfa'];
-  el.innerHTML = data.slice(0, 6).map((item, i) => {
-    const label = item._id ? `${item._id}: ${item.count} login` : (item.text || JSON.stringify(item));
-    return `<div class="activity-item">
-      <span class="activity-dot" style="background:${colors[i % colors.length]};"></span>
-      <span class="activity-text">${escapeHtml(String(label))}</span>
-    </div>`;
-  }).join('');
+  el.innerHTML = data.slice(0, 20).map(activityItemHtml).join('');
+}
+
+// Sisipkan satu aktivitas baru secara realtime (dipanggil dari event WebSocket),
+// tanpa perlu nge-fetch ulang seluruh daftar aktivitas dari server.
+function prependActivity(item) {
+  const el = document.getElementById('dashActivity');
+  if (!el) return;
+  const empty = el.querySelector('.activity-item:only-child');
+  if (empty && !el.querySelector('[data-id]')) el.innerHTML = '';
+  const wrap = document.createElement('div');
+  wrap.innerHTML = activityItemHtml(item);
+  const node = wrap.firstElementChild;
+  node.classList.add('activity-item-new');
+  el.insertBefore(node, el.firstChild);
+  // Batasi 20 aktivitas terbaru yang ditampilkan
+  while (el.children.length > 20) el.removeChild(el.lastElementChild);
+}
+
+// Refresh label "x menit yang lalu" tiap 30 detik biar tetap akurat tanpa refetch.
+setInterval(() => {
+  document.querySelectorAll('#dashActivity .activity-time[data-created]').forEach(elTime => {
+    const created = elTime.getAttribute('data-created');
+    if (created) elTime.textContent = timeAgo(created);
+  });
+}, 30000);
+
+// ─── QUICK ACTIONS (panel Selamat Datang) ───
+function quickActionBroadcast() {
+  loadPage('users');
+  setTimeout(() => {
+    if (typeof openSendNotifModal === 'function') openSendNotifModal(null, null);
+  }, 150);
+}
+
+// Catatan: "Request Game" belum jadi fitur tersendiri di aplikasi ini (belum ada
+// alur user mengajukan game ke admin) — tombol ini sengaja jujur soal itu,
+// bukan pura-pura membuka halaman yang tidak ada.
+function quickActionRequestGame() {
+  showToast('Fitur "Request Game" belum tersedia di aplikasi ini — beri tahu saya kalau kamu mau ini dibangun.', 'default');
+}
+
+// ─── REALTIME — WebSocket Dashboard Admin ───
+let _adminWs = null;
+let _adminWsRetry = 0;
+function connectAdminWS() {
+  const token = localStorage.getItem('adminToken');
+  if (!token) return;
+  try {
+    const proto = location.protocol === 'https:' ? 'wss:' : 'ws:';
+    _adminWs = new WebSocket(`${proto}//${location.host}/ws?admin=1&token=${encodeURIComponent(token)}`);
+    _adminWs.onopen = () => { _adminWsRetry = 0; };
+    _adminWs.onmessage = (ev) => {
+      let msg; try { msg = JSON.parse(ev.data); } catch { return; }
+      if (msg.event === 'activity') {
+        if (currentPage === 'dashboard') {
+          prependActivity(msg.data);
+          refreshDashboardStatsDebounced();
+        }
+      }
+    };
+    _adminWs.onclose = () => {
+      _adminWsRetry = Math.min(_adminWsRetry + 1, 6);
+      setTimeout(connectAdminWS, 1000 * _adminWsRetry);
+    };
+    _adminWs.onerror = () => { try { _adminWs.close(); } catch {} };
+  } catch (e) { /* biarkan, akan dicoba lagi dari onclose */ }
+}
+
+// Debounce re-fetch angka statistik (bukan activity feed, yang sudah realtime
+// lewat prependActivity) supaya banyak event beruntun tidak menembak API berkali-kali.
+let _dashRefreshTimer = null;
+function refreshDashboardStatsDebounced() {
+  clearTimeout(_dashRefreshTimer);
+  _dashRefreshTimer = setTimeout(() => {
+    api('/api/admin/dashboard').then(applyDashboardData).catch(() => {});
+  }, 1200);
 }
 
 function drawLoginChart(trend) {

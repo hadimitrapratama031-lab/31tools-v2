@@ -1867,9 +1867,21 @@ function showAppNotifToast(n) {
   if (!el) { el = document.createElement('div'); el.className = 'app-notif-toast'; document.body.appendChild(el); }
   const icon = NOTIF_ICON[n.type] || '🔔';
   el.innerHTML = `<span class="ant-icon">${icon}</span><div><div class="ant-title">${escapeHtml(n.title)}</div><div class="ant-msg">${escapeHtml(n.message)}</div></div>`;
-  requestAnimationFrame(() => el.classList.add('show'));
+
+  // PENTING: kalau ada timer lama yang masih jalan (notif sebelumnya belum sempat
+  // hilang pas notif baru ini datang), timer lama itu HARUS dibatalkan dulu sebelum
+  // bikin timer baru — kalau tidak, timer lama bisa nutup toast ini prematur ATAU
+  // (kebalikannya) numpuk berkali-kali dan kesannya toast "tidak pernah hilang".
   clearTimeout(_notifToastTimer);
-  _notifToastTimer = setTimeout(() => el.classList.remove('show'), 6000);
+  el.classList.remove('show');
+  // Buang & paksa reflow dulu sebelum nambah 'show' lagi, supaya kalau toast
+  // sebelumnya baru saja ditutup (atau masih kebuka), animasi slide-in-nya tetap
+  // jalan bersih dari awal, bukan cuma diem di posisi lama.
+  void el.offsetWidth;
+  requestAnimationFrame(() => el.classList.add('show'));
+
+  // Selalu hilang otomatis tepat 5 detik setelah muncul.
+  _notifToastTimer = setTimeout(() => { el.classList.remove('show'); }, 5000);
 }
 
 function showRoleUpdateToast(oldRole, newRole) {
