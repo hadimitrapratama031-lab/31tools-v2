@@ -1256,6 +1256,44 @@ app.get('/api/admin/users', requireAdmin, async (req, res) => {
 // Kalau sync ke Discord gagal (misal role belum di-mapping, atau usernya sudah bukan
 // member Discord), role di APP TETAP berhasil diubah — cuma sync Discord-nya yang
 // dilaporkan gagal di response, biar admin tau tapi gak nge-block operasi utamanya.
+
+// ──────────────────────────────────────────────────────────────────────────
+// DISCORD DM HELPER — kirim DM embed/teks ke user langsung via Bot Token
+// ──────────────────────────────────────────────────────────────────────────
+async function sendDiscordDM(userId, contentOrPayload) {
+  const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
+  if (!BOT_TOKEN) {
+    console.warn('[DM] DISCORD_BOT_TOKEN tidak diset, DM tidak terkirim ke', userId);
+    return { success: false, reason: 'no_bot_token' };
+  }
+  if (!userId) return { success: false, reason: 'no_user_id' };
+  try {
+    const dmRes = await axios.post(
+      'https://discord.com/api/v10/users/@me/channels',
+      { recipient_id: userId },
+      { headers: { Authorization: `Bot ${BOT_TOKEN}`, 'Content-Type': 'application/json' } }
+    );
+    const channelId = dmRes.data.id;
+    const payload = typeof contentOrPayload === 'string'
+      ? { content: contentOrPayload }
+      : contentOrPayload;
+    await axios.post(
+      `https://discord.com/api/v10/channels/${channelId}/messages`,
+      payload,
+      { headers: { Authorization: `Bot ${BOT_TOKEN}`, 'Content-Type': 'application/json' } }
+    );
+    console.log(`[DM] ✅ Terkirim ke userId=${userId}`);
+    return { success: true };
+  } catch(e) {
+    const status = e.response?.status;
+    const errMsg = e.response?.data?.message || e.message;
+    const errCode = e.response?.data?.code;
+    // 50007 = DM dimatiin user, 10013 = unknown user — bukan error fatal
+    console.warn(`[DM] ❌ Gagal ke userId=${userId} | HTTP ${status} | code=${errCode} | ${errMsg}`);
+    return { success: false, status, errCode, errMsg };
+  }
+}
+
 app.put('/api/admin/users/:discordId/role', requireAdmin, async (req, res) => {
   const { role } = req.body;
   if (!ROLE_LEVEL.hasOwnProperty(role)) return res.status(400).json({ error: 'Role tidak valid.' });
@@ -1263,25 +1301,64 @@ app.put('/api/admin/users/:discordId/role', requireAdmin, async (req, res) => {
   const user = await db.collection('users').findOne({ discordId: req.params.discordId });
   if (!user) return res.status(404).json({ error: 'User tidak ditemukan.' });
 
-  const oldRole = user.role;
+  const oldRole  = user.role;
+  const discordId = req.params.discordId;
+  const username  = user.username || discordId;
+
   await db.collection('users').updateOne(
-    { discordId: req.params.discordId },
+    { discordId },
     { $set: { role, roleUpdatedAt: new Date() } }
   );
 
   let discordSync = null;
+  let dmResult    = null;
+
   if (oldRole !== role) {
-    discordSync = await roleSync.syncAppRoleToDiscord(req.params.discordId, role);
-    await roleSync.logRoleChange({
-      discordId: req.params.discordId,
-      username: user.username,
-      oldRole, newRole: role,
-      source: 'admin',
-      discordSync
+    // 1. Sinkron role ke Discord (add tier baru, cabut tier lama)
+    discordSync = await roleSync.syncAppRoleToDiscord(discordId, role);
+
+    // 2. Kirim DM embed ke user
+    const ROLE_COLOR = { public: 0x8f8ab0, gold: 0xffd76a, platinum: 0xa78bfa };
+    const ROLE_ICON  = { public: '🌐', gold: '🥇', platinum: '💎' };
+    const ROLE_DESC  = {
+      public:   'Akses Public — limit harian berlaku.',
+      gold:     'Akses Gold — limit harian lebih besar.',
+      platinum: 'Akses Platinum — download UNLIMITED!'
+    };
+    dmResult = await sendDiscordDM(discordId, {
+      embeds: [{
+        color: ROLE_COLOR[role] ?? 0xa78bfa,
+        title: `${ROLE_ICON[role] || '🎮'} Paket Kamu Diperbarui!`,
+        description: `Halo **${username}**, paket kamu telah diubah oleh Admin.`,
+        fields: [
+          { name: '🔄 Perubahan',  value: `${ROLE_ICON[oldRole] || '❓'} **${oldRole}** → ${ROLE_ICON[role] || '🌐'} **${role}**`, inline: false },
+          { name: 'ℹ️ Info Paket', value: ROLE_DESC[role] || role, inline: false },
+        ],
+        footer: { text: `${process.env.APP_NAME || 'App'} · Notifikasi Paket` },
+        timestamp: new Date().toISOString()
+      }]
     });
+
+    // 3. Log + webhook detail ke channel Discord (via roleSync)
+    await roleSync.logRoleChange({
+      discordId, username, oldRole, newRole: role,
+      source: 'admin',
+      discordSync,
+      dmResult
+    });
+
+    // 4. Realtime ke client — user tidak perlu reload, role langsung terupdate
+    // Cara: tandai di DB field realtimePush, diambil pollingnya refreshCurrentUserRole (tiap 15 detik)
+    // Tidak perlu socket — /api/me sudah di-hit tiap 15 detik dari client
   }
 
-  res.json({ success: true, discordSync });
+  res.json({
+    success: true,
+    discordSync,
+    dmSent: dmResult?.success ?? null,
+    roleAssigned: discordSync?.added ?? null,
+    roleRemoved: discordSync?.removed ?? []
+  });
 });
 
 // ══════════════════════════════════════════════════════════════════════════

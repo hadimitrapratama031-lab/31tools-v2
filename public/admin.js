@@ -1247,6 +1247,7 @@ async function renderVerifyRole() {
 }
 
 async function loadRoleSyncSettings() {
+  const pubSel  = document.getElementById('vrRolePublic');
   const goldSel = document.getElementById('vrRoleGold');
   const platSel = document.getElementById('vrRolePlatinum');
   const webhookInput = document.getElementById('vrWebhookUrl');
@@ -1263,9 +1264,10 @@ async function loadRoleSyncSettings() {
     const optionsHtml = ['<option value="">— pilih role Discord —</option>']
       .concat(discordRoles.map(r => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.name)}</option>`))
       .join('');
+    if (pubSel)  { pubSel.innerHTML  = optionsHtml; pubSel.value  = settings.discordRoleMap?.public   || ''; }
     goldSel.innerHTML = optionsHtml;
     platSel.innerHTML = optionsHtml;
-    goldSel.value = settings.discordRoleMap?.gold || '';
+    goldSel.value = settings.discordRoleMap?.gold     || '';
     platSel.value = settings.discordRoleMap?.platinum || '';
     webhookInput.value = settings.webhookUrl || '';
     autoSyncEl.checked = settings.autoSyncFromDiscord !== false;
@@ -1297,6 +1299,7 @@ function wireVerifyRoleButtons() {
 
   document.getElementById('btnSaveRoleMap').addEventListener('click', async () => {
     const btn = document.getElementById('btnSaveRoleMap');
+    const publicRole = (document.getElementById('vrRolePublic')?.value || '').trim() || null;
     const gold = document.getElementById('vrRoleGold').value;
     const platinum = document.getElementById('vrRolePlatinum').value;
     const autoSyncFromDiscord = document.getElementById('vrAutoSync').checked;
@@ -1305,7 +1308,7 @@ function wireVerifyRoleButtons() {
     try {
       await api('/api/admin/role-sync/settings', {
         method: 'PUT',
-        body: JSON.stringify({ discordRoleMap: { gold, platinum }, autoSyncFromDiscord, resetRoleOnLeave })
+        body: JSON.stringify({ discordRoleMap: { public: publicRole, gold, platinum }, autoSyncFromDiscord, resetRoleOnLeave })
       });
       showToast('Mapping role berhasil disimpan.', 'success');
     } catch (e) {

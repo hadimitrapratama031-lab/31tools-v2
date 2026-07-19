@@ -39,8 +39,9 @@ module.exports = function createRoleSync({ getDb, ROLE_LEVEL }) {
   const GUILD_ID = process.env.DISCORD_GUILD_ID || '';
   const APP_NAME = process.env.APP_NAME || 'Nova Launcher';
 
-  // Tier role yang disinkron (di luar 'public' — public artinya "gak punya role tier apapun")
-  const TIERS = Object.keys(ROLE_LEVEL).filter(r => r !== 'public');
+  // Semua tier yang bisa disinkron — termasuk 'public' kalau roleId-nya di-set
+  const ALL_TIERS = Object.keys(ROLE_LEVEL); // ['public','gold','platinum']
+  const TIERS     = ALL_TIERS.filter(r => r !== 'public'); // ['gold','platinum'] — buat logika lama yg exclude public
 
   const gatewayStatus = { connected: false, error: null, guildName: null, guildId: GUILD_ID || null };
   let client = null;
@@ -111,7 +112,8 @@ module.exports = function createRoleSync({ getDb, ROLE_LEVEL }) {
     return {
       _id: SETTINGS_ID,
       discordRoleMap: {
-        gold: process.env.DISCORD_ROLE_ID_GOLD || null,
+        public:   process.env.DISCORD_ROLE_ID_PUBLIC   || null,
+        gold:     process.env.DISCORD_ROLE_ID_GOLD     || null,
         platinum: process.env.DISCORD_ROLE_ID_PLATINUM || null
       },
       webhookUrl: process.env.DISCORD_WEBHOOK_URL || null,
@@ -127,8 +129,9 @@ module.exports = function createRoleSync({ getDb, ROLE_LEVEL }) {
     const current = await getSettings();
     const next = {
       discordRoleMap: {
-        gold: patch.discordRoleMap?.gold !== undefined ? (patch.discordRoleMap.gold || null) : current.discordRoleMap?.gold || null,
-        platinum: patch.discordRoleMap?.platinum !== undefined ? (patch.discordRoleMap.platinum || null) : current.discordRoleMap?.platinum || null
+        public:   patch.discordRoleMap?.public   !== undefined ? (patch.discordRoleMap.public   || null) : current.discordRoleMap?.public   || null,
+        gold:     patch.discordRoleMap?.gold      !== undefined ? (patch.discordRoleMap.gold     || null) : current.discordRoleMap?.gold     || null,
+        platinum: patch.discordRoleMap?.platinum  !== undefined ? (patch.discordRoleMap.platinum || null) : current.discordRoleMap?.platinum  || null
       },
       webhookUrl: patch.webhookUrl !== undefined ? (patch.webhookUrl || null) : (current.webhookUrl || null),
       autoSyncFromDiscord: patch.autoSyncFromDiscord !== undefined ? !!patch.autoSyncFromDiscord : (current.autoSyncFromDiscord !== false),
@@ -165,21 +168,40 @@ module.exports = function createRoleSync({ getDb, ROLE_LEVEL }) {
     }
   }
 
-  function roleChangeEmbed({ username, discordId, oldRole, newRole, source, note }) {
+  function roleChangeEmbed({ username, discordId, oldRole, newRole, source, note, discordSync, dmResult }) {
     const SOURCE_LABEL = {
-      admin: '🛠️ Diubah manual oleh Admin (set paket)',
-      discord: '💬 Mengikuti perubahan role di Discord',
+      admin:      '🛠️ Diubah manual oleh Admin (set paket)',
+      discord:    '💬 Mengikuti perubahan role di Discord',
       left_guild: '🚪 User keluar dari server Discord',
-      resync: '🔄 Full Resync'
+      resync:     '🔄 Full Resync'
     };
+    const fields = [
+      { name: '👤 User',        value: `\`${username || discordId}\``, inline: true },
+      { name: '🆔 Discord ID',  value: `\`${discordId}\``,            inline: true },
+      { name: '📤 Sumber',      value: SOURCE_LABEL[source] || source, inline: false },
+      { name: '🔄 Perubahan Role', value: `${ROLE_ICON[oldRole] || '❓'} **${oldRole || '—'}** → ${ROLE_ICON[newRole] || '🌐'} **${newRole}**`, inline: false },
+    ];
+
+    // Tambah info Discord sync kalau ada
+    if (discordSync) {
+      const syncStatus = discordSync.ok
+        ? `✅ Berhasil${discordSync.added ? ` (add: ${ROLE_ICON[discordSync.added]} ${discordSync.added})` : ''}${discordSync.removed?.length ? `, cabut: ${discordSync.removed.join(', ')}` : ''}`
+        : `❌ Gagal — ${discordSync.reason || 'unknown'}${discordSync.errors?.length ? ` (${discordSync.errors.join('; ')})` : ''}`;
+      fields.push({ name: '🔗 Sync Discord', value: syncStatus, inline: false });
+    }
+
+    // Tambah info DM kalau ada
+    if (dmResult) {
+      fields.push({ name: '💬 DM ke User', value: dmResult.success ? '✅ Terkirim' : `❌ Gagal (${dmResult.errMsg || dmResult.reason || 'unknown'})`, inline: true });
+    }
+
+    if (note) fields.push({ name: '📝 Catatan', value: note, inline: false });
+
     return {
-      title: `${ROLE_ICON[newRole] || '🌐'} Role diperbarui: ${username}`,
-      description: `**${oldRole || '—'}** → **${newRole}**\n${SOURCE_LABEL[source] || ''}${note ? `\n${note}` : ''}`,
+      title: `${ROLE_ICON[newRole] || '🌐'} Role Diperbarui: ${username || discordId}`,
+      description: `Paket user berhasil diubah menjadi **${newRole}**`,
       color: ROLE_COLOR[newRole] ?? 0xa78bfa,
-      fields: [
-        { name: 'Discord ID', value: `\`${discordId}\``, inline: true },
-        { name: 'Role Baru', value: `${ROLE_ICON[newRole] || ''} ${newRole}`, inline: true }
-      ]
+      fields
     };
   }
 
@@ -187,7 +209,8 @@ module.exports = function createRoleSync({ getDb, ROLE_LEVEL }) {
   function tierFromRoleIds(memberRoleIds, roleMap) {
     const idSet = new Set(memberRoleIds || []);
     // urutan dari level tertinggi ke rendah (ROLE_LEVEL: public 0, gold 1, platinum 2, dst)
-    const sortedTiers = [...TIERS].sort((a, b) => (ROLE_LEVEL[b] ?? 0) - (ROLE_LEVEL[a] ?? 0));
+    // Cek dari tier tertinggi ke terendah, termasuk 'public' kalau ada roleId-nya
+    const sortedTiers = [...ALL_TIERS].sort((a, b) => (ROLE_LEVEL[b] ?? 0) - (ROLE_LEVEL[a] ?? 0));
     for (const tier of sortedTiers) {
       if (roleMap[tier] && idSet.has(roleMap[tier])) return tier;
     }
@@ -206,7 +229,9 @@ module.exports = function createRoleSync({ getDb, ROLE_LEVEL }) {
     }
     const settings = await getSettings();
     const roleMap = settings.discordRoleMap || {};
-    const configuredTiers = TIERS.filter(t => roleMap[t]);
+
+    // Semua tier yang punya roleId ter-konfigurasi (termasuk public kalau ada)
+    const configuredTiers = ALL_TIERS.filter(t => roleMap[t]);
     if (configuredTiers.length === 0) {
       return { ok: false, reason: 'not_configured', added: null, removed: [], errors: [] };
     }
@@ -225,9 +250,11 @@ module.exports = function createRoleSync({ getDb, ROLE_LEVEL }) {
       const roleId = roleMap[tier];
       try {
         if (tier === newRole) {
+          // Assign role tier yang sesuai (kalau belum punya)
           if (!currentRoleIds.has(roleId)) await addMemberRole(discordId, roleId);
           result.added = tier;
         } else if (currentRoleIds.has(roleId)) {
+          // Cabut role tier lain yang masih nempel
           await removeMemberRole(discordId, roleId);
           result.removed.push(tier);
         }
@@ -243,7 +270,7 @@ module.exports = function createRoleSync({ getDb, ROLE_LEVEL }) {
   // Nyatet log histori + kirim webhook. Sinkron ke Discord dipanggil terpisah
   // (biar caller bisa pilih: pas set dari ADMIN, arahnya app→discord; pas
   // terdeteksi dari GATEWAY, arahnya udah discord→app jadi gak perlu push balik).
-  async function logRoleChange({ discordId, username, oldRole, newRole, source, discordSync, note }) {
+  async function logRoleChange({ discordId, username, oldRole, newRole, source, discordSync, note, dmResult }) {
     const db = getDb();
     if (db) {
       await db.collection('roleSyncLogs').insertOne({
@@ -254,7 +281,7 @@ module.exports = function createRoleSync({ getDb, ROLE_LEVEL }) {
         createdAt: new Date()
       });
     }
-    await sendWebhook(roleChangeEmbed({ username, discordId, oldRole, newRole, source, note }));
+    await sendWebhook(roleChangeEmbed({ username, discordId, oldRole, newRole, source, note, discordSync, dmResult }));
   }
 
   // ══════════════════════════════════════════════════════════════════════
