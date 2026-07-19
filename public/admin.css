@@ -1190,6 +1190,86 @@ select.form-input option {
 .hist-empty__text { line-height: 1.6; }
 
 /* ═══════════════════════════════════════════════════════════
+   HISTORI ADMIN — redesign tabel (modern, rapi, responsive)
+   ═══════════════════════════════════════════════════════════ */
+.hist-panel { overflow: visible; }
+
+.hist-toolbar-right {
+  display: flex; align-items: center; gap: 8px; margin-left: auto;
+}
+.hist-select {
+  background: var(--navy-700); border: 1px solid var(--line);
+  color: var(--text-dim); font-size: 12px; font-weight: 600;
+  padding: 8px 10px; border-radius: var(--radius-sm);
+  cursor: pointer; font-family: 'Inter', sans-serif;
+}
+.hist-select:hover { border-color: var(--line-hi); color: var(--text); }
+.hist-select:focus { outline: none; border-color: var(--violet); }
+
+.hist-table-scroll { width: 100%; overflow-x: auto; }
+.hist-table { width: 100%; border-collapse: collapse; font-size: 13px; min-width: 720px; }
+.hist-table thead th {
+  text-align: left; padding: 12px 16px; font-size: 10.5px; font-weight: 700;
+  letter-spacing: .06em; text-transform: uppercase; color: var(--text-faint);
+  border-bottom: 1px solid var(--line); white-space: nowrap;
+}
+.hist-table tbody td {
+  padding: 12px 16px; border-bottom: 1px solid var(--line); vertical-align: middle;
+}
+.hist-row { transition: background .15s; }
+.hist-row:hover td { background: rgba(123,92,255,.05); }
+.hist-table tbody tr:last-child td { border-bottom: none; }
+
+.hist-td-empty { padding: 0 !important; border-bottom: none !important; }
+
+.hist-user-cell { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.hist-avatar {
+  width: 30px; height: 30px; border-radius: 50%; flex-shrink: 0;
+  background: var(--grad-primary); color: #fff; font-size: 11px; font-weight: 800;
+  display: flex; align-items: center; justify-content: center;
+}
+.hist-user-name {
+  font-weight: 600; color: var(--text); font-size: 13px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 160px;
+}
+
+.hist-item-cell { display: flex; align-items: center; gap: 10px; min-width: 0; }
+.hist-item-thumb {
+  width: 40px; height: 26px; border-radius: 6px; object-fit: cover; flex-shrink: 0;
+  background: var(--navy-700); border: 1px solid var(--line);
+}
+.hist-item-thumb--empty {
+  display: flex; align-items: center; justify-content: center; color: var(--text-faint);
+}
+.hist-item-name {
+  font-weight: 600; color: var(--text); font-size: 13px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 220px;
+}
+
+.hist-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 11px; border-radius: 999px; font-size: 11.5px; font-weight: 700;
+  white-space: nowrap;
+}
+.hist-badge--game   { background: rgba(123,92,255,.16); color: #c4b5fd; }
+.hist-badge--bypass { background: rgba(61,217,245,.15); color: var(--cyan); }
+
+.hist-file-count {
+  display: inline-block; font-size: 12px; font-weight: 600; color: var(--text-dim);
+  background: rgba(255,255,255,.05); padding: 4px 10px; border-radius: 999px;
+  white-space: nowrap;
+}
+
+.hist-time-cell { line-height: 1.5; }
+.hist-time-abs { font-size: 12.5px; font-weight: 600; color: var(--text); white-space: nowrap; }
+.hist-time-rel { font-size: 11px; color: var(--text-faint); white-space: nowrap; }
+
+@media (max-width: 720px) {
+  .hist-toolbar-right { width: 100%; margin-left: 0; }
+  .hist-select { flex: 1; }
+}
+
+/* ═══════════════════════════════════════════════════════════
    VERIFY ROLE PAGE
    ═══════════════════════════════════════════════════════════ */
 .page-header-right { display: flex; align-items: center; gap: 10px; }

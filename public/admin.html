@@ -341,7 +341,7 @@
 
       <div class="page-stats" id="historyStats"></div>
 
-      <div class="table-wrap">
+      <div class="table-wrap hist-panel">
         <div class="table-toolbar">
           <div class="table-toolbar-title">📜 Histori Aktivitas</div>
           <div class="table-search">
@@ -351,8 +351,35 @@
           <div class="table-toolbar-filters">
             <div class="filter-chips" id="historyTypeFilter"></div>
           </div>
+          <div class="hist-toolbar-right">
+            <select class="hist-select" id="historySort" title="Urutkan">
+              <option value="newest">Terbaru dulu</option>
+              <option value="oldest">Terlama dulu</option>
+            </select>
+            <select class="hist-select" id="historyPerPage" title="Baris per halaman">
+              <option value="10">10 / halaman</option>
+              <option value="20" selected>20 / halaman</option>
+              <option value="50">50 / halaman</option>
+              <option value="100">100 / halaman</option>
+            </select>
+          </div>
         </div>
-        <table id="tableHistory"></table>
+
+        <div class="hist-table-scroll">
+          <table class="hist-table">
+            <thead>
+              <tr>
+                <th>User</th>
+                <th>Item</th>
+                <th>Tipe</th>
+                <th>File</th>
+                <th>Waktu</th>
+              </tr>
+            </thead>
+            <tbody id="tableHistory"></tbody>
+          </table>
+        </div>
+
         <div class="pagination" id="historyPagination" style="display:none;"></div>
       </div>
     </section>

@@ -532,9 +532,10 @@
   }
   .pkg-badge{
     display:inline-flex;align-items:center;gap:6px;
-    padding:4px 10px;border-radius:20px;
+    padding:5px 12px;border-radius:999px;
     background:rgba(255,255,255,0.10);
     font-size:11px;font-weight:700;color:var(--text-dim);
+    letter-spacing:.02em;
     margin-bottom:12px;
   }
   .pkg-badge.gold{background:rgba(255,215,106,0.18);color:#ffd76a;}
@@ -560,19 +561,25 @@
   .pkg-progress-fill.danger{background:linear-gradient(90deg,#ff6b81,#ff3d5a);}
   .pkg-period-until{font-size:11px;color:var(--text-faint);}
   .pkg-quota{margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.08);}
-  .pkg-quota-row{display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:6px;}
+  .pkg-quota-row{
+    display:flex;justify-content:space-between;align-items:center;
+    font-size:12px;margin-bottom:6px;padding:4px 0;
+  }
   .pkg-quota-label{color:var(--text-dim);}
   .pkg-quota-value{color:var(--text-main);font-weight:700;}
   .pkg-quota-value.unlimited{color:#3ddc97;}
   .pkg-quota-value.low{color:#ffb84d;}
   .pkg-quota-value.empty{color:#ff6b81;}
   .pkg-upgrade-btn{
-    width:100%;margin-top:14px;border:none;padding:10px;border-radius:10px;
+    display:flex;align-items:center;justify-content:center;gap:6px;
+    width:100%;margin-top:14px;border:none;padding:11px;border-radius:12px;
     background:linear-gradient(90deg,#7c5cff,#5b8dff);
     color:#fff;font-weight:700;font-size:12.5px;cursor:pointer;
     box-shadow:0 8px 18px rgba(92,102,255,0.35);
+    transition:transform .15s ease, box-shadow .15s ease, filter .15s ease;
   }
-  .pkg-upgrade-btn:hover{filter:brightness(1.08);}
+  .pkg-upgrade-btn:hover{filter:brightness(1.08);transform:translateY(-1px);box-shadow:0 10px 22px rgba(92,102,255,0.45);}
+  .pkg-upgrade-btn:active{transform:translateY(0);}
 
   .dark-mode-row{
     display:flex;align-items:center;gap:10px;

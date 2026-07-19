@@ -1295,189 +1295,175 @@ async function changeUserRole(discordId, role) {
 window.changeUserRole = changeUserRole;
 
 // ─── HISTORY ───
-const historyUiState = { type: 'all', search: '', page: 1 };
-let historyDataCache = [];
+// REDESIGN: sekarang full server-driven (search/filter/sort/pagination semuanya
+// dieksekusi di MongoDB lewat /api/admin/history), bukan lagi ambil sampai 300 baris
+// lalu difilter di browser — jadi SEMUA data histori tetap bisa dijelajah (gak ada lagi
+// batas 300 yang bikin data lama "hilang"), dan tabelnya tetap cepat walau datanya banyak.
+const historyUiState = { page: 1, perPage: 20, search: '', type: 'all', sort: 'newest' };
+let historySearchTimeout = null;
+let _historyToolbarWired = false;
 
 async function renderHistory() {
-  const table = document.getElementById('tableHistory');
-  table.innerHTML = `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">⏳</span>Memuat data...</td></tr>`;
-  try {
-    const rows = await api('/api/admin/history');
-    historyDataCache = rows;
-    historyUiState.page = 1;
-    applyHistoryFilters();
+  const tbody = document.getElementById('tableHistory');
+  if (!tbody) return;
+  tbody.innerHTML = `<tr><td class="hist-td-empty" colspan="5"><span class="empty-icon">⏳</span>Memuat data...</td></tr>`;
 
-    const searchEl = document.getElementById('searchHistory');
-    if (searchEl) {
-      searchEl.value = historyUiState.search;
-      searchEl.oninput = (e) => {
-        historyUiState.search = e.target.value;
-        historyUiState.page = 1;
-        applyHistoryFilters();
-      };
-    }
+  wireHistoryToolbarOnce();
+
+  try {
+    const params = new URLSearchParams({
+      page: historyUiState.page,
+      perPage: historyUiState.perPage,
+      search: historyUiState.search,
+      type: historyUiState.type,
+      sort: historyUiState.sort
+    });
+    const data = await api(`/api/admin/history?${params.toString()}`);
+    renderHistoryStats(data.stats || {});
+    renderHistoryTypeChips(data.stats || {});
+    renderHistoryRows(data.rows || [], (data.total || 0) === 0 && !!(historyUiState.search || historyUiState.type !== 'all'));
+    renderPagination('historyPagination', data.total || 0, data.page || 1, data.perPage || historyUiState.perPage, (p) => {
+      historyUiState.page = p;
+      renderHistory();
+    });
   } catch (e) {
-    table.innerHTML = `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">⚠️</span>Gagal memuat: ${escapeHtml(e.message)}</td></tr>`;
+    tbody.innerHTML = `<tr><td class="hist-td-empty" colspan="5"><span class="empty-icon">⚠️</span>Gagal memuat: ${escapeHtml(e.message)}</td></tr>`;
   }
 }
 
-function applyHistoryFilters() {
-  const rows = historyDataCache;
-  const today = new Date(); today.setHours(0,0,0,0);
-  const todayCount = rows.filter(h => new Date(h.createdAt) >= today).length;
-  const gameCount = rows.filter(h => h.itemType === 'game').length;
-  const bypassCount = rows.filter(h => h.itemType === 'bypass').length;
-
+function renderHistoryStats(stats) {
   const statsEl = document.getElementById('historyStats');
-  if (statsEl) {
-    statsEl.innerHTML = `
-      <div class="page-stat-pill">
-        <div class="page-stat-pill-icon" style="background:rgba(123,92,255,.16);">📜</div>
-        <div><div class="page-stat-pill-value">${rows.length}</div><div class="page-stat-pill-label">Total Aktivitas</div></div>
-      </div>
-      <div class="page-stat-pill">
-        <div class="page-stat-pill-icon" style="background:rgba(74,222,128,.16);">📅</div>
-        <div><div class="page-stat-pill-value">${todayCount}</div><div class="page-stat-pill-label">Hari Ini</div></div>
-      </div>
-      <div class="page-stat-pill">
-        <div class="page-stat-pill-icon" style="background:rgba(123,92,255,.16);">🎮</div>
-        <div><div class="page-stat-pill-value">${gameCount}</div><div class="page-stat-pill-label">Inject Game</div></div>
-      </div>
-      <div class="page-stat-pill">
-        <div class="page-stat-pill-icon" style="background:rgba(61,217,245,.16);">🛡️</div>
-        <div><div class="page-stat-pill-value">${bypassCount}</div><div class="page-stat-pill-label">Bypass</div></div>
-      </div>
-    `;
-  }
+  if (!statsEl) return;
+  statsEl.innerHTML = `
+    <div class="page-stat-pill">
+      <div class="page-stat-pill-icon" style="background:rgba(123,92,255,.16);">📜</div>
+      <div><div class="page-stat-pill-value">${stats.all ?? 0}</div><div class="page-stat-pill-label">Total Aktivitas</div></div>
+    </div>
+    <div class="page-stat-pill">
+      <div class="page-stat-pill-icon" style="background:rgba(74,222,128,.16);">📅</div>
+      <div><div class="page-stat-pill-value">${stats.today ?? 0}</div><div class="page-stat-pill-label">Hari Ini</div></div>
+    </div>
+    <div class="page-stat-pill">
+      <div class="page-stat-pill-icon" style="background:rgba(123,92,255,.16);">🎮</div>
+      <div><div class="page-stat-pill-value">${stats.game ?? 0}</div><div class="page-stat-pill-label">Inject Game</div></div>
+    </div>
+    <div class="page-stat-pill">
+      <div class="page-stat-pill-icon" style="background:rgba(61,217,245,.16);">🛡️</div>
+      <div><div class="page-stat-pill-value">${stats.bypass ?? 0}</div><div class="page-stat-pill-label">Bypass</div></div>
+    </div>
+  `;
+}
 
+function renderHistoryTypeChips(stats) {
   const chipsEl = document.getElementById('historyTypeFilter');
-  if (chipsEl) {
-    const chips = [
-      { key: 'all',     label: 'Semua',       count: rows.length },
-      { key: 'game',    label: '🎮 Game',     count: gameCount },
-      { key: 'bypass',  label: '🛡️ Bypass',   count: bypassCount },
-    ];
-    chipsEl.innerHTML = chips.map(c => `
-      <button class="filter-chip ${historyUiState.type === c.key ? 'active' : ''}" data-type="${c.key}">
-        ${c.label} <span class="count">${c.count}</span>
-      </button>
-    `).join('');
-    chipsEl.querySelectorAll('.filter-chip').forEach(btn => {
-      btn.addEventListener('click', () => {
-        historyUiState.type = btn.dataset.type;
+  if (!chipsEl) return;
+  const chips = [
+    { key: 'all',    label: 'Semua',      count: stats.all ?? 0 },
+    { key: 'game',   label: '🎮 Game',    count: stats.game ?? 0 },
+    { key: 'bypass', label: '🛡️ Bypass',  count: stats.bypass ?? 0 },
+  ];
+  chipsEl.innerHTML = chips.map(c => `
+    <button class="filter-chip ${historyUiState.type === c.key ? 'active' : ''}" data-type="${c.key}">
+      ${c.label} <span class="count">${c.count}</span>
+    </button>
+  `).join('');
+  chipsEl.querySelectorAll('.filter-chip').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (historyUiState.type === btn.dataset.type) return;
+      historyUiState.type = btn.dataset.type;
+      historyUiState.page = 1;
+      renderHistory();
+    });
+  });
+}
+
+function wireHistoryToolbarOnce() {
+  if (_historyToolbarWired) return;
+  _historyToolbarWired = true;
+
+  const searchEl = document.getElementById('searchHistory');
+  if (searchEl) {
+    searchEl.value = historyUiState.search;
+    searchEl.addEventListener('input', (e) => {
+      clearTimeout(historySearchTimeout);
+      const val = e.target.value;
+      historySearchTimeout = setTimeout(() => {
+        historyUiState.search = val;
         historyUiState.page = 1;
-        applyHistoryFilters();
-      });
+        renderHistory();
+      }, 350); // debounce biar gak nembak request tiap ketikan
     });
   }
 
-  let filtered = historyUiState.type === 'all' ? rows : rows.filter(h => h.itemType === historyUiState.type);
-  if (historyUiState.search.trim()) {
-    const q = historyUiState.search.trim().toLowerCase();
-    filtered = filtered.filter(h => (h.username || '').toLowerCase().includes(q) || (h.itemName || '').toLowerCase().includes(q));
+  const sortEl = document.getElementById('historySort');
+  if (sortEl) {
+    sortEl.addEventListener('change', (e) => {
+      historyUiState.sort = e.target.value;
+      historyUiState.page = 1;
+      renderHistory();
+    });
   }
 
-  const start = (historyUiState.page - 1) * PER_PAGE;
-  const pageRows = filtered.slice(start, start + PER_PAGE);
-  renderHistoryRows(pageRows, filtered.length === 0 && (historyUiState.search || historyUiState.type !== 'all'));
-
-  renderPagination('historyPagination', filtered.length, historyUiState.page, PER_PAGE, (p) => {
-    historyUiState.page = p;
-    applyHistoryFilters();
-  });
+  const perPageEl = document.getElementById('historyPerPage');
+  if (perPageEl) {
+    perPageEl.addEventListener('change', (e) => {
+      historyUiState.perPage = parseInt(e.target.value, 10) || 20;
+      historyUiState.page = 1;
+      renderHistory();
+    });
+  }
 }
 
 function renderHistoryRows(rows, isFilteredEmpty) {
-  const table = document.getElementById('tableHistory');
-  table.style.display = 'none';
-
-  const wrapper = table.closest('.table-wrap');
-  let feed = wrapper.querySelector('.hist-feed');
-  if (!feed) {
-    feed = document.createElement('div');
-    feed.className = 'hist-feed';
-    table.parentNode.insertBefore(feed, table);
-  }
+  const tbody = document.getElementById('tableHistory');
+  if (!tbody) return;
 
   if (!rows.length) {
-    feed.innerHTML = `<div class="hist-empty">
-      <span class="hist-empty__icon">${isFilteredEmpty ? '🔍' : '📜'}</span>
-      <div class="hist-empty__text">${isFilteredEmpty ? 'Tidak ada histori yang cocok.' : 'Belum ada histori aktivitas.'}</div>
-    </div>`;
+    tbody.innerHTML = `<tr><td class="hist-td-empty" colspan="5">
+      <div class="hist-empty">
+        <span class="hist-empty__icon">${isFilteredEmpty ? '🔍' : '📜'}</span>
+        <div class="hist-empty__text">${isFilteredEmpty ? 'Tidak ada histori yang cocok dengan filter.' : 'Belum ada histori aktivitas.'}</div>
+      </div>
+    </td></tr>`;
     return;
   }
 
-  const gameSvg   = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M12 12h.01M8 12h.01M16 12h.01M12 8v8"/></svg>`;
-  const bypassSvg = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>`;
-  const clockSvg  = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
-  const userSvg   = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
+  const gameSvg   = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M12 12h.01M8 12h.01M16 12h.01M12 8v8"/></svg>`;
+  const bypassSvg = `<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>`;
 
-  // Kelompokkan per tanggal
-  const groups = {};
-  rows.forEach(h => {
-    const d   = new Date(h.createdAt);
-    const key = d.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
-    if (!groups[key]) groups[key] = [];
-    groups[key].push(h);
-  });
+  tbody.innerHTML = rows.map(h => {
+    const isGame    = h.itemType === 'game';
+    const initials  = (h.username || '?').slice(0, 2).toUpperCase();
+    const dateObj   = new Date(h.createdAt);
+    const dateStr   = dateObj.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
+    const timeStr   = dateObj.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+    const fileCount = Array.isArray(h.extractedFiles) ? h.extractedFiles.length : 0;
 
-  feed.innerHTML = Object.entries(groups).map(([dateLabel, items]) => `
-    <div class="hist-group">
-      <div class="hist-group__label">
-        <span class="hist-group__label-line"></span>
-        <span class="hist-group__label-text">${dateLabel}</span>
-        <span class="hist-group__label-count">${items.length} aktivitas</span>
-        <span class="hist-group__label-line"></span>
-      </div>
-      <div class="hist-group__items">
-        ${items.map(h => {
-          const isGame     = h.itemType === 'game';
-          const initials   = (h.username || '?').slice(0, 2).toUpperCase();
-          const timeStr    = new Date(h.createdAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
-          const roleClass  = h.userRole || 'public';
-          const roleLabel  = roleClass === 'platinum' ? '💠' : roleClass === 'gold' ? '⭐' : '🌐';
-
-          return `<div class="hist-card hist-card--${h.itemType}">
-            <!-- Type indicator strip -->
-            <div class="hist-card__strip hist-card__strip--${h.itemType}"></div>
-
-            <!-- Type icon -->
-            <div class="hist-card__type-icon hist-card__type-icon--${h.itemType}">
-              ${isGame ? gameSvg : bypassSvg}
-            </div>
-
-            <!-- User avatar -->
-            <div class="hist-card__avatar" title="${escapeHtml(h.username)}">
-              ${initials}
-              <span class="hist-card__avatar-role" title="${roleClass}">${roleLabel}</span>
-            </div>
-
-            <!-- Main info -->
-            <div class="hist-card__main">
-              <div class="hist-card__top-row">
-                <span class="hist-card__username">${userSvg} ${escapeHtml(h.username)}</span>
-                <span class="hist-card__action-label hist-card__action-label--${h.itemType}">
-                  ${isGame ? 'Inject Game' : 'Install Bypass'}
-                </span>
-              </div>
-              <div class="hist-card__item-name">${escapeHtml(h.itemName || '—')}</div>
-              ${h.itemRole ? `<div class="hist-card__item-meta">
-                <span class="hist-card__item-role-chip hist-card__item-role-chip--${h.itemRole}">
-                  ${h.itemRole === 'platinum' ? '💠 Platinum' : h.itemRole === 'gold' ? '⭐ Gold' : '🌐 Public'}
-                </span>
-              </div>` : ''}
-            </div>
-
-            <!-- Time -->
-            <div class="hist-card__time">
-              <div class="hist-card__time-rel">${timeAgo(h.createdAt)}</div>
-              <div class="hist-card__time-abs">${clockSvg} ${timeStr}</div>
-            </div>
-          </div>`;
-        }).join('')}
-      </div>
-    </div>
-  `).join('');
+    return `
+      <tr class="hist-row">
+        <td>
+          <div class="hist-user-cell">
+            <div class="hist-avatar">${initials}</div>
+            <div class="hist-user-name" title="${escapeHtml(h.username || '')}">${escapeHtml(h.username || 'Tidak diketahui')}</div>
+          </div>
+        </td>
+        <td>
+          <div class="hist-item-cell">
+            ${h.itemImage ? `<img class="hist-item-thumb" src="${escapeHtml(h.itemImage)}" alt="">` : `<div class="hist-item-thumb hist-item-thumb--empty">${isGame ? gameSvg : bypassSvg}</div>`}
+            <div class="hist-item-name" title="${escapeHtml(h.itemName || '')}">${escapeHtml(h.itemName || 'Item tidak dikenal')}</div>
+          </div>
+        </td>
+        <td><span class="hist-badge hist-badge--${h.itemType}">${isGame ? gameSvg : bypassSvg} ${isGame ? 'Game' : 'Bypass'}</span></td>
+        <td><span class="hist-file-count">${fileCount} file</span></td>
+        <td>
+          <div class="hist-time-cell">
+            <div class="hist-time-abs">${dateStr}, ${timeStr}</div>
+            <div class="hist-time-rel">${timeAgo(h.createdAt)}</div>
+          </div>
+        </td>
+      </tr>
+    `;
+  }).join('');
 }
 // ─── BYPASS: App ID auto-search (nama + cover dari Steam, tanpa hubcap manifest) ───
 

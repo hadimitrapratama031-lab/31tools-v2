@@ -1417,21 +1417,27 @@ app.get('/api/bypasses', requireUser, async (req, res) => {
 // Dipanggil pas user pencet "Install"/"Pakai" di kartu Game atau Bypass
 app.post('/api/history', requireUser, async (req, res) => {
   try {
-    const { itemType, itemId, extractedFiles, steamPath, folderPath } = req.body;
+    const { itemType, itemId, extractedFiles, steamPath, folderPath, itemName: fallbackName, itemImage: fallbackImage } = req.body;
     if (!['game', 'bypass'].includes(itemType)) return res.status(400).json({ error: 'itemType harus game/bypass.' });
     if (!ObjectId.isValid(itemId)) return res.status(400).json({ error: 'itemId tidak valid.' });
 
     const collectionName = itemType === 'game' ? 'games' : 'bypasses';
     const item = await db.collection(collectionName).findOne({ _id: new ObjectId(itemId) });
-    if (!item) return res.status(404).json({ error: 'Item tidak ditemukan.' });
+    // BUG FIX: SEBELUMNYA kalau item ini sudah keburu dihapus/diedit admin di antara waktu user
+    // klik install & proses inject/extract-nya selesai di PC user, route ini langsung 404 dan
+    // BATAL MENYIMPAN histori sama sekali — padahal instalasinya sendiri sudah SUKSES di PC user.
+    // Ini salah satu penyebab utama laporan "histori kadang hilang". Sekarang: kalau item masih
+    // ada, tetap pakai data itemnya (paling akurat/terbaru); kalau sudah gak ada, fallback ke
+    // nama & gambar yang sudah dikirim client sejak awal proses install, histori tetap tersimpan.
+    if (!item && !fallbackName) return res.status(404).json({ error: 'Item tidak ditemukan.' });
 
     const insertResult = await db.collection('history').insertOne({
       userId: req.user.discordId,
       username: req.user.username,
       itemType,
       itemId,
-      itemName: item.name,
-      itemImage: item.imageUrl || null,
+      itemName: item?.name || fallbackName || 'Item tidak dikenal',
+      itemImage: item?.imageUrl || fallbackImage || null,
       // BUG FIX: dulu field ini (walau sudah dikirim client sejak awal) tidak pernah
       // disimpan, jadi tombol Uninstall di halaman Histori tidak punya cara untuk tahu
       // file apa saja & di folder mana yang harus dihapus di PC user — cuma bisa hapus
@@ -1445,7 +1451,7 @@ app.post('/api/history', requireUser, async (req, res) => {
     notifyUser(req.user.discordId, {
       type: 'download_success',
       title: 'Download Berhasil',
-      message: `${item.name} (${itemType === 'game' ? 'Game' : 'Bypass'}) berhasil di-download & dipasang.`,
+      message: `${item?.name || fallbackName || 'Item'} (${itemType === 'game' ? 'Game' : 'Bypass'}) berhasil di-download & dipasang.`,
       meta: { itemType, itemId },
       dm: false, webhook: false
     }).catch(() => {});
@@ -1725,9 +1731,57 @@ app.delete('/api/admin/bypasses/:id', requireAdmin, async (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════
 // ADMIN — HISTORI (lihat punya semua user) & USERS (atur role)
 // ══════════════════════════════════════════════════════════════════════════
+// BUG FIX: SEBELUMNYA endpoint ini cuma `.limit(300)` tanpa pagination sama sekali —
+// begitu histori sudah lebih dari 300 baris, entri yang lebih lama otomatis TIDAK PERNAH
+// kekirim ke admin panel lagi (padahal datanya masih ada utuh di database), makanya
+// kelihatan kayak "histori hilang". Sekarang pakai pagination beneran (skip/limit) + total
+// count terpisah, jadi SEMUA data tetap bisa dijelajah lewat halaman berikutnya, plus
+// dukungan search/filter/sort di level database biar tetap cepat walau datanya banyak.
 app.get('/api/admin/history', requireAdmin, async (req, res) => {
-  const rows = await db.collection('history').find({}).sort({ createdAt: -1 }).limit(300).toArray();
-  res.json(rows);
+  try {
+    let { page = '1', perPage = '20', search = '', type = 'all', sort = 'newest', dateFrom = '', dateTo = '' } = req.query;
+    page = Math.max(1, parseInt(page, 10) || 1);
+    perPage = Math.min(100, Math.max(1, parseInt(perPage, 10) || 20));
+
+    const query = {};
+    if (type === 'game' || type === 'bypass') query.itemType = type;
+    if (search && search.trim()) {
+      const q = search.trim();
+      const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      query.$or = [{ username: re }, { itemName: re }, { userId: re }];
+    }
+    if (dateFrom || dateTo) {
+      query.createdAt = {};
+      if (dateFrom) query.createdAt.$gte = new Date(dateFrom);
+      if (dateTo)   query.createdAt.$lte = new Date(dateTo);
+    }
+
+    const sortDir = sort === 'oldest' ? 1 : -1;
+    const total = await db.collection('history').countDocuments(query);
+    const rows = await db.collection('history')
+      .find(query)
+      .sort({ createdAt: sortDir })
+      .skip((page - 1) * perPage)
+      .limit(perPage)
+      .toArray();
+
+    // Statistik global (TIDAK ikut kepengaruh filter/search yang lagi aktif) — dipakai
+    // buat kartu ringkasan di atas tabel, biar angkanya tetap representasi keseluruhan data.
+    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+    const [totalAll, totalGame, totalBypass, totalToday] = await Promise.all([
+      db.collection('history').countDocuments({}),
+      db.collection('history').countDocuments({ itemType: 'game' }),
+      db.collection('history').countDocuments({ itemType: 'bypass' }),
+      db.collection('history').countDocuments({ createdAt: { $gte: todayStart } })
+    ]);
+
+    res.json({
+      rows, total, page, perPage, totalPages: Math.max(1, Math.ceil(total / perPage)),
+      stats: { all: totalAll, game: totalGame, bypass: totalBypass, today: totalToday }
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 app.get('/api/admin/users', requireAdmin, async (req, res) => {

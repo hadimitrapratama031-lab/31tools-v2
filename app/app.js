@@ -454,6 +454,7 @@ function enterApp(user) {
   showPage('dashboard'); // halaman utama selalu yang pertama muncul
   loadGames();
   loadBypasses();
+  flushPendingHistory().catch(() => {}); // coba kirim ulang histori yang sempat gagal tersimpan sesi sebelumnya
   startAutoRefresh(); // ← polling berkala supaya game/bypass baru dari admin langsung muncul
 }
 
@@ -1151,6 +1152,55 @@ function removeLocalInstallMeta(historyId) {
   localStorage.setItem('installMeta', JSON.stringify(map));
 }
 
+// ── HISTORI: kirim ke server dengan retry + antrian offline biar histori TIDAK PERNAH HILANG ──
+// BUG SEBELUMNYA: kalau POST /api/history gagal (network blip sesaat, server 500,
+// token mepet expired, dll) PADAHAL inject/install-nya sendiri sudah SUKSES di PC user,
+// histori itu langsung hilang selamanya — gak ada retry, gak ada catatan apapun, dan
+// error-nya malah bikin seluruh proses install kelihatan "gagal" padahal filenya udah kepasang.
+// SEKARANG: coba beberapa kali dulu (dengan jeda), kalau masih gagal juga, payload-nya
+// diantrikan ke localStorage & otomatis dicoba kirim ulang tiap kali app/hal. Histori dibuka.
+function _getPendingHistoryQueue() {
+  try { return JSON.parse(localStorage.getItem('pendingHistorySync') || '[]'); } catch (e) { return []; }
+}
+function _setPendingHistoryQueue(list) {
+  try { localStorage.setItem('pendingHistorySync', JSON.stringify(list)); } catch (e) {}
+}
+
+async function saveHistoryWithRetry(payload, attempts = 3) {
+  for (let i = 0; i < attempts; i++) {
+    try {
+      return await api('/api/history', { method: 'POST', body: JSON.stringify(payload) });
+    } catch (e) {
+      if (i === attempts - 1) {
+        const queue = _getPendingHistoryQueue();
+        queue.push({ payload, queuedAt: Date.now() });
+        _setPendingHistoryQueue(queue);
+        console.warn('[Histori] Gagal simpan ke server setelah beberapa percobaan, diantrikan buat dicoba lagi nanti:', e.message);
+        return null;
+      }
+      await new Promise(r => setTimeout(r, 700 * (i + 1))); // backoff singkat sebelum retry
+    }
+  }
+}
+
+// Dicoba tiap kali halaman Histori dibuka / app baru masuk — kirim ulang antrian yang tertunda
+async function flushPendingHistory() {
+  const queue = _getPendingHistoryQueue();
+  if (!queue.length) return false;
+  const stillPending = [];
+  let anySucceeded = false;
+  for (const entry of queue) {
+    try {
+      await api('/api/history', { method: 'POST', body: JSON.stringify(entry.payload) });
+      anySucceeded = true;
+    } catch (e) {
+      stillPending.push(entry);
+    }
+  }
+  _setPendingHistoryQueue(stillPending);
+  return anySucceeded;
+}
+
 // ── INSTALL -> catat ke histori ──
 async function handleInstall(itemType, itemId, itemName) {
   _dlLastInstallArgs = [itemType, itemId, itemName];
@@ -1191,9 +1241,11 @@ async function handleInstall(itemType, itemId, itemName) {
       if (!result.success) throw new Error(result.error || 'Inject game gagal tanpa keterangan.');
 
       dlSetStage('Menyimpan ke histori...', 3);
-      const histResp = await api('/api/history', {
-        method: 'POST',
-        body: JSON.stringify({ itemType, itemId, extractedFiles: result.extractedFiles || [], steamPath })
+      const gameMeta = allGames.find(g => String(g._id) === String(itemId));
+      const histResp = await saveHistoryWithRetry({
+        itemType, itemId, itemName,
+        itemImage: gameMeta?.imageUrl || null, // fallback kalau game-nya sempat dihapus/diedit admin sebelum histori tersimpan
+        extractedFiles: result.extractedFiles || [], steamPath
       });
       saveLocalInstallMeta(histResp?._id, { type: 'game', extractedFiles: result.extractedFiles || [], steamPath });
 
@@ -1247,13 +1299,12 @@ async function handleInstall(itemType, itemId, itemName) {
       if (!result.success)  throw new Error(result.error || 'Install bypass gagal tanpa keterangan.');
 
       dlSetStage('Menyimpan ke histori...', 3);
-      const histResp = await api('/api/history', {
-        method: 'POST',
-        body: JSON.stringify({
-          itemType, itemId,
-          extractedFiles: result.extractedFiles || [],
-          folderPath: result.folderPath || null
-        })
+      const bypassMeta = allBypasses.find(b => String(b._id) === String(itemId));
+      const histResp = await saveHistoryWithRetry({
+        itemType, itemId, itemName,
+        itemImage: bypassMeta?.imageUrl || null, // fallback kalau bypass-nya sempat dihapus/diedit admin sebelum histori tersimpan
+        extractedFiles: result.extractedFiles || [],
+        folderPath: result.folderPath || null
       });
       saveLocalInstallMeta(histResp?._id, { type: 'bypass', extractedFiles: result.extractedFiles || [], folderPath: result.folderPath || null });
 
@@ -1287,6 +1338,7 @@ async function loadHistori() {
   if (!els.historiListPage) return;
   renderHistoriSkeleton();
   try {
+    await flushPendingHistory(); // coba kirim ulang histori yang sempat gagal tersimpan sebelumnya
     const rows = await api('/api/history');
     _allHistori = rows;
     renderHistoriStats(rows);
