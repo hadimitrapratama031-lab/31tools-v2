@@ -718,3 +718,301 @@ textarea.form-input { resize: vertical; min-height: 72px; }
 }
 .hist-type-icon.game    { background: rgba(123,92,255,.18); }
 .hist-type-icon.bypass  { background: rgba(61,217,245,.15); }
+/* ═══════════════════════════════════════════════════════════════
+   ITEM CARD GRID  —  redesign total halaman Game & Bypass
+   ═══════════════════════════════════════════════════════════════ */
+
+.item-card-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+  gap: 16px;
+  padding: 20px 0 8px;
+}
+
+/* Tiap card */
+.item-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  border-radius: 16px;
+  overflow: hidden;
+  background: var(--navy-700);
+  border: 1px solid var(--line);
+  transition: transform .18s, box-shadow .18s, border-color .18s;
+}
+.item-card:hover {
+  transform: translateY(-3px);
+  box-shadow: 0 16px 40px rgba(0,0,0,.45);
+  border-color: var(--line-hi);
+}
+
+/* Role accent border-top */
+.item-card--public   { border-top: 2px solid rgba(255,255,255,.22); }
+.item-card--gold     { border-top: 2px solid #ffd76a; }
+.item-card--platinum { border-top: 2px solid #a78bfa; }
+
+/* ── Cover ── */
+.item-card__cover {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 3 / 4;
+  background: var(--navy-800);
+  overflow: hidden;
+  flex-shrink: 0;
+}
+.item-card__cover img {
+  width: 100%; height: 100%;
+  object-fit: cover;
+  display: block;
+  transition: transform .3s ease;
+}
+.item-card:hover .item-card__cover img { transform: scale(1.04); }
+
+.item-card__cover-fallback {
+  display: flex; align-items: center; justify-content: center;
+  width: 100%; height: 100%;
+  font-size: 42px; color: var(--text-faint);
+  background: linear-gradient(135deg, var(--navy-800), var(--navy-700));
+}
+
+/* Role badge di cover */
+.item-card__role-badge {
+  position: absolute; top: 9px; left: 9px;
+  font-size: 10px; font-weight: 800; letter-spacing: .04em;
+  padding: 3px 9px; border-radius: 99px;
+  backdrop-filter: blur(8px);
+  border: 1px solid rgba(255,255,255,.15);
+  line-height: 1.5;
+}
+.item-card__role-badge--public   { background: rgba(0,0,0,.55); color: #c8c6e8; }
+.item-card__role-badge--gold     { background: rgba(255,215,106,.18); color: #ffd76a; border-color: rgba(255,215,106,.4); }
+.item-card__role-badge--platinum { background: rgba(167,139,250,.18); color: #c4b5fd; border-color: rgba(167,139,250,.4); }
+
+/* Link-available dot kanan atas */
+.item-card__link-dot {
+  position: absolute; top: 9px; right: 9px;
+  width: 24px; height: 24px; border-radius: 50%;
+  background: rgba(74,222,128,.2); border: 1px solid rgba(74,222,128,.4);
+  color: #4ade80;
+  display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(6px);
+}
+
+/* ── Body ── */
+.item-card__body {
+  flex: 1;
+  padding: 12px 13px 8px;
+  display: flex; flex-direction: column; gap: 6px;
+  min-width: 0;
+}
+.item-card__name {
+  font-size: 13px; font-weight: 700;
+  line-height: 1.35;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  color: var(--text);
+}
+.item-card__desc {
+  font-size: 11px; color: var(--text-faint); line-height: 1.5;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.item-card__meta {
+  display: flex; flex-wrap: wrap; gap: 5px;
+  margin-top: 2px;
+}
+.item-card__meta-chip {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 10px; font-weight: 600; color: var(--text-dim);
+  background: rgba(255,255,255,.05); border: 1px solid var(--line);
+  padding: 2px 8px; border-radius: 99px;
+  white-space: nowrap; max-width: 140px;
+  overflow: hidden; text-overflow: ellipsis;
+}
+.item-card__meta-chip--time { color: var(--text-faint); }
+
+/* ── Actions row ── */
+.item-card__actions {
+  display: flex; align-items: center; gap: 8px;
+  padding: 10px 13px 12px;
+  border-top: 1px solid var(--line);
+}
+.item-card__btn {
+  display: inline-flex; align-items: center; gap: 5px;
+  font-size: 11.5px; font-weight: 700; border-radius: 8px;
+  border: 1px solid transparent; cursor: pointer;
+  transition: all .15s; padding: 6px 12px;
+  font-family: 'Inter', sans-serif; letter-spacing: .01em;
+}
+.item-card__btn--edit {
+  flex: 1;
+  background: rgba(123,92,255,.14); border-color: rgba(123,92,255,.3);
+  color: #a78bfa;
+}
+.item-card__btn--edit:hover {
+  background: rgba(123,92,255,.26); border-color: rgba(123,92,255,.55);
+  color: #c4b5fd;
+}
+.item-card__btn--delete {
+  width: 34px; height: 32px; padding: 0;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(248,113,113,.1); border-color: rgba(248,113,113,.25);
+  color: #f87171; border-radius: 8px; flex-shrink: 0;
+}
+.item-card__btn--delete:hover {
+  background: rgba(248,113,113,.22); border-color: rgba(248,113,113,.5);
+  color: #fca5a5;
+}
+
+/* Empty state for card grid */
+.item-grid-empty {
+  grid-column: 1 / -1;
+  text-align: center; padding: 60px 20px;
+  color: var(--text-faint); font-size: 13.5px; line-height: 1.7;
+}
+.item-grid-empty .empty-icon { font-size: 40px; display: block; margin-bottom: 12px; }
+
+
+/* ═══════════════════════════════════════════════════════════════
+   HISTORY FEED  —  redesign total halaman Histori Aktivitas
+   ═══════════════════════════════════════════════════════════════ */
+
+.hist-feed {
+  padding: 16px 0 8px;
+  display: flex; flex-direction: column; gap: 28px;
+}
+
+/* ── Group (per tanggal) ── */
+.hist-group { display: flex; flex-direction: column; gap: 10px; }
+
+.hist-group__label {
+  display: flex; align-items: center; gap: 10px;
+  margin-bottom: 4px;
+}
+.hist-group__label-line {
+  flex: 1; height: 1px;
+  background: linear-gradient(90deg, transparent, var(--line) 40%, var(--line) 60%, transparent);
+}
+.hist-group__label-text {
+  font-size: 11px; font-weight: 700; letter-spacing: .06em;
+  text-transform: uppercase; color: var(--text-faint);
+  white-space: nowrap;
+}
+.hist-group__label-count {
+  font-size: 10px; font-weight: 600;
+  background: rgba(255,255,255,.06); border: 1px solid var(--line);
+  color: var(--text-faint); padding: 2px 9px; border-radius: 99px;
+  white-space: nowrap; flex-shrink: 0;
+}
+.hist-group__items { display: flex; flex-direction: column; gap: 7px; }
+
+/* ── Single history card ── */
+.hist-card {
+  position: relative;
+  display: grid;
+  grid-template-columns: 4px 38px 44px 1fr auto;
+  align-items: center;
+  gap: 0 12px;
+  padding: 12px 16px 12px 0;
+  border-radius: 13px;
+  background: var(--navy-700);
+  border: 1px solid var(--line);
+  overflow: hidden;
+  transition: background .15s, border-color .15s, transform .15s;
+}
+.hist-card:hover {
+  background: rgba(255,255,255,.03);
+  border-color: var(--line-hi);
+  transform: translateX(2px);
+}
+
+/* Left accent strip */
+.hist-card__strip {
+  width: 4px; height: 100%;
+  position: absolute; left: 0; top: 0;
+  border-radius: 13px 0 0 13px;
+}
+.hist-card__strip--game   { background: linear-gradient(180deg, #7b5cff, #e64bb8); }
+.hist-card__strip--bypass { background: linear-gradient(180deg, #3dd9f5, #4ade80); }
+
+/* Type icon circle */
+.hist-card__type-icon {
+  width: 38px; height: 38px; border-radius: 11px; flex-shrink: 0;
+  display: flex; align-items: center; justify-content: center;
+  margin-left: 14px;
+}
+.hist-card__type-icon--game   { background: rgba(123,92,255,.18); color: #a78bfa; }
+.hist-card__type-icon--bypass { background: rgba(61,217,245,.15); color: var(--cyan); }
+
+/* User avatar */
+.hist-card__avatar {
+  position: relative;
+  width: 36px; height: 36px; border-radius: 50%; flex-shrink: 0;
+  background: var(--grad-primary);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 12px; font-weight: 800; color: #fff;
+  box-shadow: 0 3px 10px rgba(0,0,0,.35);
+  letter-spacing: .03em;
+}
+.hist-card__avatar-role {
+  position: absolute; bottom: -3px; right: -3px;
+  font-size: 10px; line-height: 1;
+  background: var(--navy-800); border: 1.5px solid var(--line-hi);
+  border-radius: 50%; width: 16px; height: 16px;
+  display: flex; align-items: center; justify-content: center;
+}
+
+/* Main section */
+.hist-card__main {
+  min-width: 0; display: flex; flex-direction: column; gap: 3px;
+}
+.hist-card__top-row {
+  display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
+}
+.hist-card__username {
+  display: inline-flex; align-items: center; gap: 4px;
+  font-size: 12px; font-weight: 700; color: var(--text);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  max-width: 200px;
+}
+.hist-card__action-label {
+  font-size: 10px; font-weight: 700; letter-spacing: .04em;
+  padding: 2px 8px; border-radius: 99px; white-space: nowrap;
+  flex-shrink: 0;
+}
+.hist-card__action-label--game   { background: rgba(123,92,255,.18); color: #c4b5fd; }
+.hist-card__action-label--bypass { background: rgba(61,217,245,.14); color: var(--cyan); }
+
+.hist-card__item-name {
+  font-size: 13px; font-weight: 600; color: var(--text-dim);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.hist-card__item-meta { display: flex; gap: 5px; flex-wrap: wrap; margin-top: 1px; }
+.hist-card__item-role-chip {
+  font-size: 10px; font-weight: 700; padding: 1px 7px; border-radius: 99px;
+}
+.hist-card__item-role-chip--public   { background: rgba(255,255,255,.07); color: var(--text-faint); }
+.hist-card__item-role-chip--gold     { background: rgba(255,215,106,.14); color: #ffd76a; }
+.hist-card__item-role-chip--platinum { background: rgba(167,139,250,.14); color: #c4b5fd; }
+
+/* Time column */
+.hist-card__time {
+  text-align: right; flex-shrink: 0; padding-right: 2px;
+}
+.hist-card__time-rel {
+  font-size: 12px; font-weight: 700; color: var(--text-dim);
+  white-space: nowrap;
+}
+.hist-card__time-abs {
+  display: inline-flex; align-items: center; gap: 3px;
+  font-size: 10.5px; color: var(--text-faint); margin-top: 3px;
+  white-space: nowrap;
+}
+
+/* Empty state */
+.hist-empty {
+  text-align: center; padding: 60px 20px;
+  color: var(--text-faint); font-size: 13px;
+  display: flex; flex-direction: column; align-items: center; gap: 12px;
+}
+.hist-empty__icon { font-size: 40px; }
+.hist-empty__text { line-height: 1.6; }

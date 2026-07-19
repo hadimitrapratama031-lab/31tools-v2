@@ -401,10 +401,22 @@ const tableUiState = {
 };
 const PER_PAGE = 8;
 
-async function renderTable(type) {
+function _setTableMsg(type, icon, msg) {
   const tableId = type === 'games' ? 'tableGames' : 'tableBypasses';
-  const table = document.getElementById(tableId);
-  table.innerHTML = `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">⏳</span>Memuat data...</td></tr>`;
+  const table   = document.getElementById(tableId);
+  table.style.display = 'none';
+  const wrapper = table.closest('.table-wrap');
+  let grid = wrapper.querySelector('.item-card-grid');
+  if (!grid) {
+    grid = document.createElement('div');
+    grid.className = 'item-card-grid';
+    table.parentNode.insertBefore(grid, table);
+  }
+  grid.innerHTML = `<div class="item-grid-empty"><span class="empty-icon">${icon}</span><div>${msg}</div></div>`;
+}
+
+async function renderTable(type) {
+  _setTableMsg(type, '⏳', 'Memuat data...');
   try {
     const rows = await api(`/api/admin/${type}`);
     tableDataCache[type] = rows;
@@ -421,7 +433,7 @@ async function renderTable(type) {
       };
     }
   } catch (e) {
-    table.innerHTML = `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">⚠️</span>Gagal memuat: ${escapeHtml(e.message)}</td></tr>`;
+    _setTableMsg(type, '⚠️', `Gagal memuat: ${escapeHtml(e.message)}`);
   }
 }
 
@@ -465,51 +477,90 @@ window.filterTable = filterTable;
 function renderTableRows(type, rows, isFilteredEmpty) {
   const tableId = type === 'games' ? 'tableGames' : 'tableBypasses';
   const table = document.getElementById(tableId);
+
   if (!rows.length) {
-    table.innerHTML = isFilteredEmpty
-      ? `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">🔍</span>Tidak ada hasil yang cocok dengan filter/pencarian.</td></tr>`
-      : `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">📭</span>Belum ada data. Klik "＋ Tambah" untuk menambahkan.</td></tr>`;
+    // Render empty state tetap pakai wrapper div (bukan tr/td) karena kita ganti jadi div grid
+    table.innerHTML = '';
+    table.insertAdjacentHTML('afterend', ''); // safety
+    const emptyHtml = `<div class="item-grid-empty">
+      <span class="empty-icon">${isFilteredEmpty ? '🔍' : '📭'}</span>
+      <div>${isFilteredEmpty ? 'Tidak ada hasil yang cocok dengan filter/pencarian.' : 'Belum ada data. Klik "＋ Tambah" untuk menambahkan.'}</div>
+    </div>`;
+    // Ganti table dgn div sementara
+    const wrapper = table.closest('.table-wrap');
+    let grid = wrapper.querySelector('.item-card-grid');
+    if (!grid) {
+      grid = document.createElement('div');
+      grid.className = 'item-card-grid';
+      table.parentNode.insertBefore(grid, table);
+      table.style.display = 'none';
+    }
+    grid.innerHTML = emptyHtml;
     return;
   }
-  const editIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2v-5M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
-  const trashIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6m5 0V4a2 2 0 012-2h0a2 2 0 012 2v2"/></svg>`;
 
-  table.innerHTML = `
-    <thead><tr>
-      <th>Cover</th>
-      <th>Nama</th>
-      <th>Role</th>
-      <th>Aksi</th>
-    </tr></thead>
-    <tbody>
-    ${rows.map(item => `
-      <tr class="row-role-accent ${item.role}">
-        <td>
-          <div class="cell-img-wrap">
-            ${item.imageUrl
-              ? `<img class="cell-img" src="${escapeHtml(item.imageUrl)}" onerror="this.style.display='none'">`
-              : `<div class="cell-img" style="display:flex;align-items:center;justify-content:center;color:var(--text-faint);font-size:20px;">🎮</div>`}
-          </div>
-        </td>
-        <td>
-          <div class="cell-name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</div>
-          ${item.description ? `<div class="cell-desc">${escapeHtml(item.description)}</div>` : ''}
-          <div style="margin-top:6px;display:flex;gap:5px;flex-wrap:wrap;max-width:460px;">
-            ${item.sizeLabel ? `<span class="chip">💾 ${escapeHtml(item.sizeLabel)}</span>` : ''}
-            ${item.appId     ? `<span class="chip">🆔 ${escapeHtml(item.appId)}</span>` : ''}
-            ${(item.zipUrl || item.link) ? `<span class="chip chip-ok">🔗 Ada link</span>` : ''}
-          </div>
-          ${item.createdAt ? `<div class="cell-time">🕓 ${timeAgo(item.createdAt)}</div>` : ''}
-        </td>
-        <td>${roleTagHtml(item.role)}</td>
-        <td class="row-actions">
-          <button class="icon-btn" title="Edit" onclick='openItemModal("${type}", ${JSON.stringify(item).replace(/'/g, "&#39;")})'>${editIcon}</button>
-          <button class="icon-btn danger" title="Hapus" onclick="deleteItem('${type}','${item._id}')">${trashIcon}</button>
-        </td>
-      </tr>
-    `).join('')}
-    </tbody>
-  `;
+  // Gunakan div grid — sembunyikan table asli
+  const wrapper = table.closest('.table-wrap');
+  let grid = wrapper.querySelector('.item-card-grid');
+  if (!grid) {
+    grid = document.createElement('div');
+    grid.className = 'item-card-grid';
+    table.parentNode.insertBefore(grid, table);
+    table.style.display = 'none';
+  }
+  table.style.display = 'none';
+
+  const editSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2v-5M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
+  const trashSvg = `<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6m5 0V4a2 2 0 012-2h0a2 2 0 012 2v2"/></svg>`;
+  const linkSvg  = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71"/></svg>`;
+  const idSvg    = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 3H8a2 2 0 00-2 2v2h12V5a2 2 0 00-2-2z"/></svg>`;
+  const sizeSvg  = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>`;
+  const clockSvg = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
+  const isGame   = type === 'games';
+
+  grid.innerHTML = rows.map(item => {
+    const roleClass  = item.role || 'public';
+    const roleLabel  = roleClass === 'platinum' ? '💠 Platinum' : roleClass === 'gold' ? '⭐ Gold' : '🌐 Public';
+    const hasLink    = !!(item.zipUrl || item.link || item.manifestUrl);
+    const placeholderIcon = isGame ? '🎮' : '🛡️';
+
+    return `<div class="item-card item-card--${roleClass}">
+      <!-- Cover -->
+      <div class="item-card__cover">
+        ${item.imageUrl
+          ? `<img src="${escapeHtml(item.imageUrl)}" alt="${escapeHtml(item.name)}" onerror="this.parentElement.innerHTML='<span class=item-card__cover-fallback>${placeholderIcon}</span>'">`
+          : `<span class="item-card__cover-fallback">${placeholderIcon}</span>`}
+        <div class="item-card__role-badge item-card__role-badge--${roleClass}">${roleLabel}</div>
+        ${hasLink ? `<div class="item-card__link-dot" title="File tersedia">${linkSvg}</div>` : ''}
+      </div>
+
+      <!-- Body -->
+      <div class="item-card__body">
+        <div class="item-card__name" title="${escapeHtml(item.name)}">${escapeHtml(item.name)}</div>
+        ${item.description ? `<div class="item-card__desc">${escapeHtml(item.description)}</div>` : ''}
+
+        <div class="item-card__meta">
+          ${item.appId     ? `<span class="item-card__meta-chip">${idSvg} ${escapeHtml(item.appId)}</span>` : ''}
+          ${item.sizeLabel ? `<span class="item-card__meta-chip">${sizeSvg} ${escapeHtml(item.sizeLabel)}</span>` : ''}
+          ${item.createdAt ? `<span class="item-card__meta-chip item-card__meta-chip--time">${clockSvg} ${timeAgo(item.createdAt)}</span>` : ''}
+        </div>
+      </div>
+
+      <!-- Actions -->
+      <div class="item-card__actions">
+        <button class="item-card__btn item-card__btn--edit"
+          title="Edit"
+          onclick='openItemModal("${type}", ${JSON.stringify(item).replace(/'/g, "&#39;")})'>
+          ${editSvg} Edit
+        </button>
+        <button class="item-card__btn item-card__btn--delete"
+          title="Hapus"
+          onclick="deleteItem('${type}','${item._id}')">
+          ${trashSvg}
+        </button>
+      </div>
+    </div>`;
+  }).join('');
 }
 
 async function deleteItem(type, id) {
@@ -954,36 +1005,95 @@ function applyHistoryFilters() {
 
 function renderHistoryRows(rows, isFilteredEmpty) {
   const table = document.getElementById('tableHistory');
+  table.style.display = 'none';
+
+  const wrapper = table.closest('.table-wrap');
+  let feed = wrapper.querySelector('.hist-feed');
+  if (!feed) {
+    feed = document.createElement('div');
+    feed.className = 'hist-feed';
+    table.parentNode.insertBefore(feed, table);
+  }
+
   if (!rows.length) {
-    table.innerHTML = isFilteredEmpty
-      ? `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">🔍</span>Tidak ada histori yang cocok.</td></tr>`
-      : `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">📜</span>Belum ada histori.</td></tr>`;
+    feed.innerHTML = `<div class="hist-empty">
+      <span class="hist-empty__icon">${isFilteredEmpty ? '🔍' : '📜'}</span>
+      <div class="hist-empty__text">${isFilteredEmpty ? 'Tidak ada histori yang cocok.' : 'Belum ada histori aktivitas.'}</div>
+    </div>`;
     return;
   }
-  table.innerHTML = `
-    <thead><tr>
-      <th style="width:56px;"></th>
-      <th>User</th>
-      <th>Item</th>
-      <th style="width:160px;">Waktu</th>
-    </tr></thead>
-    <tbody>
-    ${rows.map(h => `
-      <tr>
-        <td><div class="hist-type-icon ${h.itemType}">${h.itemType === 'game' ? '🎮' : '🛡️'}</div></td>
-        <td class="cell-name">${escapeHtml(h.username)}</td>
-        <td>
-          ${escapeHtml(h.itemName)}
-          <div style="margin-top:4px;"><span class="tag ${h.itemType}">${h.itemType}</span></div>
-        </td>
-        <td>
-          <div style="font-size:12.5px;">${timeAgo(h.createdAt)}</div>
-          <div style="color:var(--text-faint);font-size:11px;margin-top:2px;">${new Date(h.createdAt).toLocaleString('id-ID')}</div>
-        </td>
-      </tr>
-    `).join('')}
-    </tbody>
-  `;
+
+  const gameSvg   = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="6" width="20" height="12" rx="2"/><path d="M12 12h.01M8 12h.01M16 12h.01M12 8v8"/></svg>`;
+  const bypassSvg = `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>`;
+  const clockSvg  = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
+  const userSvg   = `<svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>`;
+
+  // Kelompokkan per tanggal
+  const groups = {};
+  rows.forEach(h => {
+    const d   = new Date(h.createdAt);
+    const key = d.toLocaleDateString('id-ID', { weekday: 'long', day: 'numeric', month: 'long', year: 'numeric' });
+    if (!groups[key]) groups[key] = [];
+    groups[key].push(h);
+  });
+
+  feed.innerHTML = Object.entries(groups).map(([dateLabel, items]) => `
+    <div class="hist-group">
+      <div class="hist-group__label">
+        <span class="hist-group__label-line"></span>
+        <span class="hist-group__label-text">${dateLabel}</span>
+        <span class="hist-group__label-count">${items.length} aktivitas</span>
+        <span class="hist-group__label-line"></span>
+      </div>
+      <div class="hist-group__items">
+        ${items.map(h => {
+          const isGame     = h.itemType === 'game';
+          const initials   = (h.username || '?').slice(0, 2).toUpperCase();
+          const timeStr    = new Date(h.createdAt).toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+          const roleClass  = h.userRole || 'public';
+          const roleLabel  = roleClass === 'platinum' ? '💠' : roleClass === 'gold' ? '⭐' : '🌐';
+
+          return `<div class="hist-card hist-card--${h.itemType}">
+            <!-- Type indicator strip -->
+            <div class="hist-card__strip hist-card__strip--${h.itemType}"></div>
+
+            <!-- Type icon -->
+            <div class="hist-card__type-icon hist-card__type-icon--${h.itemType}">
+              ${isGame ? gameSvg : bypassSvg}
+            </div>
+
+            <!-- User avatar -->
+            <div class="hist-card__avatar" title="${escapeHtml(h.username)}">
+              ${initials}
+              <span class="hist-card__avatar-role" title="${roleClass}">${roleLabel}</span>
+            </div>
+
+            <!-- Main info -->
+            <div class="hist-card__main">
+              <div class="hist-card__top-row">
+                <span class="hist-card__username">${userSvg} ${escapeHtml(h.username)}</span>
+                <span class="hist-card__action-label hist-card__action-label--${h.itemType}">
+                  ${isGame ? 'Inject Game' : 'Install Bypass'}
+                </span>
+              </div>
+              <div class="hist-card__item-name">${escapeHtml(h.itemName || '—')}</div>
+              ${h.itemRole ? `<div class="hist-card__item-meta">
+                <span class="hist-card__item-role-chip hist-card__item-role-chip--${h.itemRole}">
+                  ${h.itemRole === 'platinum' ? '💠 Platinum' : h.itemRole === 'gold' ? '⭐ Gold' : '🌐 Public'}
+                </span>
+              </div>` : ''}
+            </div>
+
+            <!-- Time -->
+            <div class="hist-card__time">
+              <div class="hist-card__time-rel">${timeAgo(h.createdAt)}</div>
+              <div class="hist-card__time-abs">${clockSvg} ${timeStr}</div>
+            </div>
+          </div>`;
+        }).join('')}
+      </div>
+    </div>
+  `).join('');
 }
 // ─── BYPASS: App ID auto-search (nama + cover dari Steam, tanpa hubcap manifest) ───
 
