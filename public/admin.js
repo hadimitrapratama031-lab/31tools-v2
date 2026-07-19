@@ -995,6 +995,38 @@ function applyUsersFilters() {
 // cover Game/Bypass, jadi avatar+nama+Discord ID user ikut kepotong & tumpuk.
 // Kartu per-user kasih tiap info (avatar, nama, Discord ID, paket, aksi) ruang
 // sendiri-sendiri, jadi gak akan nabrak walau nama/ID-nya panjang.
+// Format tanggal singkat gaya Indonesia, dipakai buat nampilin Masa Aktif di kartu user.
+function fmtDateShort(dateStr) {
+  if (!dateStr) return '';
+  return new Date(dateStr).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+// Blok "Masa Aktif" + "Limit Download" di tiap kartu user — supaya admin bisa langsung
+// lihat sisa kuota & sisa masa aktif tiap user tanpa buka modal Set Paket dulu.
+function accountStatusHtml(status) {
+  if (!status) return '';
+
+  const activeRow = !status.hasActivePeriod
+    ? `<div class="user-card-status-row"><span class="user-card-status-label">⏳ Masa Aktif</span><span class="user-card-status-value unlimited">Unlimited</span></div>`
+    : status.activeUntil
+      ? `<div class="user-card-status-row"><span class="user-card-status-label">⏳ Masa Aktif</span><span class="user-card-status-value ${status.isExpired ? 'expired' : 'ok'}">${escapeHtml(fmtDateShort(status.activeUntil))}${status.isExpired ? ' · Habis' : ''}</span></div>`
+      : `<div class="user-card-status-row"><span class="user-card-status-label">⏳ Masa Aktif</span><span class="user-card-status-value">Belum diatur</span></div>`;
+
+  const quotaRow = (label, q) => {
+    if (!q) return '';
+    const valueHtml = q.unlimited
+      ? `<span class="user-card-status-value unlimited">Unlimited</span>`
+      : `<span class="user-card-status-value ${q.remaining === 0 ? 'expired' : ''}">${q.used}/${q.limit} hari ini</span>`;
+    return `<div class="user-card-status-row"><span class="user-card-status-label">${label}</span>${valueHtml}</div>`;
+  };
+
+  return `<div class="user-card-status">
+    ${activeRow}
+    ${quotaRow('🎮 Limit Game', status.download && status.download.game)}
+    ${quotaRow('🛡️ Limit Bypass', status.download && status.download.bypass)}
+  </div>`;
+}
+
 function renderUsersRows(rows, isFilteredEmpty) {
   const grid = document.getElementById('tableUsers');
   if (!rows.length) {
@@ -1019,6 +1051,7 @@ function renderUsersRows(rows, isFilteredEmpty) {
         <svg width="12" height="12" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2" style="flex-shrink:0;"><rect x="3" y="7" width="18" height="13" rx="2"/><path d="M8 3.5V7M16 3.5V7"/></svg>
         <span>${escapeHtml(u.discordId)}</span>
       </div>
+      ${accountStatusHtml(u.accountStatus)}
       <button class="btn btn-sm btn-outline user-card-action" onclick="openSetRoleModal('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}','${escapeHtml(u.role)}')">
         Set Paket
       </button>
@@ -1027,16 +1060,23 @@ function renderUsersRows(rows, isFilteredEmpty) {
 }
 
 // ─── MODAL SET ROLE — dengan Discord ID search ───
-let _setRoleTarget = null; // { discordId, username, currentRole }
+let _setRoleTarget = null; // { discordId, username, currentRole, accountStatus }
 
-function openSetRoleModal(discordId, username, currentRole) {
-  _setRoleTarget = { discordId, username, currentRole };
-  _fillSetRoleModal(discordId, username, currentRole);
-  document.getElementById('setRoleModalBackdrop').style.display = 'flex';
+// Cuma Gold & Platinum yang punya Masa Aktif — Public & Admin selalu unlimited waktu.
+function _srToggleActivePeriodGroup(role) {
+  const group = document.getElementById('srActivePeriodGroup');
+  if (!group) return;
+  group.style.display = (role === 'gold' || role === 'platinum') ? 'block' : 'none';
 }
-window.openSetRoleModal = openSetRoleModal;
 
-function _fillSetRoleModal(discordId, username, currentRole) {
+function _formatActiveUntil(dateStr) {
+  if (!dateStr) return null;
+  const d = new Date(dateStr);
+  const label = d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' });
+  return d.getTime() <= Date.now() ? `⏳ Sudah habis (${label})` : `✅ Aktif sampai ${label}`;
+}
+
+function _fillSetRoleModal(discordId, username, currentRole, accountStatus) {
   document.getElementById('srDiscordId').value = discordId || '';
   document.getElementById('srUserPreview').innerHTML = discordId
     ? `<div class="sr-preview-filled">
@@ -1047,8 +1087,32 @@ function _fillSetRoleModal(discordId, username, currentRole) {
     : '';
   const roleEl = document.getElementById('srRole');
   if (roleEl) roleEl.value = currentRole || 'public';
+
+  document.querySelectorAll('#srRoleSegment .segmented-opt').forEach(b => {
+    b.classList.toggle('active', b.dataset.role === (currentRole || 'public'));
+  });
+  _srToggleActivePeriodGroup(currentRole || 'public');
+
+  const daysInput = document.getElementById('srActiveDays');
+  if (daysInput) daysInput.value = '';
+  const infoEl = document.getElementById('srActiveCurrentInfo');
+  if (infoEl) {
+    const label = accountStatus?.hasActivePeriod ? _formatActiveUntil(accountStatus.activeUntil) : null;
+    infoEl.textContent = label ? `Masa aktif saat ini: ${label.replace(/^(✅|⏳)\s*/, '')}` : 'Masa aktif saat ini: belum diatur (unlimited waktu).';
+  }
+
   document.getElementById('srStatus').innerHTML = '';
 }
+
+function openSetRoleModal(discordId, username, currentRole) {
+  // Ambil accountStatus dari cache Users (sudah dimuat renderUsers) kalau ada, biar
+  // info masa aktif yang ditampilkan akurat tanpa perlu fetch ulang.
+  const cached = (typeof usersDataCache !== 'undefined' && usersDataCache) ? usersDataCache.find(u => u.discordId === discordId) : null;
+  _setRoleTarget = { discordId, username, currentRole, accountStatus: cached?.accountStatus || null };
+  _fillSetRoleModal(discordId, username, currentRole, cached?.accountStatus);
+  document.getElementById('setRoleModalBackdrop').style.display = 'flex';
+}
+window.openSetRoleModal = openSetRoleModal;
 
 function closeSetRoleModal() {
   document.getElementById('setRoleModalBackdrop').style.display = 'none';
@@ -1075,8 +1139,8 @@ async function searchUserByDiscordId() {
       _setRoleTarget = null;
       return;
     }
-    _setRoleTarget = { discordId: found.discordId, username: found.username, currentRole: found.role };
-    _fillSetRoleModal(found.discordId, found.username, found.role);
+    _setRoleTarget = { discordId: found.discordId, username: found.username, currentRole: found.role, accountStatus: found.accountStatus || null };
+    _fillSetRoleModal(found.discordId, found.username, found.role, found.accountStatus);
     statusEl.innerHTML = `<span style="color:var(--green);">✓ User ditemukan.</span>`;
   } catch (e) {
     statusEl.innerHTML = `<span style="color:var(--red);">✕ ${escapeHtml(e.message)}</span>`;
@@ -1093,29 +1157,43 @@ async function doSetRole() {
   const statusEl = document.getElementById('srStatus');
   if (!role) { showToast('Pilih paket dulu.', 'error'); return; }
 
+  const body = { role };
+  if (role === 'gold' || role === 'platinum') {
+    const daysRaw = document.getElementById('srActiveDays')?.value?.trim();
+    if (daysRaw) body.activeDays = Number(daysRaw);
+  }
+
   btn.textContent = 'Menyimpan...'; btn.disabled = true;
   statusEl.innerHTML = '';
 
   try {
     const result = await api(`/api/admin/users/${_setRoleTarget.discordId}/role`, {
-      method: 'PUT', body: JSON.stringify({ role })
+      method: 'PUT', body: JSON.stringify(body)
     });
 
     // Update cache
     const cached = usersDataCache.find(x => x.discordId === _setRoleTarget.discordId);
-    if (cached) cached.role = role;
+    if (cached) {
+      cached.role = role;
+      if (cached.accountStatus) {
+        cached.accountStatus.activeUntil = result.activeUntil || null;
+        cached.accountStatus.hasActivePeriod = (role === 'gold' || role === 'platinum');
+        cached.accountStatus.hasExpiry = !!result.activeUntil;
+      }
+    }
     applyUsersFilters();
     closeSetRoleModal();
 
     const ds = result?.discordSync;
+    const activeInfo = body.activeDays ? ` — masa aktif ${body.activeDays} hari.` : '';
     if (!ds || ds.ok) {
-      showToast(`✅ Paket ${_setRoleTarget.username} diubah ke ${role}${ds?.ok ? ' — Discord disinkron ✓' : ''}.`, 'success');
+      showToast(`✅ Paket ${_setRoleTarget.username} diubah ke ${role}${activeInfo}${ds?.ok ? ' Discord disinkron ✓' : ''}.`, 'success');
     } else if (ds.reason === 'not_configured') {
-      showToast(`Paket diubah ke ${role}. Mapping Discord belum diatur.`, 'default');
+      showToast(`Paket diubah ke ${role}${activeInfo} Mapping Discord belum diatur.`, 'default');
     } else if (ds.reason === 'not_member') {
-      showToast(`Paket diubah ke ${role}. User bukan member Discord.`, 'default');
+      showToast(`Paket diubah ke ${role}${activeInfo} User bukan member Discord.`, 'default');
     } else {
-      showToast(`Paket diubah ke ${role}, sync Discord gagal: ${ds.reason}`, 'error');
+      showToast(`Paket diubah ke ${role}${activeInfo} sync Discord gagal: ${ds.reason}`, 'error');
     }
   } catch (e) {
     statusEl.innerHTML = `<span style="color:var(--red);">✕ ${escapeHtml(e.message)}</span>`;
@@ -1126,25 +1204,14 @@ async function doSetRole() {
 }
 window.doSetRole = doSetRole;
 
-// Highlight segmented button di modal Set Role
+// Highlight segmented button di modal Set Role + toggle input Masa Aktif
 function _srSetRole(btn, role) {
   document.getElementById('srRole').value = role;
   document.querySelectorAll('#srRoleSegment .segmented-opt').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
+  _srToggleActivePeriodGroup(role);
 }
 window._srSetRole = _srSetRole;
-
-// Sinkron highlight saat openSetRoleModal dipanggil dengan currentRole
-window.openSetRoleModal = function(discordId, username, currentRole) {
-  _setRoleTarget = discordId ? { discordId, username, currentRole } : null;
-  _fillSetRoleModal(discordId, username, currentRole);
-  // Highlight segmented
-  document.querySelectorAll('#srRoleSegment .segmented-opt').forEach(b => {
-    b.classList.toggle('active', b.dataset.role === (currentRole || 'gold'));
-  });
-  document.getElementById('srRole').value = currentRole || 'gold';
-  document.getElementById('setRoleModalBackdrop').style.display = 'flex';
-};
 
 async function changeUserRole(discordId, role) {
   try {
@@ -1432,7 +1499,8 @@ const ROLE_SOURCE_LABEL = {
   admin: '🛠️ Admin',
   discord: '💬 Discord',
   left_guild: '🚪 Keluar Server',
-  resync: '🔄 Resync'
+  resync: '🔄 Resync',
+  expired: '⏳ Masa Aktif Habis'
 };
 
 async function renderVerifyRole() {

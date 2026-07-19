@@ -196,6 +196,126 @@ if (!JWT_SECRET) console.warn('⚠️  JWT_SECRET belum diisi di .env — token 
 let db;
 
 // ══════════════════════════════════════════════════════════════════════════
+// MASA AKTIF & LIMIT DOWNLOAD — berlaku buat semua role KECUALI admin (unlimited).
+//   • public   : tanpa masa aktif (permanen). Limit download 3x/hari utk Game DAN
+//                3x/hari utk Bypass — dua counter TERPISAH.
+//   • gold     : masa aktif diatur admin (tanggal expired). Limit download 4x/hari
+//                utk Game DAN 4x/hari utk Bypass — dua counter terpisah.
+//   • platinum : masa aktif diatur admin. Limit download UNLIMITED (Game & Bypass).
+//   • admin    : unlimited semua, tidak ada masa aktif sama sekali.
+// ══════════════════════════════════════════════════════════════════════════
+const DOWNLOAD_LIMITS = {
+  public:   { game: 3, bypass: 3 },
+  gold:     { game: 4, bypass: 4 },
+  platinum: { game: Infinity, bypass: Infinity },
+  admin:    { game: Infinity, bypass: Infinity }
+};
+
+// Tanggal hari ini di zona WIB (Asia/Jakarta), format YYYY-MM-DD. Dipakai buat reset
+// counter limit download tiap ganti hari — sengaja BUKAN tanggal UTC server (Railway
+// dkk biasanya UTC), biar "sehari" yang dimaksud sesuai jam Indonesia.
+function todayDateStrJakarta() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' }); // 'en-CA' -> 'YYYY-MM-DD'
+}
+
+// Cek apakah masa aktif user (Gold/Platinum) sudah lewat. Public & Admin tidak
+// punya masa aktif sama sekali jadi selalu false.
+function isActivePeriodExpired(user) {
+  if (user.role !== 'gold' && user.role !== 'platinum') return false;
+  if (!user.activeUntil) return false; // belum diset admin = belum ada batas waktu
+  return new Date(user.activeUntil).getTime() <= Date.now();
+}
+
+// Kalau masa aktif sudah lewat, otomatis turunkan role user ke 'public' (DB + sinkron
+// ke Discord + catat log histori — sama seperti "Set Paket" manual admin), lalu
+// kembalikan versi user yang sudah ter-update. Dipanggil di setiap request yang butuh
+// login supaya efeknya langsung kena di request berikutnya, tanpa perlu aksi admin apapun.
+async function applyExpiryIfNeeded(user) {
+  if (!isActivePeriodExpired(user)) return user;
+
+  const oldRole = user.role;
+  const discordId = user.discordId;
+  const username = user.username || discordId;
+
+  await db.collection('users').updateOne(
+    { discordId },
+    { $set: { role: 'public', roleUpdatedAt: new Date(), activeUntil: null } }
+  );
+
+  // Best-effort: sinkron Discord + log. Jangan sampai gagalnya nge-block request user.
+  try {
+    const discordSync = await roleSync.syncAppRoleToDiscord(discordId, 'public');
+    await roleSync.logRoleChange({
+      discordId, username, oldRole, newRole: 'public',
+      source: 'expired', discordSync,
+      note: 'Masa aktif habis, otomatis diturunkan ke Public.'
+    });
+  } catch (e) {
+    console.warn('[Masa Aktif] Gagal sinkron/log saat auto-downgrade:', e.message);
+  }
+
+  const updated = await db.collection('users').findOne({ discordId });
+  return updated || user;
+}
+
+// Cek + konsumsi kuota download harian. type = 'game' | 'bypass'.
+// - Kalau limit-nya Infinity (platinum & admin) -> langsung ok, TIDAK nulis apapun ke DB.
+// - Kalau counter hari ini sudah >= limit -> ok:false + pesan buat ditampilin ke user.
+// - Kalau masih ada sisa -> counter ditambah 1 & disimpan ke DB, return ok:true.
+async function consumeDownloadQuota(user, type) {
+  const limits = DOWNLOAD_LIMITS[user.role] || DOWNLOAD_LIMITS.public;
+  const limit = limits[type];
+  if (limit === Infinity) return { ok: true, limit: null, used: null, remaining: null };
+
+  const today = todayDateStrJakarta();
+  const prevUsage = (user.downloadUsage && user.downloadUsage.date === today)
+    ? user.downloadUsage
+    : { date: today, game: 0, bypass: 0 };
+
+  const used = prevUsage[type] || 0;
+  if (used >= limit) {
+    return {
+      ok: false, limit, used,
+      message: `Limit download harian untuk ${type === 'game' ? 'Game' : 'Bypass'} (${limit}x/hari) sudah tercapai. Coba lagi besok atau upgrade paket kamu.`
+    };
+  }
+
+  const newUsage = { ...prevUsage, [type]: used + 1 };
+  await db.collection('users').updateOne(
+    { discordId: user.discordId },
+    { $set: { downloadUsage: newUsage } }
+  );
+
+  return { ok: true, limit, used: newUsage[type], remaining: limit - newUsage[type] };
+}
+
+// Ringkasan masa aktif & limit download user — dipakai di /api/me (app) & Manajemen
+// Users (admin panel) biar kelihatan jelas tanpa perlu itung manual di frontend.
+function accountStatusSummary(user) {
+  const limits = DOWNLOAD_LIMITS[user.role] || DOWNLOAD_LIMITS.public;
+  const today = todayDateStrJakarta();
+  const usage = (user.downloadUsage && user.downloadUsage.date === today)
+    ? user.downloadUsage
+    : { date: today, game: 0, bypass: 0 };
+
+  const mk = (type) => {
+    const limit = limits[type];
+    if (limit === Infinity) return { limit: null, used: 0, remaining: null, unlimited: true };
+    const used = usage[type] || 0;
+    return { limit, used, remaining: Math.max(0, limit - used), unlimited: false };
+  };
+
+  const hasActivePeriod = (user.role === 'gold' || user.role === 'platinum');
+  return {
+    activeUntil: hasActivePeriod ? (user.activeUntil || null) : null,
+    hasActivePeriod,
+    hasExpiry: hasActivePeriod && !!user.activeUntil,
+    isExpired: isActivePeriodExpired(user),
+    download: { game: mk('game'), bypass: mk('bypass') }
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════════════
 // VERIFY ROLE — sinkron role App ⇄ Discord + webhook notif (lihat discordRoleSync.js)
 // ══════════════════════════════════════════════════════════════════════════
 const roleSync = require('./discordRoleSync')({ getDb: () => db, ROLE_LEVEL });
@@ -256,8 +376,12 @@ async function requireUser(req, res, next) {
 
     if (!payload?.discordId) return res.status(401).json({ error: 'Token tidak bisa dibaca.' });
 
-    const user = await db.collection('users').findOne({ discordId: payload.discordId });
+    let user = await db.collection('users').findOne({ discordId: payload.discordId });
     if (!user) return res.status(401).json({ error: 'Akun tidak ditemukan.' });
+
+    // Kalau masa aktif Gold/Platinum-nya sudah lewat, otomatis turunkan ke Public
+    // SEBELUM request lanjut diproses, biar limit/akses yang berlaku langsung yang baru.
+    user = await applyExpiryIfNeeded(user);
 
     // Token expired tapi user masih ada → issue token baru via header
     if (tokenExpired) {
@@ -523,7 +647,8 @@ function publicUser(u) {
     avatarUrl: u.avatarUrl,
     role: u.role,
     createdAt: u.createdAt || null,
-    roleUpdatedAt: u.roleUpdatedAt || null
+    roleUpdatedAt: u.roleUpdatedAt || null,
+    accountStatus: accountStatusSummary(u)
   };
 }
 
@@ -725,6 +850,13 @@ app.get('/api/games/:id/download', requireUser, async (req, res) => {
       return res.status(403).json({ error: `Game ini membutuhkan paket ${game.role}. Upgrade paket kamu dulu.` });
     }
 
+    // Cek & konsumsi limit download harian (kategori Game) — public/gold dibatasi,
+    // platinum/admin unlimited (lihat DOWNLOAD_LIMITS).
+    const quota = await consumeDownloadQuota(req.user, 'game');
+    if (!quota.ok) {
+      return res.status(429).json({ error: quota.message });
+    }
+
     const rawUrl = game.manifestUrl || game.zipUrl || null;
     if (!rawUrl) {
       return res.status(404).json({ error: 'File download untuk game ini belum diatur admin. Hubungi admin.' });
@@ -734,7 +866,8 @@ app.get('/api/games/:id/download', requireUser, async (req, res) => {
       streamPath: `/api/games/${req.params.id}/stream`, // client download lewat sini (proxy server)
       appId:      game.appId || null,
       steamAppId: game.appId || null,
-      name:       game.name
+      name:       game.name,
+      downloadQuota: quota
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -756,8 +889,9 @@ app.get('/api/games/:id/stream', async (req, res) => {
     const game = await db.collection('games').findOne({ _id: new ObjectId(req.params.id) });
     if (!game) return res.status(404).json({ error: 'Game tidak ditemukan.' });
 
-    const user = await db.collection('users').findOne({ discordId: payload.discordId });
+    let user = await db.collection('users').findOne({ discordId: payload.discordId });
     if (!user) return res.status(401).json({ error: 'User tidak ditemukan.' });
+    user = await applyExpiryIfNeeded(user);
 
     const myLevel   = ROLE_LEVEL[user.role] ?? 0;
     const gameLevel = ROLE_LEVEL[game.role] ?? 0;
@@ -801,6 +935,13 @@ app.get('/api/bypasses/:id/download-link', requireUser, async (req, res) => {
       return res.status(404).json({ error: 'Link bypass belum diatur admin. Hubungi admin untuk mengisi link file bypass.' });
     }
 
+    // Cek & konsumsi limit download harian (kategori Bypass) — public/gold dibatasi,
+    // platinum/admin unlimited (lihat DOWNLOAD_LIMITS).
+    const quota = await consumeDownloadQuota(req.user, 'bypass');
+    if (!quota.ok) {
+      return res.status(429).json({ error: quota.message });
+    }
+
     // BUG FIX: Link dari Ryuu Generator (generator.ryuu.lol) WAJIB pakai auth (session,
     // auth_key parameter, atau X-Auth-Key header) — kalau tidak, Ryuu selalu balikin
     // "Login, auth_key, or auth_code required." Sebelumnya URL dikirim mentah ke client
@@ -819,6 +960,7 @@ app.get('/api/bypasses/:id/download-link', requireUser, async (req, res) => {
         streamPath: `/api/bypasses/${req.params.id}/ryuu-stream`,
         name:       bypass.name,
         steamAppId: bypass.steamAppId || bypass.appId || null,
+        downloadQuota: quota
       });
     }
 
@@ -828,6 +970,7 @@ app.get('/api/bypasses/:id/download-link', requireUser, async (req, res) => {
       directUrl:  url,
       name:       bypass.name,
       steamAppId: bypass.steamAppId || bypass.appId || null,
+      downloadQuota: quota
     });
   } catch(e) {
     res.status(500).json({ error: e.message });
@@ -925,6 +1068,11 @@ app.get('/api/bypasses/:id/download', requireUser, async (req, res) => {
       return res.status(404).json({ error: 'File bypass belum diatur admin. Hubungi admin.' });
     }
 
+    const quota = await consumeDownloadQuota(req.user, 'bypass');
+    if (!quota.ok) {
+      return res.status(429).json({ error: quota.message });
+    }
+
     // Kembalikan appId ke client — dipakai untuk findGameFolderByAppId
     // (cari folder game di steamapps sebagai target extract).
     // Stream tetap dari link manual admin (bukan HubCap).
@@ -932,7 +1080,8 @@ app.get('/api/bypasses/:id/download', requireUser, async (req, res) => {
       streamPath: `/api/bypasses/${req.params.id}/stream`,
       steamAppId: bypass.steamAppId || bypass.appId || null,
       appId:      bypass.appId      || bypass.steamAppId || null,
-      name:       bypass.name
+      name:       bypass.name,
+      downloadQuota: quota
     });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -950,8 +1099,9 @@ app.get('/api/bypasses/:id/stream', async (req, res) => {
     const bypass = await db.collection('bypasses').findOne({ _id: new ObjectId(req.params.id) });
     if (!bypass) return res.status(404).json({ error: 'Bypass tidak ditemukan.' });
 
-    const user = await db.collection('users').findOne({ discordId: payload.discordId });
+    let user = await db.collection('users').findOne({ discordId: payload.discordId });
     if (!user) return res.status(401).json({ error: 'User tidak ditemukan.' });
+    user = await applyExpiryIfNeeded(user);
 
     const myLevel     = ROLE_LEVEL[user.role]   ?? 0;
     const bypassLevel = ROLE_LEVEL[bypass.role] ?? 0;
@@ -1369,7 +1519,7 @@ async function sendDiscordDM(userId, contentOrPayload) {
 }
 
 app.put('/api/admin/users/:discordId/role', requireAdmin, async (req, res) => {
-  const { role } = req.body;
+  const { role, activeDays } = req.body;
   if (!ROLE_LEVEL.hasOwnProperty(role)) return res.status(400).json({ error: 'Role tidak valid.' });
 
   const user = await db.collection('users').findOne({ discordId: req.params.discordId });
@@ -1379,9 +1529,29 @@ app.put('/api/admin/users/:discordId/role', requireAdmin, async (req, res) => {
   const discordId = req.params.discordId;
   const username  = user.username || discordId;
 
+  // Masa aktif (activeUntil) cuma relevan buat Gold & Platinum — Public & Admin selalu
+  // unlimited waktu jadi field-nya dikosongkan lagi kalau paketnya diubah ke salah satunya.
+  const update = { role, roleUpdatedAt: new Date() };
+  if (role === 'gold' || role === 'platinum') {
+    if (activeDays !== undefined && activeDays !== null && activeDays !== '') {
+      const days = Number(activeDays);
+      if (!Number.isFinite(days) || days <= 0) {
+        return res.status(400).json({ error: 'Masa aktif (hari) harus berupa angka lebih dari 0.' });
+      }
+      update.activeUntil = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+    } else if (oldRole !== role) {
+      // Baru pindah ke Gold/Platinum tapi masa aktifnya belum diisi -> kosongkan dulu,
+      // admin bisa atur belakangan lewat "Atur Masa Aktif" tanpa perlu ganti paket lagi.
+      update.activeUntil = null;
+    }
+    // Kalau role-nya SAMA & activeDays tidak dikirim -> activeUntil yang ada dibiarkan apa adanya.
+  } else {
+    update.activeUntil = null;
+  }
+
   await db.collection('users').updateOne(
     { discordId },
-    { $set: { role, roleUpdatedAt: new Date() } }
+    { $set: update }
   );
 
   let discordSync = null;
@@ -1432,8 +1602,56 @@ app.put('/api/admin/users/:discordId/role', requireAdmin, async (req, res) => {
     discordSync,
     dmSent: dmResult?.success ?? null,
     roleAssigned: discordSync?.added ?? null,
-    roleRemoved: discordSync?.removed ?? []
+    roleRemoved: discordSync?.removed ?? [],
+    activeUntil: update.activeUntil !== undefined ? update.activeUntil : (user.activeUntil || null)
   });
+});
+
+// "Atur Masa Aktif" — ubah/perpanjang masa aktif Gold/Platinum TANPA ganti paket.
+// Berguna buat perpanjang langganan user yang paketnya sudah benar tapi mau
+// ditambah/reset masa aktifnya (mis. user baru bayar lagi).
+app.put('/api/admin/users/:discordId/active-period', requireAdmin, async (req, res) => {
+  try {
+    const { activeDays, clear } = req.body;
+    const discordId = req.params.discordId;
+    const user = await db.collection('users').findOne({ discordId });
+    if (!user) return res.status(404).json({ error: 'User tidak ditemukan.' });
+    if (user.role !== 'gold' && user.role !== 'platinum') {
+      return res.status(400).json({ error: 'Masa aktif cuma berlaku untuk paket Gold & Platinum.' });
+    }
+
+    let activeUntil = null;
+    if (!clear) {
+      const days = Number(activeDays);
+      if (!Number.isFinite(days) || days <= 0) {
+        return res.status(400).json({ error: 'Masa aktif (hari) harus berupa angka lebih dari 0.' });
+      }
+      activeUntil = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+    }
+
+    await db.collection('users').updateOne({ discordId }, { $set: { activeUntil } });
+    res.json({ success: true, activeUntil });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// "Reset Limit Download" — reset counter download harian user hari ini ke 0 (Game &
+// Bypass). Berguna kalau user komplain limitnya kepakai gara-gara error/bug pas download.
+app.put('/api/admin/users/:discordId/reset-quota', requireAdmin, async (req, res) => {
+  try {
+    const discordId = req.params.discordId;
+    const user = await db.collection('users').findOne({ discordId });
+    if (!user) return res.status(404).json({ error: 'User tidak ditemukan.' });
+
+    await db.collection('users').updateOne(
+      { discordId },
+      { $set: { downloadUsage: { date: todayDateStrJakarta(), game: 0, bypass: 0 } } }
+    );
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ══════════════════════════════════════════════════════════════════════════

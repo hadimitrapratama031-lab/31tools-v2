@@ -569,6 +569,22 @@ table tbody tr:hover td { background: rgba(123,92,255,.05); }
 .user-card-id span { overflow: hidden; text-overflow: ellipsis; }
 .user-card-action { width: 100%; }
 
+/* ─── USER CARD — Masa Aktif & Limit Download ─── */
+.user-card-status {
+  display: flex; flex-direction: column; gap: 5px;
+  background: rgba(255,255,255,.03); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 9px 11px; margin-bottom: 12px;
+}
+.user-card-status-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  font-size: 11.5px;
+}
+.user-card-status-label { color: var(--text-faint); flex-shrink: 0; }
+.user-card-status-value { font-weight: 700; color: var(--text-dim); text-align: right; }
+.user-card-status-value.ok { color: var(--green); }
+.user-card-status-value.expired { color: var(--red); }
+.user-card-status-value.unlimited { color: var(--cyan); }
+
 /* ─── ROLE SELECT ─── */
 select.role-select {
   padding: 7px 10px; border-radius: var(--radius-sm); font-size: 12.5px;
@@ -1243,6 +1259,7 @@ select.form-input option {
 .tag.source-discord     { background: rgba(88,101,242,.18); color: #8ea1ff; box-shadow: none; }
 .tag.source-left_guild  { background: rgba(248,113,113,.14); color: var(--red); box-shadow: none; }
 .tag.source-resync      { background: rgba(61,217,245,.15); color: var(--cyan); box-shadow: none; }
+.tag.source-expired     { background: rgba(248,113,113,.14); color: var(--red); box-shadow: none; }
 /* ── Set Role Modal — User preview ── */
 .sr-preview-filled {
   background: var(--glass);
