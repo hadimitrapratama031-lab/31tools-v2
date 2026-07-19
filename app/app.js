@@ -51,13 +51,16 @@ async function api(path, options = {}) {
   let token = localStorage.getItem('token');
   let res = await doFetch(token);
 
-  // Kalau 401 → coba refresh token lalu retry sekali
+  // Simpan token baru kalau server refresh otomatis (X-New-Token header)
+  const newTokenFromHeader = res.headers.get('X-New-Token');
+  if (newTokenFromHeader) localStorage.setItem('token', newTokenFromHeader);
+
+  // Kalau masih 401 → coba refresh manual lalu retry
   if (res.status === 401 && token) {
     const newToken = await refreshToken();
     if (newToken) {
       res = await doFetch(newToken);
     } else {
-      // Refresh gagal → paksa logout
       localStorage.removeItem('token');
       showLogin();
       throw new Error('Sesi kamu sudah berakhir. Silakan login ulang.');
@@ -65,6 +68,10 @@ async function api(path, options = {}) {
   }
 
   const data = await res.json().catch(() => ({}));
+
+  // Simpan newToken dari body /api/me kalau ada
+  if (data.newToken) localStorage.setItem('token', data.newToken);
+
   if (!res.ok) throw new Error(data.error || 'Terjadi kesalahan.');
   return data;
 }
@@ -202,6 +209,18 @@ function wireNavigation() {
 // ── LOGIN OVERLAY (dibuat lewat JS, tema disamakan) ──
 let loginStatusEl, pollTimer = null;
 
+function showLogin(errorMsg = '') {
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
+  if (!document.getElementById('nvLoginOverlay')) buildLoginOverlay();
+  const overlay = document.getElementById('nvLoginOverlay');
+  if (overlay) overlay.style.display = 'flex';
+  if (els.app) els.app.style.display = 'none';
+  if (errorMsg && loginStatusEl) {
+    loginStatusEl.textContent = errorMsg;
+    loginStatusEl.style.color = '#ff7eb3';
+  }
+}
+
 function buildLoginOverlay() {
   const overlay = document.createElement('div');
   overlay.id = 'nvLoginOverlay';
@@ -243,29 +262,29 @@ function buildLoginOverlay() {
   return overlay;
 }
 
-function showLogin() {
-  if (els.app) els.app.style.display = 'none';
-  if (!document.getElementById('nvLoginOverlay')) buildLoginOverlay();
-}
-
 function hideLogin() {
   const overlay = document.getElementById('nvLoginOverlay');
-  if (overlay) overlay.remove();
+  if (overlay) overlay.style.display = 'none';
   if (els.app) els.app.style.display = '';
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 }
 
 function startLogin() {
   const deviceId = getOrCreateDeviceId();
   const openExternal = window.electronAPI?.openExternal || (url => window.open(url, '_blank'));
   openExternal(`${SERVER_URL}/auth/discord?state=${encodeURIComponent(deviceId)}`);
-  if (loginStatusEl) loginStatusEl.textContent = 'Menunggu login di browser...';
-  if (pollTimer) clearInterval(pollTimer);
+  if (loginStatusEl) {
+    loginStatusEl.textContent = 'Menunggu login di browser...';
+    loginStatusEl.style.color = '#8f8ab0';
+  }
+  if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
   pollTimer = setInterval(async () => {
     try {
       const res = await fetch(`${SERVER_URL}/auth/poll?state=${encodeURIComponent(deviceId)}`);
       const data = await res.json();
       if (data.ready) {
         clearInterval(pollTimer);
+        pollTimer = null;
         localStorage.setItem('token', data.token);
         hideLogin();
         enterApp(data.user);
@@ -277,18 +296,24 @@ function startLogin() {
 async function tryAutoLogin() {
   const token = localStorage.getItem('token');
   if (!token) { showLogin(); return; }
+
   try {
-    // api() otomatis refresh kalau token expired
+    // Coba /api/me — server otomatis refresh token kalau expired
     const user = await api('/api/me');
     hideLogin();
     enterApp(user);
   } catch (e) {
-    // Kalau sampai sini: refresh juga gagal (akun dihapus/banned)
-    // api() sudah hapus token & panggil showLogin() di dalamnya
-    if (localStorage.getItem('token')) {
-      localStorage.removeItem('token');
-      showLogin();
+    // Cek apakah error karena network (server offline) bukan karena token invalid
+    const isNetworkError = e.message.includes('fetch') || e.message.includes('network') ||
+                           e.message.includes('Failed to fetch') || e.message.includes('NetworkError');
+    if (isNetworkError) {
+      // Server offline — tetap show login tapi kasih info
+      showLogin('Server tidak bisa dihubungi. Periksa koneksi internet.');
+      return;
     }
+    // Token benar-benar tidak valid — hapus dan minta login ulang
+    localStorage.removeItem('token');
+    showLogin();
   }
 }
 

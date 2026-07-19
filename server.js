@@ -227,14 +227,34 @@ async function requireUser(req, res, next) {
     const token = authHeader.startsWith('Bearer ') ? authHeader.slice(7) : null;
     if (!token) return res.status(401).json({ error: 'Belum login.' });
 
-    const payload = jwt.verify(token, JWT_SECRET);
+    let payload;
+    let tokenExpired = false;
+    try {
+      payload = jwt.verify(token, JWT_SECRET);
+    } catch (e) {
+      if (e.name === 'TokenExpiredError') {
+        payload = jwt.decode(token); // decode tanpa verifikasi waktu
+        tokenExpired = true;
+      } else {
+        return res.status(401).json({ error: 'Token tidak valid.' });
+      }
+    }
+
+    if (!payload?.discordId) return res.status(401).json({ error: 'Token tidak bisa dibaca.' });
+
     const user = await db.collection('users').findOne({ discordId: payload.discordId });
     if (!user) return res.status(401).json({ error: 'Akun tidak ditemukan.' });
+
+    // Token expired tapi user masih ada → issue token baru via header
+    if (tokenExpired) {
+      const newToken = jwt.sign({ discordId: user.discordId }, JWT_SECRET, { expiresIn: '90d' });
+      res.setHeader('X-New-Token', newToken);
+    }
 
     req.user = user;
     next();
   } catch (e) {
-    return res.status(401).json({ error: 'Token tidak valid atau sudah kedaluwarsa.' });
+    return res.status(401).json({ error: 'Token tidak valid.' });
   }
 }
 
@@ -816,7 +836,10 @@ app.delete('/api/history/:id', requireUser, async (req, res) => {
 
 // Info akun sendiri (dipakai app buat nampilin nama/role/avatar terbaru)
 app.get('/api/me', requireUser, (req, res) => {
-  res.json(publicUser(req.user));
+  const newToken = res.getHeader('X-New-Token');
+  const resp = { ...publicUser(req.user) };
+  if (newToken) resp.newToken = newToken; // client simpan token baru kalau ada
+  res.json(resp);
 });
 
 // ══════════════════════════════════════════════════════════════════════════
