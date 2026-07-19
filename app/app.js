@@ -463,6 +463,7 @@ function startAutoRefresh() {
     await loadGames();
     await loadBypasses();
     applySearchAndFilters(); // supaya search/filter yang lagi aktif tidak ke-reset
+    await refreshCurrentUserRole(); // ← deteksi kalau role/paket user berubah (admin set paket / sync Discord)
   }, 15000); // tiap 15 detik
 
   // Refresh instan begitu app kembali difokuskan (alt-tab balik ke app)
@@ -471,7 +472,36 @@ function startAutoRefresh() {
     await loadGames();
     await loadBypasses();
     applySearchAndFilters();
+    await refreshCurrentUserRole();
   });
+}
+
+// ── Cek apakah role user berubah (misal admin "set paket" baru, atau role
+// Discord user disinkron otomatis ke app) → update tampilan + kasih toast.
+// Dipanggil berkala dari startAutoRefresh(), BUKAN endpoint baru — cukup numpang
+// lewat /api/me yang memang sudah dipanggil tiap login, sekarang dipanggil ulang
+// secara berkala juga supaya perubahan dari luar (admin panel / Discord) kelihatan
+// tanpa user perlu logout-login manual.
+async function refreshCurrentUserRole() {
+  try {
+    const fresh = await api('/api/me');
+    if (!currentUser || !fresh || fresh.role === currentUser.role) {
+      if (fresh) currentUser = { ...currentUser, ...fresh };
+      return;
+    }
+
+    const oldRole = currentUser.role;
+    currentUser = { ...currentUser, ...fresh };
+    _saveUser(currentUser);
+
+    if (els.profileRole) els.profileRole.textContent = currentUser.role;
+    showRoleUpdateToast(oldRole, currentUser.role);
+
+    // Role berubah bisa berarti akses ke game/bypass tertentu ikut berubah (naik/turun paket)
+    await loadGames();
+    await loadBypasses();
+    applySearchAndFilters();
+  } catch (e) {} // jangan ganggu app kalau cuma gagal cek role sekali (misal lagi no-internet sebentar)
 }
 
 const ROLE_BADGE_ICON = { public: '🌐', gold: '🥇', platinum: '💎' };
@@ -485,7 +515,7 @@ function roleBadgeHtml(role) {
 function onlineBadgeHtml(isOnline) {
   const online = isOnline !== false;
   return `<span class="online-pill ${online ? 'online' : 'offline'}">
-    <span class="op-dot"></span>${online ? 'Online' : 'Offline'}
+    <span class="op-dot"></span>${online ? 'Online Mode' : 'Offline Mode'}
   </span>`;
 }
 
@@ -819,7 +849,18 @@ async function loadGames() {
 
     // Render ke dashboard grid
     renderGrid(els.dashNewGrid, games);
-    renderGrid(els.dashSaleGrid, [...games].reverse());
+    // "Games On Sale" itu fitur beda yang belum ada datanya sendiri — sebelumnya
+    // cuma nampilin game yang sama (dibalik urutannya) jadi keliatan dobel sama
+    // New Games. Untuk sekarang dikosongin dulu + kasih placeholder, biar gak
+    // menyesatkan sampai fitur diskon/sale-nya beneran dibikin.
+    if (els.dashSaleGrid) {
+      els.dashSaleGrid.innerHTML = `
+        <div class="dash-empty-placeholder">
+          <div class="dash-empty-placeholder__icon">🏷️</div>
+          <div class="dash-empty-placeholder__title">Segera Hadir</div>
+          <div class="dash-empty-placeholder__text">Fitur diskon game belum tersedia.</div>
+        </div>`;
+    }
 
     // Selalu render ke gamesOnlyGrid juga (bukan cuma cek display) supaya
     // grid sudah terisi walau user belum pernah buka halaman Games
@@ -1491,6 +1532,31 @@ function showHistoriToast(msg) {
   toastEl.classList.add('show');
   clearTimeout(_historiToastTimer);
   _historiToastTimer = setTimeout(() => toastEl.classList.remove('show'), 2400);
+}
+
+// ── Toast khusus notif "role/paket kamu diperbarui" — dipanggil dari
+// refreshCurrentUserRole() begitu terdeteksi role berubah (baik karena admin
+// set paket baru, ATAU karena role Discord kamu disinkron otomatis ke app).
+// Sengaja dibuat elemen terpisah dari .histori-toast (bukan cuma info kecil,
+// ini perubahan akses yang penting buat user tau), warnanya ikut role barunya.
+const ROLE_TOAST_LABEL = { public: 'Public', gold: 'Gold', platinum: 'Platinum' };
+let _roleToastTimer = null;
+function showRoleUpdateToast(oldRole, newRole) {
+  let toastEl = document.querySelector('.role-update-toast');
+  if (!toastEl) {
+    toastEl = document.createElement('div');
+    toastEl.className = 'role-update-toast';
+    document.body.appendChild(toastEl);
+  }
+  const icon = ROLE_BADGE_ICON[newRole] || '🌐';
+  const upgraded = (CLIENT_ROLE_LEVEL[newRole] ?? 0) > (CLIENT_ROLE_LEVEL[oldRole] ?? 0);
+  toastEl.className = `role-update-toast show ${newRole}`;
+  toastEl.innerHTML = `
+    <span class="rut-icon">${upgraded ? '🎉' : icon}</span>
+    <span class="rut-text">Paket kamu diperbarui menjadi <b>${icon} ${ROLE_TOAST_LABEL[newRole] || newRole}</b></span>
+  `;
+  clearTimeout(_roleToastTimer);
+  _roleToastTimer = setTimeout(() => toastEl.classList.remove('show'), 6000);
 }
 
 // ── CONFIG ──

@@ -1073,3 +1073,53 @@ textarea.form-input { resize: vertical; min-height: 72px; }
 }
 .hist-empty__icon { font-size: 40px; }
 .hist-empty__text { line-height: 1.6; }
+
+/* ═══════════════════════════════════════════════════════════
+   VERIFY ROLE PAGE
+   ═══════════════════════════════════════════════════════════ */
+.page-header-right { display: flex; align-items: center; gap: 10px; }
+
+.vr-gateway-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  font-size: 11.5px; font-weight: 700; padding: 7px 14px; border-radius: 99px;
+  background: var(--glass); border: 1px solid var(--line-hi); color: var(--text-dim);
+}
+.vr-gateway-badge.ok      { background: rgba(74,222,128,.12); border-color: rgba(74,222,128,.3); color: var(--green); }
+.vr-gateway-badge.error   { background: rgba(248,113,113,.12); border-color: rgba(248,113,113,.3); color: var(--red); }
+
+.vr-grid {
+  display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px; margin-bottom: 4px; align-items: start;
+}
+.vr-grid .card-body .btn { width: 100%; margin-top: 4px; }
+
+.vr-toggle-row { display: flex; flex-direction: column; gap: 10px; margin: 4px 0 18px; }
+.vr-toggle {
+  display: flex; align-items: center; gap: 10px; font-size: 12.5px;
+  color: var(--text-dim); cursor: pointer; line-height: 1.5;
+}
+.vr-toggle input { accent-color: var(--violet); width: 16px; height: 16px; flex-shrink: 0; cursor: pointer; }
+
+.vr-btn-row { display: flex; gap: 10px; }
+.vr-btn-row .btn { flex: 1; margin-top: 0; }
+
+.vr-resync-row {
+  display: flex; align-items: center; justify-content: space-between; gap: 14px;
+  padding: 12px 0; border-bottom: 1px solid var(--line);
+}
+.vr-resync-row:last-of-type { border-bottom: none; }
+.vr-resync-row .btn { width: auto; margin-top: 0; flex-shrink: 0; }
+.vr-resync-title { font-size: 13px; font-weight: 700; }
+.vr-resync-desc  { font-size: 11px; color: var(--text-faint); margin-top: 2px; line-height: 1.5; }
+
+.vr-resync-result {
+  margin-top: 6px; padding: 12px 14px; border-radius: var(--radius-sm);
+  background: var(--glass); border: 1px solid var(--line);
+  font-size: 12px; color: var(--text-dim); line-height: 1.7; display: none;
+}
+.vr-resync-result.show { display: block; }
+
+.tag.source-admin      { background: rgba(123,92,255,.18); color: #a78bfa; box-shadow: none; }
+.tag.source-discord     { background: rgba(88,101,242,.18); color: #8ea1ff; box-shadow: none; }
+.tag.source-left_guild  { background: rgba(248,113,113,.14); color: var(--red); box-shadow: none; }
+.tag.source-resync      { background: rgba(61,217,245,.15); color: var(--cyan); box-shadow: none; }

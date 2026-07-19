@@ -106,6 +106,7 @@ const PAGE_META = {
   bypasses:  { title: 'Bypass',     breadcrumb: 'Pages / Bypass' },
   users:     { title: 'Users',      breadcrumb: 'Pages / Users' },
   history:   { title: 'Histori',    breadcrumb: 'Pages / Histori' },
+  verifyrole:{ title: 'Verify Role',breadcrumb: 'Pages / Verify Role' },
 };
 let currentPage = 'games';
 
@@ -139,6 +140,7 @@ function loadPage(page) {
   else if (page === 'bypasses') renderTable('bypasses');
   else if (page === 'users') renderUsers();
   else if (page === 'history') renderHistory();
+  else if (page === 'verifyrole') renderVerifyRole();
 }
 
 document.getElementById('btnAddItem').addEventListener('click', () => openItemModal(currentPage, null));
@@ -952,11 +954,27 @@ function renderUsersRows(rows, isFilteredEmpty) {
 
 async function changeUserRole(discordId, role) {
   try {
-    await api(`/api/admin/users/${discordId}/role`, { method: 'PUT', body: JSON.stringify({ role }) });
-    showToast('Role berhasil diubah ke ' + role + '.', 'success');
+    const result = await api(`/api/admin/users/${discordId}/role`, { method: 'PUT', body: JSON.stringify({ role }) });
     const u = usersDataCache.find(x => x.discordId === discordId);
     if (u) u.role = role;
     applyUsersFilters();
+
+    // Kasih tau juga status sync ke Discord-nya, biar admin gak nyangka semua otomatis
+    // beres kalau ternyata role Discord belum di-mapping / bot gak nemu usernya.
+    const ds = result?.discordSync;
+    if (!ds) {
+      showToast('Role berhasil diubah ke ' + role + '.', 'success');
+    } else if (ds.ok) {
+      showToast(`Role diubah ke ${role} — role Discord ikut disinkronkan ✓`, 'success');
+    } else if (ds.reason === 'not_configured') {
+      showToast(`Role diubah ke ${role}. Mapping role Discord belum diatur (lihat halaman Verify Role).`, 'default');
+    } else if (ds.reason === 'not_member') {
+      showToast(`Role diubah ke ${role}. User ini bukan member Discord, role Discord tidak disentuh.`, 'default');
+    } else if (ds.reason === 'bot_not_configured') {
+      showToast(`Role diubah ke ${role}. DISCORD_BOT_TOKEN/GUILD_ID belum diisi, role Discord tidak disinkron.`, 'default');
+    } else {
+      showToast(`Role diubah ke ${role}, tapi gagal sinkron ke Discord: ${(ds.errors||[]).join(', ') || ds.reason}`, 'error');
+    }
   } catch (e) {
     showToast('Gagal mengubah role: ' + e.message, 'error');
     renderUsers();
@@ -1211,4 +1229,191 @@ function showBypassPreview(name, imageUrl, appId, storeUrl) {
   if (linkEl) { linkEl.href = storeUrl || `https://store.steampowered.com/app/${appId}/`; }
 
   previewEl.style.display = 'flex';
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// VERIFY ROLE — mapping role Discord, webhook, resync, log sinkronisasi
+// ══════════════════════════════════════════════════════════════════════════
+const ROLE_SOURCE_LABEL = {
+  admin: '🛠️ Admin',
+  discord: '💬 Discord',
+  left_guild: '🚪 Keluar Server',
+  resync: '🔄 Resync'
+};
+
+async function renderVerifyRole() {
+  await Promise.all([loadRoleSyncSettings(), loadRoleSyncLogs()]);
+  wireVerifyRoleButtons();
+}
+
+async function loadRoleSyncSettings() {
+  const goldSel = document.getElementById('vrRoleGold');
+  const platSel = document.getElementById('vrRolePlatinum');
+  const webhookInput = document.getElementById('vrWebhookUrl');
+  const autoSyncEl = document.getElementById('vrAutoSync');
+  const resetOnLeaveEl = document.getElementById('vrResetOnLeave');
+  const badge = document.getElementById('vrGatewayBadge');
+
+  try {
+    const [settings, discordRoles] = await Promise.all([
+      api('/api/admin/role-sync/settings'),
+      api('/api/admin/role-sync/discord-roles').catch(() => [])
+    ]);
+
+    const optionsHtml = ['<option value="">— pilih role Discord —</option>']
+      .concat(discordRoles.map(r => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.name)}</option>`))
+      .join('');
+    goldSel.innerHTML = optionsHtml;
+    platSel.innerHTML = optionsHtml;
+    goldSel.value = settings.discordRoleMap?.gold || '';
+    platSel.value = settings.discordRoleMap?.platinum || '';
+    webhookInput.value = settings.webhookUrl || '';
+    autoSyncEl.checked = settings.autoSyncFromDiscord !== false;
+    resetOnLeaveEl.checked = settings.resetRoleOnLeave !== false;
+
+    const gw = settings.gateway || {};
+    if (gw.connected) {
+      badge.className = 'vr-gateway-badge ok';
+      badge.textContent = `🟢 Bot terhubung${gw.guildName ? ' — ' + gw.guildName : ''}`;
+    } else if (gw.error) {
+      badge.className = 'vr-gateway-badge error';
+      badge.textContent = '🔴 Bot belum terhubung';
+      badge.title = gw.error;
+    } else {
+      badge.className = 'vr-gateway-badge';
+      badge.textContent = '🟡 Menunggu koneksi bot...';
+    }
+  } catch (e) {
+    badge.className = 'vr-gateway-badge error';
+    badge.textContent = '⚠️ Gagal memuat pengaturan';
+    showToast('Gagal memuat pengaturan Verify Role: ' + e.message, 'error');
+  }
+}
+
+let _vrButtonsWired = false;
+function wireVerifyRoleButtons() {
+  if (_vrButtonsWired) return; // event listener cukup dipasang sekali, gak numpuk tiap buka halaman
+  _vrButtonsWired = true;
+
+  document.getElementById('btnSaveRoleMap').addEventListener('click', async () => {
+    const btn = document.getElementById('btnSaveRoleMap');
+    const gold = document.getElementById('vrRoleGold').value;
+    const platinum = document.getElementById('vrRolePlatinum').value;
+    const autoSyncFromDiscord = document.getElementById('vrAutoSync').checked;
+    const resetRoleOnLeave = document.getElementById('vrResetOnLeave').checked;
+    btn.disabled = true; btn.textContent = 'Menyimpan...';
+    try {
+      await api('/api/admin/role-sync/settings', {
+        method: 'PUT',
+        body: JSON.stringify({ discordRoleMap: { gold, platinum }, autoSyncFromDiscord, resetRoleOnLeave })
+      });
+      showToast('Mapping role berhasil disimpan.', 'success');
+    } catch (e) {
+      showToast('Gagal menyimpan: ' + e.message, 'error');
+    } finally {
+      btn.disabled = false; btn.textContent = '💾 Simpan Mapping';
+    }
+  });
+
+  document.getElementById('btnSaveWebhook').addEventListener('click', async () => {
+    const btn = document.getElementById('btnSaveWebhook');
+    const webhookUrl = document.getElementById('vrWebhookUrl').value.trim();
+    btn.disabled = true; btn.textContent = 'Menyimpan...';
+    try {
+      await api('/api/admin/role-sync/settings', { method: 'PUT', body: JSON.stringify({ webhookUrl }) });
+      showToast('Webhook berhasil disimpan.', 'success');
+    } catch (e) {
+      showToast('Gagal menyimpan: ' + e.message, 'error');
+    } finally {
+      btn.disabled = false; btn.textContent = '💾 Simpan Webhook';
+    }
+  });
+
+  document.getElementById('btnTestWebhook').addEventListener('click', async () => {
+    const btn = document.getElementById('btnTestWebhook');
+    btn.disabled = true; btn.textContent = 'Mengirim...';
+    try {
+      // Simpan dulu URL yang lagi diketik biar test-nya pakai URL terbaru, bukan yang tersimpan lama
+      const webhookUrl = document.getElementById('vrWebhookUrl').value.trim();
+      if (webhookUrl) await api('/api/admin/role-sync/settings', { method: 'PUT', body: JSON.stringify({ webhookUrl }) });
+      await api('/api/admin/role-sync/test-webhook', { method: 'POST' });
+      showToast('Test webhook terkirim, cek channel Discord kamu.', 'success');
+    } catch (e) {
+      showToast('Gagal kirim test webhook: ' + e.message, 'error');
+    } finally {
+      btn.disabled = false; btn.textContent = '📨 Kirim Test';
+    }
+  });
+
+  document.getElementById('btnResyncToDiscord').addEventListener('click', () => runResync('app_to_discord'));
+  document.getElementById('btnResyncToApp').addEventListener('click', () => runResync('discord_to_app'));
+}
+
+async function runResync(direction) {
+  const label = direction === 'app_to_discord' ? 'App → Discord' : 'Discord → App';
+  if (!confirm(`Jalankan full resync ${label} untuk SEMUA user sekarang?`)) return;
+
+  const btnId = direction === 'app_to_discord' ? 'btnResyncToDiscord' : 'btnResyncToApp';
+  const btn = document.getElementById(btnId);
+  const resultEl = document.getElementById('vrResyncResult');
+  btn.disabled = true; btn.textContent = 'Memproses...';
+  resultEl.className = 'vr-resync-result show';
+  resultEl.textContent = `⏳ Sedang menjalankan resync ${label}, mohon tunggu (bisa beberapa menit tergantung jumlah user)...`;
+
+  try {
+    const summary = await api('/api/admin/role-sync/resync', { method: 'POST', body: JSON.stringify({ direction }) });
+    resultEl.innerHTML = `
+      ✅ Resync ${label} selesai.<br>
+      Total diproses: <b>${summary.total}</b> ·
+      Diperbarui: <b style="color:var(--green);">${summary.updated}</b> ·
+      Dilewati: <b>${summary.skipped}</b> ·
+      Gagal: <b style="color:${summary.failed ? 'var(--red)' : 'inherit'};">${summary.failed}</b>
+      ${summary.details?.length ? `<br><span style="color:var(--text-faint);">${summary.details.slice(0,5).map(d => escapeHtml(d.username + ': ' + (d.reason||'error'))).join(', ')}</span>` : ''}
+    `;
+    showToast('Resync selesai.', 'success');
+    loadRoleSyncLogs();
+    if (currentPage === 'users') renderUsers();
+  } catch (e) {
+    resultEl.textContent = '❌ Resync gagal: ' + e.message;
+    showToast('Resync gagal: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Jalankan';
+  }
+}
+
+async function loadRoleSyncLogs() {
+  const table = document.getElementById('tableRoleLogs');
+  table.innerHTML = `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">⏳</span>Memuat log...</td></tr>`;
+  try {
+    const rows = await api('/api/admin/role-sync/logs');
+    if (!rows.length) {
+      table.innerHTML = `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">📜</span>Belum ada perubahan role yang tercatat.</td></tr>`;
+      return;
+    }
+    table.innerHTML = `
+      <thead><tr>
+        <th>User</th>
+        <th>Perubahan</th>
+        <th>Sumber</th>
+        <th style="width:130px;">Waktu</th>
+      </tr></thead>
+      <tbody>
+      ${rows.map(r => `
+        <tr>
+          <td>
+            <div class="cell-name">${escapeHtml(r.username || r.discordId)}</div>
+            <div style="color:var(--text-faint);font-size:11.5px;">${escapeHtml(r.discordId)}</div>
+          </td>
+          <td>${roleTagHtml(r.oldRole || 'public')} → ${roleTagHtml(r.newRole)}
+            ${r.discordSynced === false ? `<div style="color:var(--red);font-size:11px;margin-top:4px;">⚠️ Sync Discord gagal${r.discordSyncReason ? ' ('+escapeHtml(r.discordSyncReason)+')' : ''}</div>` : ''}
+          </td>
+          <td><span class="tag source-${r.source}">${ROLE_SOURCE_LABEL[r.source] || r.source}</span></td>
+          <td class="cell-time" style="margin-top:0;">${timeAgo(r.createdAt)}</td>
+        </tr>
+      `).join('')}
+      </tbody>
+    `;
+  } catch (e) {
+    table.innerHTML = `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">⚠️</span>Gagal memuat: ${escapeHtml(e.message)}</td></tr>`;
+  }
 }

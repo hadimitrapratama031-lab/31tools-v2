@@ -62,6 +62,10 @@
           <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></span>
           Histori
         </button>
+        <button class="nav-item" data-page="verifyrole">
+          <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg></span>
+          Verify Role
+        </button>
       </nav>
     </div>
     <div class="sidebar-footer">
@@ -335,6 +339,100 @@
         </div>
         <table id="tableHistory"></table>
         <div class="pagination" id="historyPagination" style="display:none;"></div>
+      </div>
+    </section>
+
+    <!-- VERIFY ROLE PAGE -->
+    <section class="page" id="pageVerifyrole">
+      <div class="page-header">
+        <div class="page-header-left">
+          <div class="page-header-icon" style="background:rgba(167,139,250,.16);">🔗</div>
+          <div>
+            <div class="page-header-title">Verify Role</div>
+            <div class="page-header-desc">Role di app terikat 2 arah dengan role Discord, + webhook notif tiap ada perubahan.</div>
+          </div>
+        </div>
+        <div class="page-header-right">
+          <span class="vr-gateway-badge" id="vrGatewayBadge">⏳ Mengecek koneksi bot...</span>
+        </div>
+      </div>
+
+      <div class="vr-grid">
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">🎯 Mapping Role Discord</div>
+            <div class="card-sub">Tentukan role Discord mana yang mewakili tiap paket di app.</div>
+          </div>
+          <div class="card-body">
+            <div class="form-group">
+              <label class="form-label">🥇 Paket Gold ↔ Role Discord</label>
+              <select class="form-input" id="vrRoleGold"><option value="">— pilih role Discord —</option></select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">💎 Paket Platinum ↔ Role Discord</label>
+              <select class="form-input" id="vrRolePlatinum"><option value="">— pilih role Discord —</option></select>
+            </div>
+            <div class="vr-toggle-row">
+              <label class="vr-toggle">
+                <input type="checkbox" id="vrAutoSync" checked>
+                <span>Sinkron otomatis kalau role diubah manual di Discord</span>
+              </label>
+              <label class="vr-toggle">
+                <input type="checkbox" id="vrResetOnLeave" checked>
+                <span>Reset ke Public kalau user keluar dari server Discord</span>
+              </label>
+            </div>
+            <button class="btn btn-primary" id="btnSaveRoleMap">💾 Simpan Mapping</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">📣 Webhook Notifikasi</div>
+            <div class="card-sub">Kirim notif ke channel Discord tiap kali paket/role user berubah.</div>
+          </div>
+          <div class="card-body">
+            <div class="form-group">
+              <label class="form-label">Webhook URL</label>
+              <input class="form-input" type="text" id="vrWebhookUrl" placeholder="https://discord.com/api/webhooks/...">
+            </div>
+            <div class="vr-btn-row">
+              <button class="btn btn-secondary" id="btnTestWebhook">📨 Kirim Test</button>
+              <button class="btn btn-primary" id="btnSaveWebhook">💾 Simpan Webhook</button>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <div class="card-title">🔄 Full Resync</div>
+            <div class="card-sub">Samakan paksa semua role user, dua arah bisa dipilih.</div>
+          </div>
+          <div class="card-body">
+            <div class="vr-resync-row">
+              <div>
+                <div class="vr-resync-title">App → Discord</div>
+                <div class="vr-resync-desc">Dorong role yang ada di app sekarang ke Discord semua user.</div>
+              </div>
+              <button class="btn btn-secondary" id="btnResyncToDiscord">Jalankan</button>
+            </div>
+            <div class="vr-resync-row">
+              <div>
+                <div class="vr-resync-title">Discord → App</div>
+                <div class="vr-resync-desc">Tarik role Discord yang sebenarnya, jadikan role di app.</div>
+              </div>
+              <button class="btn btn-secondary" id="btnResyncToApp">Jalankan</button>
+            </div>
+            <div class="vr-resync-result" id="vrResyncResult"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="table-wrap" style="margin-top:20px;">
+        <div class="table-toolbar">
+          <div class="table-toolbar-title">📜 Log Sinkronisasi Role</div>
+        </div>
+        <table id="tableRoleLogs"></table>
       </div>
     </section>
   </main>

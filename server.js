@@ -193,6 +193,11 @@ if (!JWT_SECRET) console.warn('⚠️  JWT_SECRET belum diisi di .env — token 
 let db;
 
 // ══════════════════════════════════════════════════════════════════════════
+// VERIFY ROLE — sinkron role App ⇄ Discord + webhook notif (lihat discordRoleSync.js)
+// ══════════════════════════════════════════════════════════════════════════
+const roleSync = require('./discordRoleSync')({ getDb: () => db, ROLE_LEVEL });
+
+// ══════════════════════════════════════════════════════════════════════════
 // DATABASE
 // ══════════════════════════════════════════════════════════════════════════
 async function connectDB() {
@@ -213,6 +218,8 @@ async function connectDB() {
     await db.collection('bypasses').createIndex({ role: 1 });
     await db.collection('history').createIndex({ userId: 1, createdAt: -1 });
     await db.collection('pendingLogins').createIndex({ createdAt: 1 }, { expireAfterSeconds: 600 });
+    await db.collection('roleSyncLogs').createIndex({ createdAt: -1 });
+    await db.collection('roleSyncLogs').createIndex({ discordId: 1 });
   } catch (e) {
     console.error('❌ Gagal konek MongoDB:', e.message);
     // TIDAK process.exit() — server tetap jalan supaya endpoint /health dan interactions tetap bisa diakses
@@ -477,7 +484,8 @@ function publicUser(u) {
     username: u.username,
     avatarUrl: u.avatarUrl,
     role: u.role,
-    createdAt: u.createdAt || null
+    createdAt: u.createdAt || null,
+    roleUpdatedAt: u.roleUpdatedAt || null
   };
 }
 
@@ -1241,11 +1249,116 @@ app.get('/api/admin/users', requireAdmin, async (req, res) => {
   res.json(rows.map(publicUser));
 });
 
+// "Set paket" — ganti role user dari admin panel. Ini juga sekaligus:
+//   1) push role barunya ke Discord (add role tier yang sesuai, cabut role tier lain)
+//   2) catat log histori perubahan role
+//   3) kirim notif webhook ke channel Discord
+// Kalau sync ke Discord gagal (misal role belum di-mapping, atau usernya sudah bukan
+// member Discord), role di APP TETAP berhasil diubah — cuma sync Discord-nya yang
+// dilaporkan gagal di response, biar admin tau tapi gak nge-block operasi utamanya.
 app.put('/api/admin/users/:discordId/role', requireAdmin, async (req, res) => {
   const { role } = req.body;
   if (!ROLE_LEVEL.hasOwnProperty(role)) return res.status(400).json({ error: 'Role tidak valid.' });
-  await db.collection('users').updateOne({ discordId: req.params.discordId }, { $set: { role } });
-  res.json({ success: true });
+
+  const user = await db.collection('users').findOne({ discordId: req.params.discordId });
+  if (!user) return res.status(404).json({ error: 'User tidak ditemukan.' });
+
+  const oldRole = user.role;
+  await db.collection('users').updateOne(
+    { discordId: req.params.discordId },
+    { $set: { role, roleUpdatedAt: new Date() } }
+  );
+
+  let discordSync = null;
+  if (oldRole !== role) {
+    discordSync = await roleSync.syncAppRoleToDiscord(req.params.discordId, role);
+    await roleSync.logRoleChange({
+      discordId: req.params.discordId,
+      username: user.username,
+      oldRole, newRole: role,
+      source: 'admin',
+      discordSync
+    });
+  }
+
+  res.json({ success: true, discordSync });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// ADMIN — VERIFY ROLE (sinkron role App ⇄ Discord, webhook, resync, log)
+// ══════════════════════════════════════════════════════════════════════════
+
+// Ambil setting saat ini (role mapping, webhook url, dll) + status koneksi bot gateway
+app.get('/api/admin/role-sync/settings', requireAdmin, async (req, res) => {
+  try {
+    const settings = await roleSync.getSettings();
+    res.json({ ...settings, gateway: roleSync.getGatewayStatus() });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Simpan mapping role Discord (gold/platinum → role ID) & webhook URL
+app.put('/api/admin/role-sync/settings', requireAdmin, async (req, res) => {
+  try {
+    const { discordRoleMap, webhookUrl, autoSyncFromDiscord, resetRoleOnLeave } = req.body;
+    const updated = await roleSync.updateSettings({ discordRoleMap, webhookUrl, autoSyncFromDiscord, resetRoleOnLeave });
+    res.json(updated);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Daftar role yang ada di server Discord (buat dropdown pilih "role mana = Gold/Platinum")
+app.get('/api/admin/role-sync/discord-roles', requireAdmin, async (req, res) => {
+  try {
+    const roles = await roleSync.getGuildRoles();
+    // Buang @everyone & role yang dikelola bot lain (managed) — gak relevan buat dipilih manual
+    const filtered = (roles || [])
+      .filter(r => r.name !== '@everyone' && !r.managed)
+      .sort((a, b) => b.position - a.position)
+      .map(r => ({ id: r.id, name: r.name, color: r.color }));
+    res.json(filtered);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Kirim pesan test ke webhook yang lagi disetel
+app.post('/api/admin/role-sync/test-webhook', requireAdmin, async (req, res) => {
+  try {
+    const result = await roleSync.sendTestWebhook();
+    if (!result.sent) return res.status(400).json({ error: 'Gagal kirim webhook. Cek lagi URL webhook-nya.' });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Full resync 2 arah — app_to_discord (dorong semua role app ke Discord) atau
+// discord_to_app (tarik role Discord aktual jadi role app). Dipakai sekali pas
+// awal setup fitur ini, atau kalau dicurigai ada yang "kesenggol" manual & out-of-sync.
+app.post('/api/admin/role-sync/resync', requireAdmin, async (req, res) => {
+  try {
+    const { direction } = req.body;
+    if (!['app_to_discord', 'discord_to_app'].includes(direction)) {
+      return res.status(400).json({ error: 'direction harus app_to_discord atau discord_to_app.' });
+    }
+    const summary = await roleSync.fullResync(direction);
+    res.json(summary);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Log histori perubahan role (dari admin, dari Discord, atau karena keluar server)
+app.get('/api/admin/role-sync/logs', requireAdmin, async (req, res) => {
+  try {
+    const rows = await db.collection('roleSyncLogs').find({}).sort({ createdAt: -1 }).limit(200).toArray();
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1438,3 +1551,7 @@ app.listen(PORT, () => {
 connectDB().catch(e => {
   console.error('❌ Gagal konek MongoDB:', e.message);
 });
+
+// Gateway Discord buat fitur Verify Role (Discord→App). Independen dari DB —
+// tetap dicoba connect walau MongoDB lagi lambat/gagal, biar gak saling nge-block.
+roleSync.startGateway();
