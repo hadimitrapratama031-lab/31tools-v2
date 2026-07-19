@@ -183,6 +183,7 @@ const PAGE_META = {
   users:     { title: 'Users',      breadcrumb: 'Pages / Users' },
   history:   { title: 'Histori',    breadcrumb: 'Pages / Histori' },
   verifyrole:{ title: 'Verify Role',breadcrumb: 'Pages / Verify Role' },
+  webhooks:  { title: 'Webhook Settings', breadcrumb: 'Pages / Webhook Settings' },
 };
 let currentPage = 'games';
 
@@ -217,6 +218,7 @@ function loadPage(page) {
   else if (page === 'users') renderUsers();
   else if (page === 'history') renderHistory();
   else if (page === 'verifyrole') renderVerifyRole();
+  else if (page === 'webhooks') renderWebhookSettings();
 }
 
 document.getElementById('btnAddItem').addEventListener('click', () => openItemModal(currentPage, null));
@@ -1725,4 +1727,112 @@ async function loadRoleSyncLogs() {
   } catch (e) {
     table.innerHTML = `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">⚠️</span>Gagal memuat: ${escapeHtml(e.message)}</td></tr>`;
   }
+}
+// ─── WEBHOOK SETTINGS ───
+// Satu card berisi N baris (satu per kategori notifikasi). Setiap baris render
+// dinamis dari data /api/admin/webhooks (bukan di-hardcode di HTML) supaya kalau
+// suatu saat nambah kategori baru di webhookManager.js, panel ini otomatis ikut
+// menampilkannya tanpa perlu ubah admin.html.
+const WH_STATUS_LABEL = { valid: '🟢 Valid', invalid: '🔴 Invalid', unknown: '⚪ Belum diuji' };
+
+function whRowHtml(row) {
+  const statusClass = row.status === 'valid' ? 'valid' : row.status === 'invalid' ? 'invalid' : 'unknown';
+  const statusLabel = WH_STATUS_LABEL[row.status] || WH_STATUS_LABEL.unknown;
+  return `
+    <div class="wh-row" data-category="${escapeHtml(row.key)}">
+      <div class="wh-row-head">
+        <div>
+          <div class="wh-row-title">
+            ${row.icon || '🔔'} ${escapeHtml(row.label)}
+            ${row.optional ? '<span class="wh-optional-tag">Opsional</span>' : ''}
+          </div>
+          <div class="wh-row-desc">${escapeHtml(row.description || '')}</div>
+        </div>
+        <span class="wh-status ${statusClass}" data-wh-status title="${row.lastError ? escapeHtml(row.lastError) : ''}">${statusLabel}</span>
+      </div>
+      <div class="wh-row-body">
+        <input class="form-input" type="text" data-wh-url placeholder="https://discord.com/api/webhooks/..." value="${escapeHtml(row.url || '')}">
+        <label class="wh-toggle">
+          <input type="checkbox" data-wh-enabled ${row.enabled ? 'checked' : ''}>
+          Aktif
+        </label>
+        <button class="btn btn-secondary btn-sm" data-wh-test>📨 Test</button>
+        <button class="btn btn-primary btn-sm" data-wh-save>💾 Simpan</button>
+      </div>
+    </div>
+  `;
+}
+
+async function renderWebhookSettings() {
+  const container = document.getElementById('whList');
+  container.innerHTML = `<div class="empty-cell"><span class="empty-icon">⏳</span>Memuat pengaturan webhook...</div>`;
+  try {
+    const rows = await api('/api/admin/webhooks');
+    container.innerHTML = rows.map(whRowHtml).join('');
+    wireWebhookSettingsButtons();
+  } catch (e) {
+    container.innerHTML = `<div class="empty-cell"><span class="empty-icon">⚠️</span>Gagal memuat pengaturan webhook: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+let _whButtonsWired = false;
+function wireWebhookSettingsButtons() {
+  if (_whButtonsWired) return; // event delegation di container — cukup dipasang sekali, gak numpuk tiap render ulang
+  _whButtonsWired = true;
+  const container = document.getElementById('whList');
+
+  container.addEventListener('click', async (e) => {
+    const rowEl = e.target.closest('.wh-row');
+    if (!rowEl) return;
+    const category = rowEl.dataset.category;
+    const urlInput = rowEl.querySelector('[data-wh-url]');
+    const enabledInput = rowEl.querySelector('[data-wh-enabled]');
+    const statusEl = rowEl.querySelector('[data-wh-status]');
+
+    if (e.target.matches('[data-wh-save]')) {
+      const btn = e.target;
+      const originalText = btn.textContent;
+      btn.disabled = true; btn.textContent = 'Menyimpan...';
+      try {
+        const updated = await api(`/api/admin/webhooks/${encodeURIComponent(category)}`, {
+          method: 'PUT',
+          body: JSON.stringify({ url: urlInput.value.trim(), enabled: enabledInput.checked })
+        });
+        const cls = updated.status === 'valid' ? 'valid' : updated.status === 'invalid' ? 'invalid' : 'unknown';
+        statusEl.className = `wh-status ${cls}`;
+        statusEl.textContent = WH_STATUS_LABEL[updated.status] || WH_STATUS_LABEL.unknown;
+        statusEl.title = updated.lastError || '';
+        showToast(`Webhook "${updated.label}" berhasil disimpan.`, 'success');
+      } catch (err) {
+        showToast('Gagal menyimpan: ' + err.message, 'error');
+      } finally {
+        btn.disabled = false; btn.textContent = originalText;
+      }
+    }
+
+    if (e.target.matches('[data-wh-test]')) {
+      const btn = e.target;
+      const originalText = btn.textContent;
+      const url = urlInput.value.trim();
+      if (!url) { showToast('Isi URL webhook dulu sebelum mengirim test.', 'error'); return; }
+      btn.disabled = true; btn.textContent = 'Mengirim...';
+      try {
+        await api(`/api/admin/webhooks/${encodeURIComponent(category)}/test`, {
+          method: 'POST',
+          body: JSON.stringify({ url })
+        });
+        statusEl.className = 'wh-status valid';
+        statusEl.textContent = WH_STATUS_LABEL.valid;
+        statusEl.title = '';
+        showToast('Test webhook terkirim, cek channel Discord kamu.', 'success');
+      } catch (err) {
+        statusEl.className = 'wh-status invalid';
+        statusEl.textContent = WH_STATUS_LABEL.invalid;
+        statusEl.title = err.message;
+        showToast('Gagal kirim test webhook: ' + err.message, 'error');
+      } finally {
+        btn.disabled = false; btn.textContent = originalText;
+      }
+    }
+  });
 }

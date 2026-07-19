@@ -262,7 +262,7 @@ async function applyExpiryIfNeeded(user) {
     type: 'period_expired',
     title: 'Masa Aktif Berakhir',
     message: `Masa aktif paket ${oldRole.toUpperCase()} kamu telah berakhir dan otomatis diturunkan ke Public.`,
-    dm: true, webhook: false
+    dm: true, webhook: true
   }).catch(() => {});
   pushAccountUpdate(discordId).catch(() => {});
 
@@ -304,14 +304,14 @@ async function consumeDownloadQuota(user, type) {
       type: 'quota_empty',
       title: `Limit Download ${label} Habis`,
       message: `Limit download harian kamu untuk ${label} (${limit}x/hari) sudah habis. Reset otomatis besok jam 00:00 WIB.`,
-      dm: true
+      dm: true, webhook: true
     }).catch(() => {});
   } else if (remaining === 1 && limit > 1) {
     notifyUser(user.discordId, {
       type: 'quota_low',
       title: `Limit Download ${label} Hampir Habis`,
       message: `Sisa limit download ${label} kamu tinggal ${remaining}x hari ini.`,
-      dm: true
+      dm: true, webhook: true
     }).catch(() => {});
   }
   pushAccountUpdate(user.discordId).catch(() => {});
@@ -406,20 +406,14 @@ async function pushAccountUpdate(discordId) {
 // ══════════════════════════════════════════════════════════════════════════
 // NOTIFIKASI — In-App + Discord DM + Discord Webhook
 // ══════════════════════════════════════════════════════════════════════════
-// Kirim webhook generik ke Discord (dipisah dari webhook role-sync di discordRoleSync.js
-// supaya notifikasi harian user — download, limit, masa aktif — tidak nyampur sama log
-// admin/role di channel yang berbeda). URL diambil dari .env, dengan fallback ke webhook
-// role-sync kalau operator cuma mau pakai satu channel saja.
-async function sendDiscordWebhook(embed) {
-  const url = process.env.DISCORD_NOTIF_WEBHOOK_URL || process.env.DISCORD_WEBHOOK_URL;
-  if (!url) return { success: false, reason: 'no_webhook_url' };
-  try {
-    await axios.post(url, { embeds: [embed] });
-    return { success: true };
-  } catch (e) {
-    console.warn('[Webhook Notif] Gagal kirim:', e.response?.data?.message || e.message);
-    return { success: false, error: e.message };
-  }
+// Kirim webhook notifikasi ke channel Discord SESUAI KATEGORINYA (lihat
+// webhookManager.js + WEBHOOK_CATEGORY_BY_NOTIF_TYPE di atas). Setiap kategori
+// (Download Berhasil, Limit Habis, Pengumuman, dst) punya webhook URL sendiri
+// yang diatur dari Admin Web > Webhook Settings — best-effort, tidak pernah
+// melempar error ke pemanggil kalau webhook-nya belum diatur/gagal kirim.
+async function sendDiscordWebhook(notifType, embed) {
+  const category = WEBHOOK_CATEGORY_BY_NOTIF_TYPE[notifType] || 'announcement';
+  return webhookManager.sendCategoryWebhook(category, embed);
 }
 
 const NOTIF_COLOR = {
@@ -481,11 +475,10 @@ async function notifyUser(discordId, { type, title, message, meta = {}, dm = tru
     }).catch(() => {});
   }
   if (webhook) {
-    sendDiscordWebhook({
+    sendDiscordWebhook(type, {
       color: NOTIF_COLOR[type] ?? 0x7c5cff,
       title: `${icon} ${title}`,
-      description: `${message}\n\n👤 <@${discordId}> (\`${discordId}\`)`,
-      timestamp: new Date().toISOString()
+      description: `${message}\n\n👤 <@${discordId}> (\`${discordId}\`)`
     }).catch(() => {});
   }
 
@@ -500,17 +493,34 @@ async function notifyAllUsers({ title, message, dm = false, webhook = true }) {
     users.map(u => notifyUser(u.discordId, { type: 'announcement', title, message, dm, webhook: false }))
   );
   if (webhook) {
-    await sendDiscordWebhook({
+    await sendDiscordWebhook('announcement', {
       color: NOTIF_COLOR.announcement,
       title: `📢 ${title}`,
-      description: message,
-      timestamp: new Date().toISOString()
+      description: message
     }).catch(() => {});
   }
   return results.length;
 }
 
 const roleSync = require('./discordRoleSync')({ getDb: () => db, ROLE_LEVEL });
+
+// Webhook Discord PER KATEGORI notifikasi (lihat webhookManager.js) — menggantikan
+// webhook tunggal DISCORD_NOTIF_WEBHOOK_URL lama. Diatur dari Admin Web > Webhook
+// Settings, disimpan di DB, berlaku realtime tanpa restart.
+const webhookManager = require('./webhookManager')({ getDb: () => db });
+
+// Pemetaan jenis notifikasi in-app (`type` di notifyUser) -> kategori webhook.
+// Dipakai supaya satu fungsi notifyUser tetap bisa dipanggil dari mana saja,
+// tapi webhook-nya otomatis nyampur ke channel Discord yang benar sesuai kategori.
+const WEBHOOK_CATEGORY_BY_NOTIF_TYPE = {
+  download_success: 'download_success',
+  download_failed:  'download_failed',
+  quota_low:         'quota_low',
+  quota_empty:       'quota_empty',
+  period_low:        'period_low',
+  period_expired:    'period_expired',
+  announcement:      'announcement'
+};
 
 // ══════════════════════════════════════════════════════════════════════════
 // DATABASE
@@ -1453,7 +1463,7 @@ app.post('/api/history', requireUser, async (req, res) => {
       title: 'Download Berhasil',
       message: `${item?.name || fallbackName || 'Item'} (${itemType === 'game' ? 'Game' : 'Bypass'}) berhasil di-download & dipasang.`,
       meta: { itemType, itemId },
-      dm: false, webhook: false
+      dm: false, webhook: true
     }).catch(() => {});
 
     res.json({ success: true, _id: insertResult.insertedId });
@@ -1471,7 +1481,7 @@ app.post('/api/downloads/failed', requireUser, async (req, res) => {
       type: 'download_failed',
       title: 'Download Gagal',
       message: `Download ${itemName || 'item'} (${itemType === 'game' ? 'Game' : 'Bypass'}) gagal.${reason ? ' Alasan: ' + reason : ''}`,
-      dm: false, webhook: false
+      dm: false, webhook: true
     }).catch(() => {});
     res.json({ success: true });
   } catch (e) {
@@ -1915,13 +1925,20 @@ app.put('/api/admin/users/:discordId/role', requireAdmin, async (req, res) => {
       }]
     });
 
-    // 3. Log + webhook detail ke channel Discord (via roleSync)
+    // 3. Log + webhook detail ke channel Discord (via roleSync — log audit Verify Role)
     await roleSync.logRoleChange({
       discordId, username, oldRole, newRole: role,
       source: 'admin',
       discordSync,
       dmResult
     });
+
+    // 3b. Webhook kategori "Pembelian Paket" — channel Discord terpisah, khusus buat
+    // notif tiap kali admin mengaktifkan/mengubah paket seorang user (best-effort).
+    webhookManager.sendCategoryWebhook('purchase', {
+      title: `${ROLE_ICON[role] || '🎮'} Paket Diperbarui`,
+      description: `👤 **${username}** (\`${discordId}\`)\n${ROLE_ICON[oldRole] || '❓'} **${oldRole}** → ${ROLE_ICON[role] || '🌐'} **${role}**\n${ROLE_DESC[role] || ''}`
+    }).catch(() => {});
 
     // 4. Realtime ke client — user tidak perlu reload, role langsung terupdate
     // Cara: tandai di DB field realtimePush, diambil pollingnya refreshCurrentUserRole (tiap 15 detik)
@@ -1972,6 +1989,16 @@ app.put('/api/admin/users/:discordId/active-period', requireAdmin, async (req, r
         : `Masa aktif paket kamu telah diperpanjang oleh Admin, aktif sampai ${activeUntil.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB.`,
       dm: true, webhook: false
     }).catch(() => {});
+
+    // Webhook kategori "Perpanjangan Paket" — channel Discord terpisah, khusus buat
+    // notif tiap kali admin memperpanjang/mereset masa aktif paket user (best-effort).
+    webhookManager.sendCategoryWebhook('renewal', {
+      title: clear ? '🔄 Masa Aktif Direset' : '🔄 Masa Aktif Diperpanjang',
+      description: `👤 **${user.username || discordId}** (\`${discordId}\`) — paket **${user.role.toUpperCase()}**\n${
+        clear ? 'Masa aktif direset oleh Admin.' : `Aktif sampai ${activeUntil.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB.`
+      }`
+    }).catch(() => {});
+
     pushAccountUpdate(discordId).catch(() => {});
 
     res.json({ success: true, activeUntil });
@@ -2028,6 +2055,46 @@ app.get('/api/admin/notifications', requireAdmin, async (req, res) => {
     res.json(rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// ADMIN — WEBHOOK SETTINGS (webhook Discord per kategori notifikasi)
+// ══════════════════════════════════════════════════════════════════════════
+
+// Daftar semua kategori + status konfigurasinya (url terset/tidak, aktif/tidak,
+// status terakhir Valid/Invalid). Dipakai buat render halaman Webhook Settings.
+app.get('/api/admin/webhooks', requireAdmin, async (req, res) => {
+  try {
+    const rows = await webhookManager.getAll();
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Simpan/ubah URL & status aktif satu kategori webhook. Berlaku langsung
+// (realtime) — notifikasi berikutnya utk kategori ini otomatis pakai URL baru,
+// tanpa perlu restart server.
+app.put('/api/admin/webhooks/:category', requireAdmin, async (req, res) => {
+  try {
+    const { url, enabled } = req.body;
+    const updated = await webhookManager.upsert(req.params.category, { url, enabled });
+    res.json(updated);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Kirim pesan uji coba ke satu kategori webhook. Body opsional { url } dipakai
+// kalau admin mau test URL yang baru diketik SEBELUM disimpan.
+app.post('/api/admin/webhooks/:category/test', requireAdmin, async (req, res) => {
+  try {
+    const result = await webhookManager.testWebhook(req.params.category, req.body?.url);
+    if (!result.sent) return res.status(400).json({ error: result.error || 'Gagal mengirim test webhook. Cek lagi URL-nya.' });
+    res.json({ success: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
   }
 });
 
@@ -2313,7 +2380,7 @@ async function scanExpiringPeriods() {
         type: 'period_low',
         title: 'Masa Aktif Hampir Habis',
         message: `Masa aktif paket ${u.role.toUpperCase()} kamu tersisa sekitar ${hoursLeft} jam lagi. Perpanjang sekarang biar tidak terputus.`,
-        dm: true, webhook: false
+        dm: true, webhook: true
       });
       await db.collection('users').updateOne({ discordId: u.discordId }, { $set: { periodWarnedAt: new Date() } });
     }
@@ -2360,6 +2427,28 @@ setInterval(() => {
     try { ws.ping(); } catch {}
   });
 }, 30000);
+
+// ══════════════════════════════════════════════════════════════════════════
+// WEBHOOK — kategori "Error Sistem" (opsional, default OFF). Best-effort,
+// sengaja TIDAK process.exit()/crash walau ada error tak tertangani — biar
+// sejalan dengan filosofi keseluruhan file ini (kegagalan satu bagian tidak
+// boleh menghentikan proses utama). Admin bisa aktifkan lewat Webhook Settings
+// kalau mau dapat notif Discord tiap kali ada error semacam ini.
+// ══════════════════════════════════════════════════════════════════════════
+process.on('unhandledRejection', (reason) => {
+  console.error('[Unhandled Rejection]', reason);
+  webhookManager.sendCategoryWebhook('system_error', {
+    title: '⚠️ Unhandled Promise Rejection',
+    description: '```' + String(reason?.stack || reason).slice(0, 1500) + '```'
+  }).catch(() => {});
+});
+process.on('uncaughtException', (err) => {
+  console.error('[Uncaught Exception]', err);
+  webhookManager.sendCategoryWebhook('system_error', {
+    title: '🚨 Uncaught Exception',
+    description: '```' + String(err?.stack || err).slice(0, 1500) + '```'
+  }).catch(() => {});
+});
 
 // Server SELALU start dulu, DB connect di background.
 // Ini penting supaya Railway tidak anggap server crash hanya karena DB lambat konek.
