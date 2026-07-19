@@ -302,8 +302,104 @@ function drawLoginChart(trend) {
   });
 }
 
+// ─── HELPERS UMUM ───
+function timeAgo(dateStr) {
+  if (!dateStr) return '';
+  const diffSec = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
+  if (diffSec < 60) return 'Baru saja';
+  if (diffSec < 3600) return Math.floor(diffSec / 60) + ' menit lalu';
+  if (diffSec < 86400) return Math.floor(diffSec / 3600) + ' jam lalu';
+  if (diffSec < 2592000) return Math.floor(diffSec / 86400) + ' hari lalu';
+  return new Date(dateStr).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+}
+
+function roleCounts(rows) {
+  const c = { total: rows.length, public: 0, gold: 0, platinum: 0 };
+  rows.forEach(r => { if (c[r.role] !== undefined) c[r.role]++; });
+  return c;
+}
+
+function renderPageStats(containerId, counts, labels) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  const items = [
+    { key: 'total',    icon: '📦', color: 'rgba(123,92,255,.16)', value: counts.total,    label: labels.total || 'Total' },
+    { key: 'public',   icon: '🌐', color: 'rgba(255,255,255,.08)', value: counts.public,   label: 'Public' },
+    { key: 'gold',     icon: '🥇', color: 'rgba(255,215,106,.16)', value: counts.gold,     label: 'Gold' },
+    { key: 'platinum', icon: '💎', color: 'rgba(167,139,250,.16)', value: counts.platinum, label: 'Platinum' },
+  ];
+  el.innerHTML = items.map(it => `
+    <div class="page-stat-pill">
+      <div class="page-stat-pill-icon" style="background:${it.color};">${it.icon}</div>
+      <div>
+        <div class="page-stat-pill-value">${it.value}</div>
+        <div class="page-stat-pill-label">${it.label}</div>
+      </div>
+    </div>
+  `).join('');
+}
+
+function renderRoleChips(containerId, counts, activeRole, onSelect) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  const chips = [
+    { key: 'all',      label: 'Semua',    count: counts.total },
+    { key: 'public',   label: '🌐 Public',   count: counts.public },
+    { key: 'gold',     label: '🥇 Gold',     count: counts.gold },
+    { key: 'platinum', label: '💎 Platinum', count: counts.platinum },
+  ];
+  el.innerHTML = chips.map(c => `
+    <button class="filter-chip ${activeRole === c.key ? 'active' : ''}" data-role="${c.key}">
+      ${c.label} <span class="count">${c.count}</span>
+    </button>
+  `).join('');
+  el.querySelectorAll('.filter-chip').forEach(btn => {
+    btn.addEventListener('click', () => onSelect(btn.dataset.role));
+  });
+}
+
+function renderPagination(containerId, total, page, perPage, onPageChange) {
+  const el = document.getElementById(containerId);
+  if (!el) return;
+  const totalPages = Math.max(1, Math.ceil(total / perPage));
+  if (totalPages <= 1) { el.style.display = 'none'; return; }
+  el.style.display = 'flex';
+
+  const start = (page - 1) * perPage + 1;
+  const end = Math.min(page * perPage, total);
+
+  let pageBtns = '';
+  const windowSize = 5;
+  let from = Math.max(1, page - Math.floor(windowSize / 2));
+  let to = Math.min(totalPages, from + windowSize - 1);
+  from = Math.max(1, to - windowSize + 1);
+  for (let p = from; p <= to; p++) {
+    pageBtns += `<button class="pagination-btn ${p === page ? 'active' : ''}" data-page="${p}">${p}</button>`;
+  }
+
+  el.innerHTML = `
+    <div class="pagination-info">Menampilkan ${start}–${end} dari ${total}</div>
+    <div class="pagination-controls">
+      <button class="pagination-btn" data-page="${page - 1}" ${page === 1 ? 'disabled' : ''}>‹</button>
+      ${pageBtns}
+      <button class="pagination-btn" data-page="${page + 1}" ${page === totalPages ? 'disabled' : ''}>›</button>
+    </div>
+  `;
+  el.querySelectorAll('.pagination-btn[data-page]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const p = parseInt(btn.dataset.page, 10);
+      if (p >= 1 && p <= totalPages) onPageChange(p);
+    });
+  });
+}
+
 // ─── TABEL GAME & BYPASS ───
 let tableDataCache = {};
+const tableUiState = {
+  games:    { role: 'all', search: '', page: 1 },
+  bypasses: { role: 'all', search: '', page: 1 },
+};
+const PER_PAGE = 8;
 
 async function renderTable(type) {
   const tableId = type === 'games' ? 'tableGames' : 'tableBypasses';
@@ -312,56 +408,100 @@ async function renderTable(type) {
   try {
     const rows = await api(`/api/admin/${type}`);
     tableDataCache[type] = rows;
-    renderTableRows(type, rows);
-    // Bind search
+    tableUiState[type].page = 1;
+    applyTableFilters(type);
+
     const searchEl = document.getElementById(type === 'games' ? 'searchGames' : 'searchBypasses');
-    if (searchEl) searchEl.oninput = (e) => filterTable(type, e.target.value);
+    if (searchEl) {
+      searchEl.value = tableUiState[type].search;
+      searchEl.oninput = (e) => {
+        tableUiState[type].search = e.target.value;
+        tableUiState[type].page = 1;
+        applyTableFilters(type);
+      };
+    }
   } catch (e) {
     table.innerHTML = `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">⚠️</span>Gagal memuat: ${escapeHtml(e.message)}</td></tr>`;
   }
 }
 
-function filterTable(type, q) {
+function applyTableFilters(type) {
   const rows = tableDataCache[type] || [];
-  const filtered = q ? rows.filter(r => (r.name || '').toLowerCase().includes(q.toLowerCase())) : rows;
-  renderTableRows(type, filtered);
+  const state = tableUiState[type];
+
+  // Stat pills & filter chips selalu dihitung dari SEMUA data (bukan hasil filter),
+  // supaya angkanya tetap jadi acuan total yang benar.
+  const counts = roleCounts(rows);
+  renderPageStats(type === 'games' ? 'gamesStats' : 'bypassesStats', counts, { total: 'Total ' + (type === 'games' ? 'Game' : 'Bypass') });
+  renderRoleChips(type === 'games' ? 'gamesRoleFilter' : 'bypassesRoleFilter', counts, state.role, (role) => {
+    state.role = role;
+    state.page = 1;
+    applyTableFilters(type);
+  });
+
+  let filtered = state.role === 'all' ? rows : rows.filter(r => r.role === state.role);
+  if (state.search.trim()) {
+    const q = state.search.trim().toLowerCase();
+    filtered = filtered.filter(r => (r.name || '').toLowerCase().includes(q));
+  }
+
+  const start = (state.page - 1) * PER_PAGE;
+  const pageRows = filtered.slice(start, start + PER_PAGE);
+  renderTableRows(type, pageRows, filtered.length === 0 && (state.search || state.role !== 'all'));
+
+  renderPagination(type === 'games' ? 'gamesPagination' : 'bypassesPagination', filtered.length, state.page, PER_PAGE, (p) => {
+    state.page = p;
+    applyTableFilters(type);
+  });
+}
+
+function filterTable(type, q) {
+  tableUiState[type].search = q;
+  tableUiState[type].page = 1;
+  applyTableFilters(type);
 }
 window.filterTable = filterTable;
 
-function renderTableRows(type, rows) {
+function renderTableRows(type, rows, isFilteredEmpty) {
   const tableId = type === 'games' ? 'tableGames' : 'tableBypasses';
   const table = document.getElementById(tableId);
   if (!rows.length) {
-    table.innerHTML = `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">📭</span>Belum ada data. Klik "＋ Tambah" untuk menambahkan.</td></tr>`;
+    table.innerHTML = isFilteredEmpty
+      ? `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">🔍</span>Tidak ada hasil yang cocok dengan filter/pencarian.</td></tr>`
+      : `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">📭</span>Belum ada data. Klik "＋ Tambah" untuk menambahkan.</td></tr>`;
     return;
   }
+  const editIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 4H6a2 2 0 00-2 2v14a2 2 0 002 2h12a2 2 0 002-2v-5M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>`;
+  const trashIcon = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6m5 0V4a2 2 0 012-2h0a2 2 0 012 2v2"/></svg>`;
+
   table.innerHTML = `
     <thead><tr>
-      <th style="width:60px;">Cover</th>
+      <th style="width:64px;">Cover</th>
       <th>Nama</th>
       <th style="width:110px;">Role</th>
-      <th style="width:130px;">Aksi</th>
+      <th style="width:96px;">Aksi</th>
     </tr></thead>
     <tbody>
     ${rows.map(item => `
-      <tr>
+      <tr class="row-role-accent ${item.role}">
         <td>${item.imageUrl
           ? `<img class="cell-img" src="${escapeHtml(item.imageUrl)}" onerror="this.style.display='none'">`
-          : `<div class="cell-img" style="display:flex;align-items:center;justify-content:center;color:var(--text-faint);font-size:18px;">🎮</div>`}
+          : `<div class="cell-img" style="display:flex;align-items:center;justify-content:center;color:var(--text-faint);font-size:20px;">🎮</div>`}
         </td>
         <td>
           <div class="cell-name">${escapeHtml(item.name)}</div>
           ${item.description ? `<div class="cell-desc">${escapeHtml(item.description)}</div>` : ''}
-          <div style="margin-top:5px;display:flex;gap:6px;flex-wrap:wrap;">
+          <div style="margin-top:6px;display:flex;gap:6px;flex-wrap:wrap;">
             ${item.sizeLabel ? `<span class="chip">💾 ${escapeHtml(item.sizeLabel)}</span>` : ''}
             ${item.appId ? `<span class="chip">🆔 ${escapeHtml(item.appId)}</span>` : ''}
             ${item.link ? `<span class="chip chip-ok">🔗 Ada link</span>` : ''}
           </div>
+          ${item.createdAt ? `<div class="cell-time">🕓 Ditambahkan ${timeAgo(item.createdAt)}</div>` : ''}
         </td>
         <td>${roleTagHtml(item.role)}</td>
         <td class="row-actions">
-          <button class="btn btn-ghost btn-sm" onclick='openItemModal("${type}", ${JSON.stringify(item).replace(/'/g, "&#39;")})'>Edit</button>
-          <button class="btn btn-danger btn-sm" onclick="deleteItem('${type}','${item._id}')">Hapus</button>
+          <button class="icon-btn" title="Edit" onclick='openItemModal("${type}", ${JSON.stringify(item).replace(/'/g, "&#39;")})'>${editIcon}</button>
+          <button class="icon-btn danger" title="Hapus" onclick="deleteItem('${type}','${item._id}')">${trashIcon}</button>
         </td>
       </tr>
     `).join('')}
@@ -609,54 +749,106 @@ document.getElementById('btnSearchCover').addEventListener('click', async () => 
 });
 
 // ─── USERS ───
+const usersUiState = { role: 'all', search: '', page: 1 };
+let usersDataCache = [];
+
 async function renderUsers() {
   const table = document.getElementById('tableUsers');
   table.innerHTML = `<tr><td class="empty-cell" colspan="3"><span class="empty-icon">⏳</span>Memuat data...</td></tr>`;
   try {
     const rows = await api('/api/admin/users');
-    if (!rows.length) {
-      table.innerHTML = `<tr><td class="empty-cell" colspan="3"><span class="empty-icon">👤</span>Belum ada user yang login.</td></tr>`;
-      return;
+    usersDataCache = rows;
+    usersUiState.page = 1;
+    applyUsersFilters();
+
+    const searchEl = document.getElementById('searchUsers');
+    if (searchEl) {
+      searchEl.value = usersUiState.search;
+      searchEl.oninput = (e) => {
+        usersUiState.search = e.target.value;
+        usersUiState.page = 1;
+        applyUsersFilters();
+      };
     }
-    table.innerHTML = `
-      <thead><tr>
-        <th>User</th>
-        <th>Discord ID</th>
-        <th style="width:150px;">Role</th>
-      </tr></thead>
-      <tbody>
-      ${rows.map(u => `
-        <tr>
-          <td style="display:flex;align-items:center;gap:12px;">
-            ${u.avatarUrl
-              ? `<img class="cell-avatar" src="${escapeHtml(u.avatarUrl)}">`
-              : `<div class="cell-avatar" style="display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;background:linear-gradient(135deg,#7b5cff,#e64bb8);">${(u.username||'?')[0].toUpperCase()}</div>`}
-            <div>
-              <div class="cell-name">${escapeHtml(u.username)}</div>
-              <span style="margin-top:3px;">${roleTagHtml(u.role)}</span>
-            </div>
-          </td>
-          <td style="color:var(--text-faint);font-size:12.5px;">${escapeHtml(u.discordId)}</td>
-          <td>
-            <select class="role-select" onchange="changeUserRole('${escapeHtml(u.discordId)}', this.value)">
-              <option value="public"   ${u.role==='public'   ? 'selected':''}>🌐 Public</option>
-              <option value="gold"     ${u.role==='gold'     ? 'selected':''}>🥇 Gold</option>
-              <option value="platinum" ${u.role==='platinum' ? 'selected':''}>💎 Platinum</option>
-            </select>
-          </td>
-        </tr>
-      `).join('')}
-      </tbody>
-    `;
   } catch (e) {
     table.innerHTML = `<tr><td class="empty-cell" colspan="3"><span class="empty-icon">⚠️</span>Gagal memuat: ${escapeHtml(e.message)}</td></tr>`;
   }
+}
+
+function applyUsersFilters() {
+  const rows = usersDataCache;
+  const counts = roleCounts(rows);
+  renderPageStats('usersStats', counts, { total: 'Total User' });
+  renderRoleChips('usersRoleFilter', counts, usersUiState.role, (role) => {
+    usersUiState.role = role;
+    usersUiState.page = 1;
+    applyUsersFilters();
+  });
+
+  let filtered = usersUiState.role === 'all' ? rows : rows.filter(r => r.role === usersUiState.role);
+  if (usersUiState.search.trim()) {
+    const q = usersUiState.search.trim().toLowerCase();
+    filtered = filtered.filter(u => (u.username || '').toLowerCase().includes(q) || (u.discordId || '').includes(q));
+  }
+
+  const start = (usersUiState.page - 1) * PER_PAGE;
+  const pageRows = filtered.slice(start, start + PER_PAGE);
+  renderUsersRows(pageRows, filtered.length === 0 && (usersUiState.search || usersUiState.role !== 'all'));
+
+  renderPagination('usersPagination', filtered.length, usersUiState.page, PER_PAGE, (p) => {
+    usersUiState.page = p;
+    applyUsersFilters();
+  });
+}
+
+function renderUsersRows(rows, isFilteredEmpty) {
+  const table = document.getElementById('tableUsers');
+  if (!rows.length) {
+    table.innerHTML = isFilteredEmpty
+      ? `<tr><td class="empty-cell" colspan="3"><span class="empty-icon">🔍</span>Tidak ada user yang cocok.</td></tr>`
+      : `<tr><td class="empty-cell" colspan="3"><span class="empty-icon">👤</span>Belum ada user yang login.</td></tr>`;
+    return;
+  }
+  table.innerHTML = `
+    <thead><tr>
+      <th>User</th>
+      <th>Discord ID</th>
+      <th style="width:150px;">Role</th>
+    </tr></thead>
+    <tbody>
+    ${rows.map(u => `
+      <tr class="row-role-accent ${u.role}">
+        <td style="display:flex;align-items:center;gap:12px;">
+          ${u.avatarUrl
+            ? `<img class="cell-avatar" src="${escapeHtml(u.avatarUrl)}">`
+            : `<div class="cell-avatar" style="display:flex;align-items:center;justify-content:center;font-weight:800;font-size:13px;background:linear-gradient(135deg,#7b5cff,#e64bb8);">${(u.username||'?')[0].toUpperCase()}</div>`}
+          <div>
+            <div class="cell-name">${escapeHtml(u.username)}</div>
+            <span style="margin-top:3px;display:inline-block;">${roleTagHtml(u.role)}</span>
+            ${u.createdAt ? `<div class="cell-time">🕓 Bergabung ${timeAgo(u.createdAt)}</div>` : ''}
+          </div>
+        </td>
+        <td style="color:var(--text-faint);font-size:12.5px;">${escapeHtml(u.discordId)}</td>
+        <td>
+          <select class="role-select" onchange="changeUserRole('${escapeHtml(u.discordId)}', this.value)">
+            <option value="public"   ${u.role==='public'   ? 'selected':''}>🌐 Public</option>
+            <option value="gold"     ${u.role==='gold'     ? 'selected':''}>🥇 Gold</option>
+            <option value="platinum" ${u.role==='platinum' ? 'selected':''}>💎 Platinum</option>
+          </select>
+        </td>
+      </tr>
+    `).join('')}
+    </tbody>
+  `;
 }
 
 async function changeUserRole(discordId, role) {
   try {
     await api(`/api/admin/users/${discordId}/role`, { method: 'PUT', body: JSON.stringify({ role }) });
     showToast('Role berhasil diubah ke ' + role + '.', 'success');
+    const u = usersDataCache.find(x => x.discordId === discordId);
+    if (u) u.role = role;
+    applyUsersFilters();
   } catch (e) {
     showToast('Gagal mengubah role: ' + e.message, 'error');
     renderUsers();
@@ -665,36 +857,130 @@ async function changeUserRole(discordId, role) {
 window.changeUserRole = changeUserRole;
 
 // ─── HISTORY ───
+const historyUiState = { type: 'all', search: '', page: 1 };
+let historyDataCache = [];
+
 async function renderHistory() {
   const table = document.getElementById('tableHistory');
   table.innerHTML = `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">⏳</span>Memuat data...</td></tr>`;
   try {
     const rows = await api('/api/admin/history');
-    if (!rows.length) {
-      table.innerHTML = `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">📜</span>Belum ada histori.</td></tr>`;
-      return;
+    historyDataCache = rows;
+    historyUiState.page = 1;
+    applyHistoryFilters();
+
+    const searchEl = document.getElementById('searchHistory');
+    if (searchEl) {
+      searchEl.value = historyUiState.search;
+      searchEl.oninput = (e) => {
+        historyUiState.search = e.target.value;
+        historyUiState.page = 1;
+        applyHistoryFilters();
+      };
     }
-    table.innerHTML = `
-      <thead><tr>
-        <th>User</th>
-        <th>Item</th>
-        <th style="width:100px;">Tipe</th>
-        <th style="width:150px;">Waktu</th>
-      </tr></thead>
-      <tbody>
-      ${rows.map(h => `
-        <tr>
-          <td class="cell-name">${escapeHtml(h.username)}</td>
-          <td>${escapeHtml(h.itemName)}</td>
-          <td><span class="tag ${h.itemType}">${h.itemType}</span></td>
-          <td style="color:var(--text-faint);font-size:12px;">${new Date(h.createdAt).toLocaleString('id-ID')}</td>
-        </tr>
-      `).join('')}
-      </tbody>
-    `;
   } catch (e) {
     table.innerHTML = `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">⚠️</span>Gagal memuat: ${escapeHtml(e.message)}</td></tr>`;
   }
+}
+
+function applyHistoryFilters() {
+  const rows = historyDataCache;
+  const today = new Date(); today.setHours(0,0,0,0);
+  const todayCount = rows.filter(h => new Date(h.createdAt) >= today).length;
+  const gameCount = rows.filter(h => h.itemType === 'game').length;
+  const bypassCount = rows.filter(h => h.itemType === 'bypass').length;
+
+  const statsEl = document.getElementById('historyStats');
+  if (statsEl) {
+    statsEl.innerHTML = `
+      <div class="page-stat-pill">
+        <div class="page-stat-pill-icon" style="background:rgba(123,92,255,.16);">📜</div>
+        <div><div class="page-stat-pill-value">${rows.length}</div><div class="page-stat-pill-label">Total Aktivitas</div></div>
+      </div>
+      <div class="page-stat-pill">
+        <div class="page-stat-pill-icon" style="background:rgba(74,222,128,.16);">📅</div>
+        <div><div class="page-stat-pill-value">${todayCount}</div><div class="page-stat-pill-label">Hari Ini</div></div>
+      </div>
+      <div class="page-stat-pill">
+        <div class="page-stat-pill-icon" style="background:rgba(123,92,255,.16);">🎮</div>
+        <div><div class="page-stat-pill-value">${gameCount}</div><div class="page-stat-pill-label">Inject Game</div></div>
+      </div>
+      <div class="page-stat-pill">
+        <div class="page-stat-pill-icon" style="background:rgba(61,217,245,.16);">🛡️</div>
+        <div><div class="page-stat-pill-value">${bypassCount}</div><div class="page-stat-pill-label">Bypass</div></div>
+      </div>
+    `;
+  }
+
+  const chipsEl = document.getElementById('historyTypeFilter');
+  if (chipsEl) {
+    const chips = [
+      { key: 'all',     label: 'Semua',       count: rows.length },
+      { key: 'game',    label: '🎮 Game',     count: gameCount },
+      { key: 'bypass',  label: '🛡️ Bypass',   count: bypassCount },
+    ];
+    chipsEl.innerHTML = chips.map(c => `
+      <button class="filter-chip ${historyUiState.type === c.key ? 'active' : ''}" data-type="${c.key}">
+        ${c.label} <span class="count">${c.count}</span>
+      </button>
+    `).join('');
+    chipsEl.querySelectorAll('.filter-chip').forEach(btn => {
+      btn.addEventListener('click', () => {
+        historyUiState.type = btn.dataset.type;
+        historyUiState.page = 1;
+        applyHistoryFilters();
+      });
+    });
+  }
+
+  let filtered = historyUiState.type === 'all' ? rows : rows.filter(h => h.itemType === historyUiState.type);
+  if (historyUiState.search.trim()) {
+    const q = historyUiState.search.trim().toLowerCase();
+    filtered = filtered.filter(h => (h.username || '').toLowerCase().includes(q) || (h.itemName || '').toLowerCase().includes(q));
+  }
+
+  const start = (historyUiState.page - 1) * PER_PAGE;
+  const pageRows = filtered.slice(start, start + PER_PAGE);
+  renderHistoryRows(pageRows, filtered.length === 0 && (historyUiState.search || historyUiState.type !== 'all'));
+
+  renderPagination('historyPagination', filtered.length, historyUiState.page, PER_PAGE, (p) => {
+    historyUiState.page = p;
+    applyHistoryFilters();
+  });
+}
+
+function renderHistoryRows(rows, isFilteredEmpty) {
+  const table = document.getElementById('tableHistory');
+  if (!rows.length) {
+    table.innerHTML = isFilteredEmpty
+      ? `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">🔍</span>Tidak ada histori yang cocok.</td></tr>`
+      : `<tr><td class="empty-cell" colspan="4"><span class="empty-icon">📜</span>Belum ada histori.</td></tr>`;
+    return;
+  }
+  table.innerHTML = `
+    <thead><tr>
+      <th style="width:56px;"></th>
+      <th>User</th>
+      <th>Item</th>
+      <th style="width:160px;">Waktu</th>
+    </tr></thead>
+    <tbody>
+    ${rows.map(h => `
+      <tr>
+        <td><div class="hist-type-icon ${h.itemType}">${h.itemType === 'game' ? '🎮' : '🛡️'}</div></td>
+        <td class="cell-name">${escapeHtml(h.username)}</td>
+        <td>
+          ${escapeHtml(h.itemName)}
+          <div style="margin-top:4px;"><span class="tag ${h.itemType}">${h.itemType}</span></div>
+        </td>
+        <td>
+          <div style="font-size:12.5px;">${timeAgo(h.createdAt)}</div>
+          <div style="color:var(--text-faint);font-size:11px;margin-top:2px;">${new Date(h.createdAt).toLocaleString('id-ID')}</div>
+        </td>
+      </tr>
+    `).join('')}
+    </tbody>
+  `;
 }
 // ─── BYPASS: App ID auto-search (nama + cover dari Steam, tanpa hubcap manifest) ───
 

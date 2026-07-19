@@ -476,7 +476,8 @@ function publicUser(u) {
     discordId: u.discordId,
     username: u.username,
     avatarUrl: u.avatarUrl,
-    role: u.role
+    role: u.role,
+    createdAt: u.createdAt || null
   };
 }
 

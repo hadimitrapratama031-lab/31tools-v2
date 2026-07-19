@@ -220,6 +220,18 @@
 
     <!-- GAMES PAGE -->
     <section class="page active" id="pageGames">
+      <div class="page-header">
+        <div class="page-header-left">
+          <div class="page-header-icon" style="background:rgba(123,92,255,.16);">🎮</div>
+          <div>
+            <div class="page-header-title">Daftar Game</div>
+            <div class="page-header-desc">Kelola semua game yang tersedia untuk di-inject user.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="page-stats" id="gamesStats"></div>
+
       <div class="table-wrap">
         <div class="table-toolbar">
           <div class="table-toolbar-title">🎮 Daftar Game</div>
@@ -227,13 +239,29 @@
             <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             <input type="text" id="searchGames" placeholder="Cari game...">
           </div>
+          <div class="table-toolbar-filters">
+            <div class="filter-chips" id="gamesRoleFilter"></div>
+          </div>
         </div>
         <table id="tableGames"></table>
+        <div class="pagination" id="gamesPagination" style="display:none;"></div>
       </div>
     </section>
 
     <!-- BYPASSES PAGE -->
     <section class="page" id="pageBypasses">
+      <div class="page-header">
+        <div class="page-header-left">
+          <div class="page-header-icon" style="background:rgba(61,217,245,.16);">🛡️</div>
+          <div>
+            <div class="page-header-title">Daftar Bypass</div>
+            <div class="page-header-desc">Kelola semua tools bypass anti-cheat yang tersedia.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="page-stats" id="bypassesStats"></div>
+
       <div class="table-wrap">
         <div class="table-toolbar">
           <div class="table-toolbar-title">🛡️ Daftar Bypass</div>
@@ -241,13 +269,29 @@
             <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             <input type="text" id="searchBypasses" placeholder="Cari bypass...">
           </div>
+          <div class="table-toolbar-filters">
+            <div class="filter-chips" id="bypassesRoleFilter"></div>
+          </div>
         </div>
         <table id="tableBypasses"></table>
+        <div class="pagination" id="bypassesPagination" style="display:none;"></div>
       </div>
     </section>
 
     <!-- USERS PAGE -->
     <section class="page" id="pageUsers">
+      <div class="page-header">
+        <div class="page-header-left">
+          <div class="page-header-icon" style="background:rgba(230,75,184,.16);">👤</div>
+          <div>
+            <div class="page-header-title">Manajemen Users</div>
+            <div class="page-header-desc">Lihat & ubah role semua user yang pernah login.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="page-stats" id="usersStats"></div>
+
       <div class="table-wrap">
         <div class="table-toolbar">
           <div class="table-toolbar-title">👤 Manajemen Users</div>
@@ -255,18 +299,42 @@
             <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
             <input type="text" id="searchUsers" placeholder="Cari user...">
           </div>
+          <div class="table-toolbar-filters">
+            <div class="filter-chips" id="usersRoleFilter"></div>
+          </div>
         </div>
         <table id="tableUsers"></table>
+        <div class="pagination" id="usersPagination" style="display:none;"></div>
       </div>
     </section>
 
     <!-- HISTORY PAGE -->
     <section class="page" id="pageHistory">
+      <div class="page-header">
+        <div class="page-header-left">
+          <div class="page-header-icon" style="background:rgba(255,215,106,.16);">📜</div>
+          <div>
+            <div class="page-header-title">Histori Aktivitas</div>
+            <div class="page-header-desc">Riwayat semua inject game & pemasangan bypass oleh user.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="page-stats" id="historyStats"></div>
+
       <div class="table-wrap">
         <div class="table-toolbar">
           <div class="table-toolbar-title">📜 Histori Aktivitas</div>
+          <div class="table-search">
+            <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="searchHistory" placeholder="Cari user / item...">
+          </div>
+          <div class="table-toolbar-filters">
+            <div class="filter-chips" id="historyTypeFilter"></div>
+          </div>
         </div>
         <table id="tableHistory"></table>
+        <div class="pagination" id="historyPagination" style="display:none;"></div>
       </div>
     </section>
   </main>
