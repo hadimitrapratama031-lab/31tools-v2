@@ -679,54 +679,12 @@ app.get('/api/bypasses/:id/stream', async (req, res) => {
     }
 
     if (isRyuu) {
-      // ryuu.lol menerapkan hotlink protection — cek Referer harus dari domain mereka.
-      // Kalau di-redirect ke client, client pakai Referer Railway (salah) → 401.
-      // Solusi: proxy stream di server dengan Referer + User-Agent yang benar.
-      try {
-        const ryuuRes = await axios.get(rawUrl, {
-          responseType: 'stream',
-          timeout: 30000,
-          maxRedirects: 10,
-          headers: {
-            'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-            'Referer':         'https://generator.ryuu.lol/',
-            'Accept':          '*/*',
-            'Accept-Language': 'en-US,en;q=0.9',
-            'Origin':          'https://generator.ryuu.lol',
-          },
-          validateStatus: s => s < 500
-        });
-
-        if (ryuuRes.status === 401 || ryuuRes.status === 403) {
-          ryuuRes.data.destroy();
-          return res.status(ryuuRes.status).json({ error: `Ryuu menolak akses (${ryuuRes.status}). Link mungkin sudah kedaluwarsa, minta admin update link.` });
-        }
-        if (ryuuRes.status !== 200) {
-          ryuuRes.data.destroy();
-          return res.status(502).json({ error: `Ryuu mengembalikan status ${ryuuRes.status}. Coba lagi nanti.` });
-        }
-
-        // Forward header yang relevan ke client
-        const ct = ryuuRes.headers['content-type'];
-        const cl = ryuuRes.headers['content-length'];
-        const cd = ryuuRes.headers['content-disposition'];
-        if (ct) res.setHeader('Content-Type', ct);
-        if (cl) res.setHeader('Content-Length', cl);
-        if (cd) res.setHeader('Content-Disposition', cd);
-        else    res.setHeader('Content-Disposition', 'attachment');
-        res.setHeader('Cache-Control', 'no-store');
-
-        console.log('[BYPASS] Ryuu proxy stream →', rawUrl);
-        ryuuRes.data.pipe(res);
-        ryuuRes.data.on('error', (err) => {
-          console.error('[BYPASS] Ryuu stream error:', err.message);
-          if (!res.headersSent) res.status(502).json({ error: 'Stream ryuu terputus.' });
-        });
-        return;
-      } catch (e) {
-        console.error('[BYPASS] Ryuu proxy error:', e.message);
-        return res.status(502).json({ error: 'Gagal mengambil file dari ryuu.lol: ' + e.message });
-      }
+      // Ryuu menerapkan hotlink protection berdasarkan Referer.
+      // Proxy di server-side tidak andal karena Ryuu bisa berubah cara proteksinya.
+      // Solusi: kembalikan URL asli ke client (main.js), biarkan main.js download
+      // langsung dengan header Ryuu yang benar lewat downloadFileWithProgress.
+      // main.js sudah punya logika untuk set User-Agent + Referer yang benar.
+      return res.json({ directUrl: rawUrl, method: 'direct' });
     }
 
     // Link lain — redirect langsung, lebih aman daripada proxy untuk file besar

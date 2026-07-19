@@ -243,29 +243,39 @@ function downloadFileWithProgress(url, destPath, onProgress, redirectCount = 0, 
         } catch(e2) {}
         return resolve(downloadFileWithProgress(location, destPath, onProgress, redirectCount + 1, redirectHeaders));
       }
-      if (response.statusCode === 401) {
-        response.resume();
-        let errMsg401 = 'Sesi login kamu expired. Silakan logout dan login ulang.';
-        try {
-          const host = new URL(url).hostname.toLowerCase();
-          if (host.includes('hubcap')) {
-            errMsg401 = 'API Key HubCap tidak valid atau expired. Hubungi admin.';
-          } else if (host !== ownServerHost) {
-            // 401 dari host PIHAK KETIGA (misal ryuu.lol) bukan soal sesi login kita sendiri —
-            // biasanya link sudah kedaluwarsa atau situsnya menolak akses langsung/hotlink.
-            // Jangan salah nyalahin sesi login user di sini, itu menyesatkan.
-            errMsg401 = `Link file ditolak oleh server (401): ${host}. Kemungkinan link sudah kedaluwarsa atau diproteksi. Hubungi admin untuk ganti link.`;
+      if (response.statusCode === 401 || response.statusCode === 403 || (response.statusCode >= 400 && response.statusCode < 600)) {
+        // BUG FIX: sebelumnya langsung response.resume() (buang body tanpa dibaca) lalu MENEBAK
+        // pesan error cuma dari hostname. Karena SEMUA link (termasuk ryuu.lol) di-proxy lewat
+        // server sendiri, host yang diterima di sini SELALU ownServerHost — jadi kode lama selalu
+        // menyimpulkan "sesi login expired", padahal server kita sendiri SUDAH mengirim pesan JSON
+        // yang jelas & akurat (mis. "Ryuu menolak akses (401). Link kedaluwarsa..."). Sekarang body
+        // response dibaca dulu dan dipakai kalau memang JSON `{error: "..."}` — baru fallback ke
+        // pesan generik kalau body-nya bukan JSON (host asing yang bukan proxy server sendiri).
+        let rawBody = '';
+        response.on('data', (chunk) => { rawBody += chunk; });
+        response.on('end', () => {
+          let serverMsg = null;
+          try {
+            const parsed = JSON.parse(rawBody);
+            if (parsed && typeof parsed.error === 'string' && parsed.error.trim()) serverMsg = parsed.error;
+          } catch(e3) { /* bukan JSON — host asing, pakai fallback di bawah */ }
+
+          if (serverMsg) return reject(new Error(serverMsg));
+
+          // Fallback lama — cuma dipakai kalau body-nya BUKAN JSON (bukan dari server sendiri)
+          const host = (() => { try { return new URL(url).hostname.toLowerCase(); } catch(e4) { return ''; } })();
+          if (response.statusCode === 401) {
+            let errMsg401 = 'Sesi login kamu expired. Silakan logout dan login ulang.';
+            if (host.includes('hubcap')) errMsg401 = 'API Key HubCap tidak valid atau expired. Hubungi admin.';
+            else if (host !== ownServerHost) errMsg401 = `Link file ditolak oleh server (401): ${host}. Kemungkinan link sudah kedaluwarsa atau diproteksi. Hubungi admin untuk ganti link.`;
+            return reject(new Error(errMsg401));
           }
-        } catch(e2) {}
-        return reject(new Error(errMsg401));
-      }
-      if (response.statusCode === 403) {
-        response.resume();
-        return reject(new Error('Tidak punya izin download file ini (403). Pastikan paket kamu sesuai.'));
-      }
-      if (response.statusCode !== 200) {
-        response.resume();
-        return reject(new Error(`Download gagal, server mengembalikan status ${response.statusCode}`));
+          if (response.statusCode === 403) {
+            return reject(new Error('Tidak punya izin download file ini (403). Pastikan paket kamu sesuai.'));
+          }
+          return reject(new Error(`Download gagal, server mengembalikan status ${response.statusCode}`));
+        });
+        return;
       }
       const total = parseInt(response.headers['content-length'] || '0', 10);
       let downloaded = 0;
@@ -372,7 +382,7 @@ function copyDirOverwrite(srcDir, destDir) {
   }
 }
 
-ipcMain.handle('install-bypass', async (event, { folderPath, driveUrl, userId, deviceId, gameId, gameName, steamAppId, extraHeaders }) => {
+ipcMain.handle('install-bypass', async (event, { folderPath, driveUrl, directUrl, userId, deviceId, gameId, gameName, steamAppId, extraHeaders }) => {
   const tempZip = path.join(app.getPath('temp'), 'bypass_' + Date.now() + '.zip');
   const tempDir = path.join(app.getPath('temp'), 'bypass_extract_' + Date.now());
   try {
@@ -399,8 +409,34 @@ ipcMain.handle('install-bypass', async (event, { folderPath, driveUrl, userId, d
       }
     }
 
-    // 2. Download dari driveUrl (proxy server)
-    await downloadFileWithProgress(driveUrl, tempZip, null, 0, extraHeaders || {});
+    // 2. Tentukan URL & header yang dipakai untuk download
+    // Kalau server mengembalikan directUrl (misal Ryuu), download langsung dengan
+    // header Ryuu yang benar — ini lebih andal dari proxy server yang bisa kena hotlink protection.
+    // Kalau tidak ada directUrl, download lewat stream proxy server dengan Authorization header.
+    let downloadUrl, downloadHeaders;
+    const isRyuu = directUrl && /ryuu\.lol|generator\.ryuu\.lol/.test(directUrl);
+
+    if (directUrl && isRyuu) {
+      // Ryuu: download langsung dengan header yang Ryuu butuhkan
+      downloadUrl = directUrl;
+      downloadHeaders = {
+        'User-Agent':      'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+        'Referer':         'https://generator.ryuu.lol/',
+        'Accept':          '*/*',
+        'Accept-Language': 'en-US,en;q=0.9',
+        'Origin':          'https://generator.ryuu.lol',
+      };
+    } else if (directUrl) {
+      // directUrl lain (non-Ryuu) — download langsung tanpa header khusus
+      downloadUrl = directUrl;
+      downloadHeaders = {};
+    } else {
+      // Pakai stream proxy server dengan Authorization JWT
+      downloadUrl = driveUrl;
+      downloadHeaders = extraHeaders || {};
+    }
+
+    await downloadFileWithProgress(downloadUrl, tempZip, null, 0, downloadHeaders);
 
     // Validasi ZIP
     const head = fs.readFileSync(tempZip, { encoding: null }).slice(0, 4);

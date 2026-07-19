@@ -768,6 +768,7 @@ async function handleInstall(itemType, itemId, itemName) {
       result = await window.electronAPI.installBypass({
         folderPath:  folderResult.folderPath,
         driveUrl:    bypassUrl,
+        directUrl:   data.directUrl || null,  // URL asli Ryuu kalau ada (dikembalikan server untuk download langsung)
         userId:      currentUser?.discordId || currentUser?.userId || '',
         deviceId:    getOrCreateDeviceId(),
         gameId:      itemId,
