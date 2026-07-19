@@ -44,6 +44,31 @@
       <a href="#" id="navLogout"><span class="ic">⏻</span> Log Out</a>
     </nav>
 
+    <!-- PAKET / MASA AKTIF (realtime) -->
+    <div class="package-card" id="packageCard">
+      <div class="pkg-badge" id="pkgBadge"><span class="pkg-star">★</span><span id="pkgBadgeText">Public</span></div>
+
+      <div class="pkg-period" id="pkgPeriodBlock">
+        <div class="pkg-period-value"><span id="pkgPeriodNumber">—</span><span class="pkg-period-unit" id="pkgPeriodUnit"></span></div>
+        <div class="pkg-period-label">Sisa masa aktif</div>
+        <div class="pkg-progress"><div class="pkg-progress-fill" id="pkgProgressFill" style="width:0%"></div></div>
+        <div class="pkg-period-until" id="pkgPeriodUntil"></div>
+      </div>
+
+      <div class="pkg-quota" id="pkgQuotaBlock">
+        <div class="pkg-quota-row">
+          <span class="pkg-quota-label">🎮 Limit Game</span>
+          <span class="pkg-quota-value" id="pkgQuotaGame">—</span>
+        </div>
+        <div class="pkg-quota-row">
+          <span class="pkg-quota-label">🛡️ Limit Bypass</span>
+          <span class="pkg-quota-value" id="pkgQuotaBypass">—</span>
+        </div>
+      </div>
+
+      <button class="pkg-upgrade-btn" id="pkgUpgradeBtn">Perpanjang Sekarang</button>
+    </div>
+
     <div class="dark-mode-row">
       🌙 Dark Mode
       <div class="toggle"></div>
@@ -60,7 +85,15 @@
         <input type="text" placeholder="Search Game...">
       </div>
       <div class="icon-btn">🛍</div>
-      <div class="icon-btn">🔔<span class="dot"></span></div>
+      <div class="icon-btn notif-bell" id="notifBell">🔔<span class="dot" id="notifDot" style="display:none;"></span>
+        <div class="notif-dropdown" id="notifDropdown">
+          <div class="notif-dropdown-head">
+            <span>Notifikasi</span>
+            <button id="notifMarkAllRead">Tandai semua dibaca</button>
+          </div>
+          <div class="notif-list" id="notifList"><div class="notif-empty">Belum ada notifikasi.</div></div>
+        </div>
+      </div>
     </div>
 
     <!-- ═══════════ PAGE: DASHBOARD ═══════════ -->

@@ -11,6 +11,8 @@ const jwt = require('jsonwebtoken');
 const { nanoid } = require('nanoid');
 const { MongoClient, ObjectId } = require('mongodb');
 const path = require('path');
+const http = require('http');
+const WebSocket = require('ws');
 
 const app = express();
 app.use(cors());
@@ -255,6 +257,15 @@ async function applyExpiryIfNeeded(user) {
   }
 
   const updated = await db.collection('users').findOne({ discordId });
+
+  notifyUser(discordId, {
+    type: 'period_expired',
+    title: 'Masa Aktif Berakhir',
+    message: `Masa aktif paket ${oldRole.toUpperCase()} kamu telah berakhir dan otomatis diturunkan ke Public.`,
+    dm: true, webhook: false
+  }).catch(() => {});
+  pushAccountUpdate(discordId).catch(() => {});
+
   return updated || user;
 }
 
@@ -286,7 +297,26 @@ async function consumeDownloadQuota(user, type) {
     { $set: { downloadUsage: newUsage } }
   );
 
-  return { ok: true, limit, used: newUsage[type], remaining: limit - newUsage[type] };
+  const remaining = limit - newUsage[type];
+  const label = type === 'game' ? 'Game' : 'Bypass';
+  if (remaining === 0) {
+    notifyUser(user.discordId, {
+      type: 'quota_empty',
+      title: `Limit Download ${label} Habis`,
+      message: `Limit download harian kamu untuk ${label} (${limit}x/hari) sudah habis. Reset otomatis besok jam 00:00 WIB.`,
+      dm: true
+    }).catch(() => {});
+  } else if (remaining === 1 && limit > 1) {
+    notifyUser(user.discordId, {
+      type: 'quota_low',
+      title: `Limit Download ${label} Hampir Habis`,
+      message: `Sisa limit download ${label} kamu tinggal ${remaining}x hari ini.`,
+      dm: true
+    }).catch(() => {});
+  }
+  pushAccountUpdate(user.discordId).catch(() => {});
+
+  return { ok: true, limit, used: newUsage[type], remaining };
 }
 
 // Ringkasan masa aktif & limit download user — dipakai di /api/me (app) & Manajemen
@@ -318,6 +348,168 @@ function accountStatusSummary(user) {
 // ══════════════════════════════════════════════════════════════════════════
 // VERIFY ROLE — sinkron role App ⇄ Discord + webhook notif (lihat discordRoleSync.js)
 // ══════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════
+// REALTIME — WebSocket hub
+// Tanpa Socket.IO (biar client-side gak perlu bundling apa-apa, browser Chromium
+// di Electron sudah punya `WebSocket` bawaan). Auth pakai JWT yang sama dengan
+// REST (?token=... di query string pas connect). Satu discordId bisa punya lebih
+// dari satu koneksi (multi-device), makanya disimpan sebagai Set per discordId.
+// ══════════════════════════════════════════════════════════════════════════
+const wsClients = new Map(); // discordId -> Set<WebSocket>
+
+function wsRegister(discordId, ws) {
+  if (!wsClients.has(discordId)) wsClients.set(discordId, new Set());
+  wsClients.get(discordId).add(ws);
+}
+function wsUnregister(discordId, ws) {
+  const set = wsClients.get(discordId);
+  if (!set) return;
+  set.delete(ws);
+  if (set.size === 0) wsClients.delete(discordId);
+}
+// Kirim event realtime ke SEMUA koneksi aktif milik satu user (semua device/instance
+// aplikasi yang sedang login). Kalau user lagi offline, ya cuma kesimpen di DB
+// (untuk notifikasi) — pas dia buka app lagi otomatis kelihatan dari /api/notifications.
+function wsSendToUser(discordId, event, data) {
+  const set = wsClients.get(discordId);
+  if (!set || set.size === 0) return false;
+  const payload = JSON.stringify({ event, data });
+  let sent = false;
+  for (const ws of set) {
+    if (ws.readyState === WebSocket.OPEN) { ws.send(payload); sent = true; }
+  }
+  return sent;
+}
+// Broadcast ke SEMUA user yang sedang terkoneksi (dipakai buat pengumuman admin).
+function wsBroadcastAll(event, data) {
+  const payload = JSON.stringify({ event, data });
+  for (const set of wsClients.values()) {
+    for (const ws of set) {
+      if (ws.readyState === WebSocket.OPEN) ws.send(payload);
+    }
+  }
+}
+
+// Kirim ulang status akun (role, masa aktif, limit download) ke user secara realtime.
+// Dipanggil setiap kali ada perubahan di server yang mempengaruhi data itu, supaya
+// client TIDAK PERLU refresh/restart/login ulang untuk lihat perubahannya.
+async function pushAccountUpdate(discordId) {
+  try {
+    const user = await db.collection('users').findOne({ discordId });
+    if (!user) return;
+    wsSendToUser(discordId, 'account:update', publicUser(user));
+  } catch (e) {
+    console.warn('[Realtime] Gagal push account:update:', e.message);
+  }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// NOTIFIKASI — In-App + Discord DM + Discord Webhook
+// ══════════════════════════════════════════════════════════════════════════
+// Kirim webhook generik ke Discord (dipisah dari webhook role-sync di discordRoleSync.js
+// supaya notifikasi harian user — download, limit, masa aktif — tidak nyampur sama log
+// admin/role di channel yang berbeda). URL diambil dari .env, dengan fallback ke webhook
+// role-sync kalau operator cuma mau pakai satu channel saja.
+async function sendDiscordWebhook(embed) {
+  const url = process.env.DISCORD_NOTIF_WEBHOOK_URL || process.env.DISCORD_WEBHOOK_URL;
+  if (!url) return { success: false, reason: 'no_webhook_url' };
+  try {
+    await axios.post(url, { embeds: [embed] });
+    return { success: true };
+  } catch (e) {
+    console.warn('[Webhook Notif] Gagal kirim:', e.response?.data?.message || e.message);
+    return { success: false, error: e.message };
+  }
+}
+
+const NOTIF_COLOR = {
+  download_success: 0x3ddc97,
+  download_failed:  0xff6b81,
+  quota_low:        0xffb84d,
+  quota_empty:      0xff6b81,
+  period_low:       0xffb84d,
+  period_expired:   0xff6b81,
+  announcement:     0x7c5cff
+};
+const NOTIF_ICON = {
+  download_success: '✅',
+  download_failed:  '❌',
+  quota_low:        '⚠️',
+  quota_empty:       '⛔',
+  period_low:       '⏳',
+  period_expired:   '🚫',
+  announcement:     '📢'
+};
+
+// Fungsi utama pengiriman notifikasi. Selalu simpan ke DB (in-app, muncul di lonceng
+// notifikasi walau user lagi offline) + push realtime via WebSocket kalau user online.
+// Discord DM & Webhook sifatnya best-effort tambahan, dikontrol per-jenis notifikasi
+// lewat opsi { dm, webhook } (default: dm untuk yang penting, webhook selalu untuk visibilitas admin).
+async function notifyUser(discordId, { type, title, message, meta = {}, dm = true, webhook = false }) {
+  const doc = {
+    discordId, type, title, message, meta,
+    read: false,
+    createdAt: new Date()
+  };
+  let inserted = null;
+  try {
+    const result = await db.collection('notifications').insertOne(doc);
+    inserted = { ...doc, _id: result.insertedId };
+  } catch (e) {
+    console.warn('[Notif] Gagal simpan ke DB:', e.message);
+    inserted = doc;
+  }
+
+  // In-app realtime push
+  wsSendToUser(discordId, 'notification', inserted);
+  // Kirim juga jumlah unread terbaru biar badge lonceng update tanpa query tambahan
+  try {
+    const unread = await db.collection('notifications').countDocuments({ discordId, read: false });
+    wsSendToUser(discordId, 'notification:unread-count', { unread });
+  } catch {}
+
+  const icon = NOTIF_ICON[type] || '🔔';
+  if (dm) {
+    sendDiscordDM(discordId, {
+      embeds: [{
+        color: NOTIF_COLOR[type] ?? 0x7c5cff,
+        title: `${icon} ${title}`,
+        description: message,
+        footer: { text: `${process.env.APP_NAME || 'App'} · Notifikasi` },
+        timestamp: new Date().toISOString()
+      }]
+    }).catch(() => {});
+  }
+  if (webhook) {
+    sendDiscordWebhook({
+      color: NOTIF_COLOR[type] ?? 0x7c5cff,
+      title: `${icon} ${title}`,
+      description: `${message}\n\n👤 <@${discordId}> (\`${discordId}\`)`,
+      timestamp: new Date().toISOString()
+    }).catch(() => {});
+  }
+
+  return inserted;
+}
+
+// Broadcast pengumuman admin ke SEMUA user (in-app selalu; DM & webhook opsional,
+// dikontrol dari form admin biar tidak spam kalau pengumumannya kecil-kecilan saja).
+async function notifyAllUsers({ title, message, dm = false, webhook = true }) {
+  const users = await db.collection('users').find({}, { projection: { discordId: 1 } }).toArray();
+  const results = await Promise.allSettled(
+    users.map(u => notifyUser(u.discordId, { type: 'announcement', title, message, dm, webhook: false }))
+  );
+  if (webhook) {
+    await sendDiscordWebhook({
+      color: NOTIF_COLOR.announcement,
+      title: `📢 ${title}`,
+      description: message,
+      timestamp: new Date().toISOString()
+    }).catch(() => {});
+  }
+  return results.length;
+}
+
 const roleSync = require('./discordRoleSync')({ getDb: () => db, ROLE_LEVEL });
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -343,6 +535,8 @@ async function connectDB() {
     await db.collection('pendingLogins').createIndex({ createdAt: 1 }, { expireAfterSeconds: 600 });
     await db.collection('roleSyncLogs').createIndex({ createdAt: -1 });
     await db.collection('roleSyncLogs').createIndex({ discordId: 1 });
+    await db.collection('notifications').createIndex({ discordId: 1, createdAt: -1 });
+    await db.collection('notifications').createIndex({ discordId: 1, read: 1 });
   } catch (e) {
     console.error('❌ Gagal konek MongoDB:', e.message);
     // TIDAK process.exit() — server tetap jalan supaya endpoint /health dan interactions tetap bisa diakses
@@ -1248,7 +1442,32 @@ app.post('/api/history', requireUser, async (req, res) => {
       createdAt: new Date()
     });
 
+    notifyUser(req.user.discordId, {
+      type: 'download_success',
+      title: 'Download Berhasil',
+      message: `${item.name} (${itemType === 'game' ? 'Game' : 'Bypass'}) berhasil di-download & dipasang.`,
+      meta: { itemType, itemId },
+      dm: false, webhook: false
+    }).catch(() => {});
+
     res.json({ success: true, _id: insertResult.insertedId });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Dipanggil client (main.js) kalau proses download/extract/inject GAGAL di tengah jalan,
+// supaya user tetap dapat notifikasi kegagalan walau tidak ada baris histori yang tercatat.
+app.post('/api/downloads/failed', requireUser, async (req, res) => {
+  try {
+    const { itemType, itemName, reason } = req.body;
+    notifyUser(req.user.discordId, {
+      type: 'download_failed',
+      title: 'Download Gagal',
+      message: `Download ${itemName || 'item'} (${itemType === 'game' ? 'Game' : 'Bypass'}) gagal.${reason ? ' Alasan: ' + reason : ''}`,
+      dm: false, webhook: false
+    }).catch(() => {});
+    res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1301,6 +1520,49 @@ app.get('/api/me/role-check', requireUser, (req, res) => {
     role:          req.user.role,
     roleUpdatedAt: req.user.roleUpdatedAt || null
   });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// NOTIFIKASI — endpoint user (in-app)
+// ══════════════════════════════════════════════════════════════════════════
+app.get('/api/notifications', requireUser, async (req, res) => {
+  try {
+    const limit = Math.min(Number(req.query.limit) || 30, 100);
+    const rows = await db.collection('notifications')
+      .find({ discordId: req.user.discordId })
+      .sort({ createdAt: -1 })
+      .limit(limit)
+      .toArray();
+    const unread = await db.collection('notifications').countDocuments({ discordId: req.user.discordId, read: false });
+    res.json({ items: rows, unread });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put('/api/notifications/:id/read', requireUser, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+    await db.collection('notifications').updateOne(
+      { _id: new ObjectId(req.params.id), discordId: req.user.discordId },
+      { $set: { read: true } }
+    );
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.put('/api/notifications/read-all', requireUser, async (req, res) => {
+  try {
+    await db.collection('notifications').updateMany(
+      { discordId: req.user.discordId, read: false },
+      { $set: { read: true } }
+    );
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1518,8 +1780,25 @@ async function sendDiscordDM(userId, contentOrPayload) {
   }
 }
 
+// Masa aktif sekarang bisa diatur admin dalam Menit / Jam / Hari (bukan cuma hari).
+// activeAmount = angka, activeUnit = 'minutes' | 'hours' | 'days'. Tetap terima
+// activeDays (lama) untuk kompatibilitas mundur kalau ada request dari versi admin panel lama.
+const ACTIVE_UNIT_MS = { minutes: 60 * 1000, hours: 60 * 60 * 1000, days: 24 * 60 * 60 * 1000 };
+function computeActiveUntil(body) {
+  const unit = ACTIVE_UNIT_MS.hasOwnProperty(body.activeUnit) ? body.activeUnit : 'days';
+  const amountRaw = (body.activeAmount !== undefined && body.activeAmount !== null && body.activeAmount !== '')
+    ? body.activeAmount
+    : body.activeDays; // fallback lama
+  if (amountRaw === undefined || amountRaw === null || amountRaw === '') return { ok: true, activeUntil: undefined }; // tidak diubah
+  const amount = Number(amountRaw);
+  if (!Number.isFinite(amount) || amount <= 0) {
+    return { ok: false, error: `Masa aktif (${unit === 'minutes' ? 'menit' : unit === 'hours' ? 'jam' : 'hari'}) harus berupa angka lebih dari 0.` };
+  }
+  return { ok: true, activeUntil: new Date(Date.now() + amount * ACTIVE_UNIT_MS[unit]), unit, amount };
+}
+
 app.put('/api/admin/users/:discordId/role', requireAdmin, async (req, res) => {
-  const { role, activeDays } = req.body;
+  const { role } = req.body;
   if (!ROLE_LEVEL.hasOwnProperty(role)) return res.status(400).json({ error: 'Role tidak valid.' });
 
   const user = await db.collection('users').findOne({ discordId: req.params.discordId });
@@ -1533,18 +1812,16 @@ app.put('/api/admin/users/:discordId/role', requireAdmin, async (req, res) => {
   // unlimited waktu jadi field-nya dikosongkan lagi kalau paketnya diubah ke salah satunya.
   const update = { role, roleUpdatedAt: new Date() };
   if (role === 'gold' || role === 'platinum') {
-    if (activeDays !== undefined && activeDays !== null && activeDays !== '') {
-      const days = Number(activeDays);
-      if (!Number.isFinite(days) || days <= 0) {
-        return res.status(400).json({ error: 'Masa aktif (hari) harus berupa angka lebih dari 0.' });
-      }
-      update.activeUntil = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+    const period = computeActiveUntil(req.body);
+    if (!period.ok) return res.status(400).json({ error: period.error });
+    if (period.activeUntil !== undefined) {
+      update.activeUntil = period.activeUntil;
     } else if (oldRole !== role) {
       // Baru pindah ke Gold/Platinum tapi masa aktifnya belum diisi -> kosongkan dulu,
       // admin bisa atur belakangan lewat "Atur Masa Aktif" tanpa perlu ganti paket lagi.
       update.activeUntil = null;
     }
-    // Kalau role-nya SAMA & activeDays tidak dikirim -> activeUntil yang ada dibiarkan apa adanya.
+    // Kalau role-nya SAMA & masa aktif tidak dikirim -> activeUntil yang ada dibiarkan apa adanya.
   } else {
     update.activeUntil = null;
   }
@@ -1597,6 +1874,8 @@ app.put('/api/admin/users/:discordId/role', requireAdmin, async (req, res) => {
     // Tidak perlu socket — /api/me sudah di-hit tiap 15 detik dari client
   }
 
+  pushAccountUpdate(discordId).catch(() => {});
+
   res.json({
     success: true,
     discordSync,
@@ -1609,10 +1888,11 @@ app.put('/api/admin/users/:discordId/role', requireAdmin, async (req, res) => {
 
 // "Atur Masa Aktif" — ubah/perpanjang masa aktif Gold/Platinum TANPA ganti paket.
 // Berguna buat perpanjang langganan user yang paketnya sudah benar tapi mau
-// ditambah/reset masa aktifnya (mis. user baru bayar lagi).
+// ditambah/reset masa aktifnya (mis. user baru bayar lagi). Sekarang mendukung
+// satuan Menit/Jam/Hari (activeAmount + activeUnit), bukan cuma hari.
 app.put('/api/admin/users/:discordId/active-period', requireAdmin, async (req, res) => {
   try {
-    const { activeDays, clear } = req.body;
+    const { clear } = req.body;
     const discordId = req.params.discordId;
     const user = await db.collection('users').findOne({ discordId });
     if (!user) return res.status(404).json({ error: 'User tidak ditemukan.' });
@@ -1622,14 +1902,24 @@ app.put('/api/admin/users/:discordId/active-period', requireAdmin, async (req, r
 
     let activeUntil = null;
     if (!clear) {
-      const days = Number(activeDays);
-      if (!Number.isFinite(days) || days <= 0) {
-        return res.status(400).json({ error: 'Masa aktif (hari) harus berupa angka lebih dari 0.' });
-      }
-      activeUntil = new Date(Date.now() + days * 24 * 60 * 60 * 1000);
+      const period = computeActiveUntil(req.body);
+      if (!period.ok) return res.status(400).json({ error: period.error });
+      if (period.activeUntil === undefined) return res.status(400).json({ error: 'Isi jumlah masa aktif dulu.' });
+      activeUntil = period.activeUntil;
     }
 
     await db.collection('users').updateOne({ discordId }, { $set: { activeUntil } });
+
+    notifyUser(discordId, {
+      type: 'announcement',
+      title: clear ? 'Masa Aktif Direset' : 'Masa Aktif Diperpanjang',
+      message: clear
+        ? 'Masa aktif paket kamu telah direset oleh Admin.'
+        : `Masa aktif paket kamu telah diperpanjang oleh Admin, aktif sampai ${activeUntil.toLocaleString('id-ID', { timeZone: 'Asia/Jakarta' })} WIB.`,
+      dm: true, webhook: false
+    }).catch(() => {});
+    pushAccountUpdate(discordId).catch(() => {});
+
     res.json({ success: true, activeUntil });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -1648,7 +1938,40 @@ app.put('/api/admin/users/:discordId/reset-quota', requireAdmin, async (req, res
       { discordId },
       { $set: { downloadUsage: { date: todayDateStrJakarta(), game: 0, bypass: 0 } } }
     );
+    pushAccountUpdate(discordId).catch(() => {});
     res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// ADMIN — PENGUMUMAN / NOTIFIKASI
+// ══════════════════════════════════════════════════════════════════════════
+// Kirim pengumuman ke SATU user (target=discordId) atau SEMUA user (target='all').
+app.post('/api/admin/notifications/send', requireAdmin, async (req, res) => {
+  try {
+    const { target, title, message, dm, webhook } = req.body;
+    if (!title || !message) return res.status(400).json({ error: 'Judul & pesan wajib diisi.' });
+
+    if (!target || target === 'all') {
+      const count = await notifyAllUsers({ title, message, dm: !!dm, webhook: webhook !== false });
+      return res.json({ success: true, sentTo: count });
+    }
+
+    const user = await db.collection('users').findOne({ discordId: target });
+    if (!user) return res.status(404).json({ error: 'User tidak ditemukan.' });
+    await notifyUser(target, { type: 'announcement', title, message, dm: !!dm, webhook: !!webhook });
+    res.json({ success: true, sentTo: 1 });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/admin/notifications', requireAdmin, async (req, res) => {
+  try {
+    const rows = await db.collection('notifications').find({}).sort({ createdAt: -1 }).limit(200).toArray();
+    res.json(rows);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -1912,10 +2235,82 @@ app.get('/', (req, res) => {
 // ══════════════════════════════════════════════════════════════════════════
 // START
 // ══════════════════════════════════════════════════════════════════════════
+// ══════════════════════════════════════════════════════════════════════════
+// REALTIME — periodic scan buat notifikasi "masa aktif hampir habis".
+// Jalan tiap 15 menit, cek user Gold/Platinum yang activeUntil-nya kurang dari 24 jam
+// lagi dan belum dikasih tau hari ini (ditandai lewat field periodWarnedAt supaya tidak spam).
+// ══════════════════════════════════════════════════════════════════════════
+async function scanExpiringPeriods() {
+  if (!db) return;
+  try {
+    const soon = new Date(Date.now() + 24 * 60 * 60 * 1000);
+    const users = await db.collection('users').find({
+      role: { $in: ['gold', 'platinum'] },
+      activeUntil: { $ne: null, $lte: soon, $gt: new Date() }
+    }).toArray();
+
+    for (const u of users) {
+      const alreadyWarnedToday = u.periodWarnedAt &&
+        (new Date(u.periodWarnedAt).toDateString() === new Date().toDateString());
+      if (alreadyWarnedToday) continue;
+
+      const hoursLeft = Math.max(1, Math.round((new Date(u.activeUntil).getTime() - Date.now()) / (60 * 60 * 1000)));
+      await notifyUser(u.discordId, {
+        type: 'period_low',
+        title: 'Masa Aktif Hampir Habis',
+        message: `Masa aktif paket ${u.role.toUpperCase()} kamu tersisa sekitar ${hoursLeft} jam lagi. Perpanjang sekarang biar tidak terputus.`,
+        dm: true, webhook: false
+      });
+      await db.collection('users').updateOne({ discordId: u.discordId }, { $set: { periodWarnedAt: new Date() } });
+    }
+  } catch (e) {
+    console.warn('[Realtime] Gagal scan masa aktif hampir habis:', e.message);
+  }
+}
+setInterval(scanExpiringPeriods, 15 * 60 * 1000);
+
+// ══════════════════════════════════════════════════════════════════════════
+// START — http server manual (bukan app.listen langsung) supaya bisa nempelin
+// WebSocket server (realtime) di path yang sama tanpa port terpisah.
+// ══════════════════════════════════════════════════════════════════════════
+const httpServer = http.createServer(app);
+const wss = new WebSocket.Server({ server: httpServer, path: '/ws' });
+
+wss.on('connection', (ws, req) => {
+  try {
+    const url = new URL(req.url, 'http://localhost');
+    const token = url.searchParams.get('token');
+    if (!token || !JWT_SECRET) { ws.close(4001, 'no token'); return; }
+    const payload = jwt.verify(token, JWT_SECRET);
+    const discordId = payload.discordId;
+    if (!discordId) { ws.close(4001, 'invalid token'); return; }
+
+    wsRegister(discordId, ws);
+    ws.send(JSON.stringify({ event: 'connected', data: { ok: true } }));
+
+    ws.on('close', () => wsUnregister(discordId, ws));
+    ws.on('error', () => wsUnregister(discordId, ws));
+    // heartbeat sederhana biar koneksi mati (mis. laptop sleep) ke-detect & dibersihin
+    ws.isAlive = true;
+    ws.on('pong', () => { ws.isAlive = true; });
+  } catch (e) {
+    ws.close(4001, 'auth failed');
+  }
+});
+
+// Ping semua koneksi tiap 30 detik; kalau ga jawab 1x ronde berikutnya -> putus.
+setInterval(() => {
+  wss.clients.forEach(ws => {
+    if (ws.isAlive === false) return ws.terminate();
+    ws.isAlive = false;
+    try { ws.ping(); } catch {}
+  });
+}, 30000);
+
 // Server SELALU start dulu, DB connect di background.
 // Ini penting supaya Railway tidak anggap server crash hanya karena DB lambat konek.
-app.listen(PORT, () => {
-  console.log(`🚀 ${APP_NAME} backend jalan di port ${PORT}`);
+httpServer.listen(PORT, () => {
+  console.log(`🚀 ${APP_NAME} backend jalan di port ${PORT} (HTTP + WebSocket realtime di /ws)`);
 });
 
 connectDB().catch(e => {

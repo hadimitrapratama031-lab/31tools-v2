@@ -2,6 +2,7 @@
 // NOVA LAUNCHER — RENDERER (app.js)
 // ══════════════════════════════════════════════════════════════════════════
 const SERVER_URL = 'https://31tools-v2-production.up.railway.app';
+const WS_URL = SERVER_URL.replace(/^http/, 'ws') + '/ws';
 
 // ── HELPER ──
 function getOrCreateDeviceId() {
@@ -445,6 +446,10 @@ function enterApp(user) {
   if (els.profileRole) els.profileRole.textContent = user.role;
 
   if (els.topbarH2) els.topbarH2.textContent = `Have a good time ${user.username}!`;
+
+  renderPackageCard(user);
+  connectRealtime();
+  loadNotifications();
 
   showPage('dashboard'); // halaman utama selalu yang pertama muncul
   loadGames();
@@ -1265,6 +1270,12 @@ ${result.extractedFiles?.length || 0} file berhasil dipasang.`
 
   } catch (e) {
     dlSetError(e.message);
+    // Laporkan kegagalan ke server supaya user dapat notifikasi (in-app + realtime),
+    // best-effort — jangan sampai gagalnya laporan ini menutupi error aslinya.
+    api('/api/downloads/failed', {
+      method: 'POST',
+      body: JSON.stringify({ itemType, itemName, reason: e.message })
+    }).catch(() => {});
   }
 }
 
@@ -1571,6 +1582,240 @@ const ROLE_TOAST_DESC  = {
   platinum: 'Akses UNLIMITED ke semua konten aktif! 🚀',
 };
 let _roleToastTimer = null;
+// ══════════════════════════════════════════════════════════════════════════
+// REALTIME — WebSocket (download limit, masa aktif, status akun, notifikasi)
+// Semua perubahan dari admin (role, masa aktif, reset kuota) & event server (limit
+// abis, paket abis, download sukses/gagal) langsung sampai ke sini TANPA perlu
+// refresh/restart/login ulang. Polling (_roleCheckTimer dkk) tetap jalan sebagai
+// fallback kalau koneksi WS lagi putus (mis. jaringan tidak stabil).
+// ══════════════════════════════════════════════════════════════════════════
+let _ws = null;
+let _wsReconnectTimer = null;
+let _wsReconnectDelay = 2000;
+
+function connectRealtime() {
+  const token = localStorage.getItem('token');
+  if (!token || !currentUser) return;
+  try { _ws?.close(); } catch (e) {}
+
+  _ws = new WebSocket(`${WS_URL}?token=${encodeURIComponent(token)}`);
+
+  _ws.onopen = () => { _wsReconnectDelay = 2000; };
+
+  _ws.onmessage = (ev) => {
+    let msg;
+    try { msg = JSON.parse(ev.data); } catch (e) { return; }
+    if (!msg || !msg.event) return;
+
+    if (msg.event === 'account:update') {
+      handleAccountUpdate(msg.data);
+    } else if (msg.event === 'notification') {
+      handleIncomingNotification(msg.data);
+    } else if (msg.event === 'notification:unread-count') {
+      setNotifUnreadCount(msg.data.unread);
+    }
+  };
+
+  _ws.onclose = () => {
+    if (!currentUser) return; // sudah logout, tidak perlu reconnect
+    clearTimeout(_wsReconnectTimer);
+    _wsReconnectTimer = setTimeout(connectRealtime, _wsReconnectDelay);
+    _wsReconnectDelay = Math.min(_wsReconnectDelay * 1.5, 30000);
+  };
+  _ws.onerror = () => { try { _ws.close(); } catch (e) {} };
+}
+
+function disconnectRealtime() {
+  clearTimeout(_wsReconnectTimer);
+  try { _ws?.close(); } catch (e) {}
+  _ws = null;
+}
+
+// Dipanggil setiap kali server push perubahan role / masa aktif / limit download.
+function handleAccountUpdate(freshUser) {
+  if (!currentUser || !freshUser) return;
+  const oldRole = currentUser.role;
+  currentUser = { ...currentUser, ...freshUser };
+  _saveUser(currentUser);
+
+  if (els.profileRole) els.profileRole.textContent = currentUser.role;
+  renderPackageCard(currentUser);
+
+  if (oldRole && freshUser.role && oldRole !== freshUser.role) {
+    showRoleUpdateToast(oldRole, freshUser.role);
+    loadGames();
+    loadBypasses();
+  }
+}
+
+// ── PACKAGE CARD (sidebar) — Download Limit & Masa Aktif, realtime ──
+const PKG_UNIT_LABEL = { minutes: 'menit', hours: 'jam', days: 'hari' };
+function renderPackageCard(user) {
+  const status = user?.accountStatus;
+  const badgeEl = document.getElementById('pkgBadge');
+  const badgeTextEl = document.getElementById('pkgBadgeText');
+  const periodBlock = document.getElementById('pkgPeriodBlock');
+  const numEl = document.getElementById('pkgPeriodNumber');
+  const unitEl = document.getElementById('pkgPeriodUnit');
+  const untilEl = document.getElementById('pkgPeriodUntil');
+  const fillEl = document.getElementById('pkgProgressFill');
+  const upgradeBtn = document.getElementById('pkgUpgradeBtn');
+  if (!badgeEl || !status) return;
+
+  const ROLE_LABEL = { public: 'Public', gold: 'Gold Aktif', platinum: 'Platinum Aktif', admin: 'Admin' };
+  badgeEl.className = `pkg-badge ${user.role}`;
+  badgeTextEl.textContent = ROLE_LABEL[user.role] || user.role;
+
+  if (status.hasActivePeriod) {
+    periodBlock.style.display = '';
+    if (status.activeUntil) {
+      const msLeft = Math.max(0, new Date(status.activeUntil).getTime() - Date.now());
+      const daysLeft = msLeft / 86400000;
+      let value, unit;
+      if (daysLeft >= 1) { value = Math.ceil(daysLeft); unit = 'hari'; }
+      else if (msLeft >= 3600000) { value = Math.ceil(msLeft / 3600000); unit = 'jam'; }
+      else { value = Math.max(0, Math.ceil(msLeft / 60000)); unit = 'menit'; }
+
+      numEl.textContent = value;
+      unitEl.textContent = unit;
+      untilEl.textContent = 'aktif s/d ' + new Date(status.activeUntil).toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
+
+      // Progress bar: dianggap penuh di 30 hari, makin sedikit makin merah
+      const pct = Math.max(4, Math.min(100, Math.round((msLeft / (30 * 86400000)) * 100)));
+      fillEl.style.width = pct + '%';
+      fillEl.className = 'pkg-progress-fill' + (daysLeft <= 1 ? ' danger' : daysLeft <= 3 ? ' warn' : '');
+    } else {
+      numEl.textContent = '∞'; unitEl.textContent = ''; untilEl.textContent = 'Belum ada batas waktu';
+      fillEl.style.width = '100%'; fillEl.className = 'pkg-progress-fill';
+    }
+  } else {
+    periodBlock.style.display = 'none';
+  }
+
+  const setQuota = (elId, q) => {
+    const el = document.getElementById(elId);
+    if (!el) return;
+    if (!q || q.unlimited) { el.textContent = 'Unlimited'; el.className = 'pkg-quota-value unlimited'; return; }
+    el.textContent = `${q.remaining}/${q.limit}`;
+    el.className = 'pkg-quota-value' + (q.remaining === 0 ? ' empty' : q.remaining <= 1 ? ' low' : '');
+  };
+  setQuota('pkgQuotaGame', status.download?.game);
+  setQuota('pkgQuotaBypass', status.download?.bypass);
+
+  if (upgradeBtn) {
+    upgradeBtn.style.display = (user.role === 'platinum') ? 'none' : '';
+  }
+}
+
+function wirePackageCard() {
+  document.getElementById('pkgUpgradeBtn')?.addEventListener('click', () => {
+    showPage('store');
+  });
+}
+
+// ── NOTIFICATION BELL ──
+let _notifUnread = 0;
+function setNotifUnreadCount(n) {
+  _notifUnread = n || 0;
+  const dot = document.getElementById('notifDot');
+  if (!dot) return;
+  if (_notifUnread <= 0) { dot.style.display = 'none'; return; }
+  dot.style.display = 'flex';
+  dot.className = 'dot count';
+  dot.textContent = _notifUnread > 9 ? '9+' : String(_notifUnread);
+}
+
+async function loadNotifications() {
+  const listEl = document.getElementById('notifList');
+  if (!listEl) return;
+  try {
+    const data = await api('/api/notifications?limit=30');
+    setNotifUnreadCount(data.unread);
+    if (!data.items || data.items.length === 0) {
+      listEl.innerHTML = '<div class="notif-empty">Belum ada notifikasi.</div>';
+      return;
+    }
+    listEl.innerHTML = data.items.map(notifItemHtml).join('');
+    listEl.querySelectorAll('.notif-item').forEach(itemEl => {
+      itemEl.addEventListener('click', async () => {
+        const id = itemEl.dataset.id;
+        if (itemEl.classList.contains('unread')) {
+          itemEl.classList.remove('unread');
+          try { await api(`/api/notifications/${id}/read`, { method: 'PUT' }); } catch (e) {}
+          setNotifUnreadCount(Math.max(0, _notifUnread - 1));
+        }
+      });
+    });
+  } catch (e) {
+    listEl.innerHTML = '<div class="notif-empty">Gagal memuat notifikasi.</div>';
+  }
+}
+
+const NOTIF_ICON = {
+  download_success: '✅', download_failed: '❌', quota_low: '⚠️',
+  quota_empty: '⛔', period_low: '⏳', period_expired: '🚫', announcement: '📢'
+};
+function notifItemHtml(n) {
+  const icon = NOTIF_ICON[n.type] || '🔔';
+  return `<div class="notif-item ${n.read ? '' : 'unread'}" data-id="${n._id}">
+    <span class="ni-icon">${icon}</span>
+    <div>
+      <div class="ni-title">${escapeHtml(n.title)}</div>
+      <div class="ni-msg">${escapeHtml(n.message)}</div>
+      <div class="ni-time">${timeAgo(n.createdAt)}</div>
+    </div>
+  </div>`;
+}
+
+function wireNotifBell() {
+  const bell = document.getElementById('notifBell');
+  const dropdown = document.getElementById('notifDropdown');
+  if (!bell || !dropdown) return;
+
+  bell.addEventListener('click', (e) => {
+    e.stopPropagation();
+    const willOpen = !dropdown.classList.contains('open');
+    dropdown.classList.toggle('open', willOpen);
+    if (willOpen) loadNotifications();
+  });
+  document.addEventListener('click', (e) => {
+    if (!bell.contains(e.target)) dropdown.classList.remove('open');
+  });
+  document.getElementById('notifMarkAllRead')?.addEventListener('click', async (e) => {
+    e.stopPropagation();
+    try { await api('/api/notifications/read-all', { method: 'PUT' }); } catch (er) {}
+    setNotifUnreadCount(0);
+    document.querySelectorAll('.notif-item.unread').forEach(el => el.classList.remove('unread'));
+  });
+}
+
+// Notifikasi baru dari WS: update badge, refresh list kalau dropdown lagi kebuka,
+// dan tampilkan toast kecil di pojok kanan-atas.
+function handleIncomingNotification(n) {
+  _notifUnread += 1;
+  setNotifUnreadCount(_notifUnread);
+  const dropdown = document.getElementById('notifDropdown');
+  if (dropdown?.classList.contains('open')) loadNotifications();
+  showAppNotifToast(n);
+
+  // Notifikasi terkait limit/masa aktif langsung dampaknya ke kartu paket —
+  // minta data akun terbaru biar kartu ikut ter-update tanpa nunggu polling.
+  if (['quota_low', 'quota_empty', 'period_low', 'period_expired'].includes(n.type)) {
+    api('/api/me').then(fresh => { if (fresh) { currentUser = { ...currentUser, ...fresh }; renderPackageCard(currentUser); } }).catch(() => {});
+  }
+}
+
+let _notifToastTimer = null;
+function showAppNotifToast(n) {
+  let el = document.querySelector('.app-notif-toast');
+  if (!el) { el = document.createElement('div'); el.className = 'app-notif-toast'; document.body.appendChild(el); }
+  const icon = NOTIF_ICON[n.type] || '🔔';
+  el.innerHTML = `<span class="ant-icon">${icon}</span><div><div class="ant-title">${escapeHtml(n.title)}</div><div class="ant-msg">${escapeHtml(n.message)}</div></div>`;
+  requestAnimationFrame(() => el.classList.add('show'));
+  clearTimeout(_notifToastTimer);
+  _notifToastTimer = setTimeout(() => el.classList.remove('show'), 6000);
+}
+
 function showRoleUpdateToast(oldRole, newRole) {
   let toastEl = document.querySelector('.role-update-toast');
   if (!toastEl) {
@@ -1629,6 +1874,8 @@ document.addEventListener('DOMContentLoaded', () => {
   wireBypassesRoleFilter();
   wireDetailPage();
   wireHistoriTabs();
+  wirePackageCard();
+  wireNotifBell();
   loadConfig();
   tryAutoLogin();
 });

@@ -1052,12 +1052,60 @@ function renderUsersRows(rows, isFilteredEmpty) {
         <span>${escapeHtml(u.discordId)}</span>
       </div>
       ${accountStatusHtml(u.accountStatus)}
-      <button class="btn btn-sm btn-outline user-card-action" onclick="openSetRoleModal('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}','${escapeHtml(u.role)}')">
-        Set Paket
-      </button>
+      <div style="display:flex;gap:6px;">
+        <button class="btn btn-sm btn-outline user-card-action" style="flex:1;" onclick="openSetRoleModal('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}','${escapeHtml(u.role)}')">
+          Set Paket
+        </button>
+        <button class="btn btn-sm btn-outline user-card-action" title="Reset limit download harian" onclick="doResetQuota('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}')">
+          ♻️
+        </button>
+        <button class="btn btn-sm btn-outline user-card-action" title="Kirim notifikasi ke user ini" onclick="openSendNotifModal('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}')">
+          📢
+        </button>
+      </div>
     </div>
   `).join('');
 }
+
+async function doResetQuota(discordId, username) {
+  if (!confirm(`Reset limit download harian untuk ${username}?`)) return;
+  try {
+    await api(`/api/admin/users/${discordId}/reset-quota`, { method: 'PUT' });
+    const cached = usersDataCache.find(x => x.discordId === discordId);
+    if (cached?.accountStatus?.download) {
+      ['game', 'bypass'].forEach(k => {
+        if (cached.accountStatus.download[k] && !cached.accountStatus.download[k].unlimited) {
+          cached.accountStatus.download[k].used = 0;
+          cached.accountStatus.download[k].remaining = cached.accountStatus.download[k].limit;
+        }
+      });
+    }
+    applyUsersFilters();
+    showToast(`✅ Limit download ${username} sudah direset.`, 'success');
+  } catch (e) {
+    showToast('Gagal reset limit: ' + e.message, 'error');
+  }
+}
+window.doResetQuota = doResetQuota;
+
+// ─── Kirim notifikasi manual (In-App + opsional Discord DM/Webhook) ───
+let _sendNotifTarget = null; // discordId, atau null = broadcast ke semua
+function openSendNotifModal(discordId, username) {
+  _sendNotifTarget = discordId || null;
+  const title = discordId ? `Kirim Notifikasi ke ${username}` : 'Kirim Pengumuman ke Semua User';
+  const t = prompt(`${title}\n\nJudul notifikasi:`);
+  if (!t) return;
+  const m = prompt('Isi pesan:');
+  if (!m) return;
+  const sendDm = confirm('Kirim juga sebagai DM Discord? (OK = ya, Cancel = tidak)');
+  api('/api/admin/notifications/send', {
+    method: 'POST',
+    body: JSON.stringify({ target: discordId || 'all', title: t, message: m, dm: sendDm, webhook: true })
+  }).then(res => {
+    showToast(`✅ Notifikasi terkirim ke ${res.sentTo} user.`, 'success');
+  }).catch(e => showToast('Gagal kirim notifikasi: ' + e.message, 'error'));
+}
+window.openSendNotifModal = openSendNotifModal;
 
 // ─── MODAL SET ROLE — dengan Discord ID search ───
 let _setRoleTarget = null; // { discordId, username, currentRole, accountStatus }
@@ -1158,9 +1206,12 @@ async function doSetRole() {
   if (!role) { showToast('Pilih paket dulu.', 'error'); return; }
 
   const body = { role };
+  let unitLabel = 'hari';
   if (role === 'gold' || role === 'platinum') {
     const daysRaw = document.getElementById('srActiveDays')?.value?.trim();
-    if (daysRaw) body.activeDays = Number(daysRaw);
+    const unit = document.getElementById('srActiveUnit')?.value || 'days';
+    unitLabel = unit === 'minutes' ? 'menit' : unit === 'hours' ? 'jam' : 'hari';
+    if (daysRaw) { body.activeAmount = Number(daysRaw); body.activeUnit = unit; }
   }
 
   btn.textContent = 'Menyimpan...'; btn.disabled = true;
@@ -1185,7 +1236,7 @@ async function doSetRole() {
     closeSetRoleModal();
 
     const ds = result?.discordSync;
-    const activeInfo = body.activeDays ? ` — masa aktif ${body.activeDays} hari.` : '';
+    const activeInfo = body.activeAmount ? ` — masa aktif ${body.activeAmount} ${unitLabel}.` : '';
     if (!ds || ds.ok) {
       showToast(`✅ Paket ${_setRoleTarget.username} diubah ke ${role}${activeInfo}${ds?.ok ? ' Discord disinkron ✓' : ''}.`, 'success');
     } else if (ds.reason === 'not_configured') {

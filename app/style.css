@@ -521,6 +521,59 @@
     box-shadow:0 8px 18px rgba(92,102,255,0.35);
   }
 
+  /* ---------------- PACKAGE / MASA AKTIF CARD (sidebar, realtime) ---------------- */
+  .package-card{
+    margin:14px 4px 0;
+    padding:16px;
+    border-radius:var(--radius-md);
+    background:linear-gradient(160deg, rgba(124,92,255,0.20), rgba(79,172,254,0.08));
+    border:1px solid rgba(255,255,255,0.10);
+    box-shadow:0 10px 24px rgba(20,10,45,0.25);
+  }
+  .pkg-badge{
+    display:inline-flex;align-items:center;gap:6px;
+    padding:4px 10px;border-radius:20px;
+    background:rgba(255,255,255,0.10);
+    font-size:11px;font-weight:700;color:var(--text-dim);
+    margin-bottom:12px;
+  }
+  .pkg-badge.gold{background:rgba(255,215,106,0.18);color:#ffd76a;}
+  .pkg-badge.platinum{background:rgba(167,139,250,0.22);color:#c9b6ff;}
+  .pkg-badge.admin{background:rgba(74,222,128,0.20);color:#4ade80;}
+  .pkg-star{color:#c9b6ff;}
+  .pkg-period-value{
+    font-family:'Poppins',sans-serif;font-weight:800;font-size:26px;color:var(--text-main);
+    display:flex;align-items:baseline;gap:6px;
+  }
+  .pkg-period-unit{font-size:13px;font-weight:600;color:var(--text-dim);}
+  .pkg-period-label{font-size:11.5px;color:var(--text-faint);margin-top:2px;}
+  .pkg-progress{
+    height:6px;border-radius:6px;background:rgba(255,255,255,0.08);
+    margin:10px 0 8px;overflow:hidden;
+  }
+  .pkg-progress-fill{
+    height:100%;border-radius:6px;
+    background:linear-gradient(90deg,#7c5cff,#c084fc);
+    transition:width .4s ease;
+  }
+  .pkg-progress-fill.warn{background:linear-gradient(90deg,#ffb84d,#ff7e5f);}
+  .pkg-progress-fill.danger{background:linear-gradient(90deg,#ff6b81,#ff3d5a);}
+  .pkg-period-until{font-size:11px;color:var(--text-faint);}
+  .pkg-quota{margin-top:12px;padding-top:12px;border-top:1px solid rgba(255,255,255,0.08);}
+  .pkg-quota-row{display:flex;justify-content:space-between;align-items:center;font-size:12px;margin-bottom:6px;}
+  .pkg-quota-label{color:var(--text-dim);}
+  .pkg-quota-value{color:var(--text-main);font-weight:700;}
+  .pkg-quota-value.unlimited{color:#3ddc97;}
+  .pkg-quota-value.low{color:#ffb84d;}
+  .pkg-quota-value.empty{color:#ff6b81;}
+  .pkg-upgrade-btn{
+    width:100%;margin-top:14px;border:none;padding:10px;border-radius:10px;
+    background:linear-gradient(90deg,#7c5cff,#5b8dff);
+    color:#fff;font-weight:700;font-size:12.5px;cursor:pointer;
+    box-shadow:0 8px 18px rgba(92,102,255,0.35);
+  }
+  .pkg-upgrade-btn:hover{filter:brightness(1.08);}
+
   .dark-mode-row{
     display:flex;align-items:center;gap:10px;
     padding:16px 4px 4px;
@@ -1258,3 +1311,57 @@
   .detail-action-bar { flex-direction: column; }
   .detail-install-bypass-btn { min-width: 0; }
 }
+/* ---------------- NOTIFICATION BELL DROPDOWN (realtime in-app) ---------------- */
+.notif-bell{position:relative;cursor:pointer;}
+.notif-bell .dot{
+  position:absolute;top:6px;right:6px;
+  min-width:8px;height:8px;border-radius:8px;background:#ff6b81;
+  box-shadow:0 0 0 2px var(--panel-solid);
+}
+.notif-bell .dot.count{
+  min-width:16px;height:16px;padding:0 3px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:9.5px;font-weight:800;color:#fff;top:2px;right:2px;
+}
+.notif-dropdown{
+  display:none;position:absolute;top:calc(100% + 10px);right:0;
+  width:320px;max-height:420px;overflow:hidden;
+  background:var(--panel-solid);border:1px solid rgba(255,255,255,0.10);
+  border-radius:var(--radius-md);box-shadow:0 20px 40px rgba(10,5,25,0.45);
+  z-index:50;flex-direction:column;
+}
+.notif-dropdown.open{display:flex;}
+.notif-dropdown-head{
+  display:flex;align-items:center;justify-content:space-between;
+  padding:12px 14px;border-bottom:1px solid rgba(255,255,255,0.08);
+  font-weight:700;font-size:13px;color:var(--text-main);
+}
+.notif-dropdown-head button{
+  background:none;border:none;color:#9d84ff;font-size:11px;font-weight:700;cursor:pointer;
+}
+.notif-list{overflow-y:auto;padding:6px;}
+.notif-empty{padding:24px 10px;text-align:center;color:var(--text-faint);font-size:12.5px;}
+.notif-item{
+  display:flex;gap:10px;padding:10px;border-radius:10px;cursor:pointer;
+  align-items:flex-start;
+}
+.notif-item:hover{background:rgba(255,255,255,0.05);}
+.notif-item.unread{background:rgba(124,92,255,0.10);}
+.notif-item .ni-icon{font-size:16px;flex-shrink:0;margin-top:1px;}
+.notif-item .ni-title{font-size:12.5px;font-weight:700;color:var(--text-main);}
+.notif-item .ni-msg{font-size:11.5px;color:var(--text-dim);margin-top:2px;line-height:1.4;}
+.notif-item .ni-time{font-size:10px;color:var(--text-faint);margin-top:4px;}
+
+/* Generic realtime toast (notifikasi baru muncul, terpisah dari toast ganti paket) */
+.app-notif-toast{
+  position:fixed;top:16px;right:16px;z-index:999;
+  width:300px;padding:12px 14px;border-radius:14px;
+  background:var(--panel-solid);border:1px solid rgba(255,255,255,0.12);
+  box-shadow:0 20px 40px rgba(10,5,25,0.5);
+  display:flex;gap:10px;align-items:flex-start;
+  transform:translateX(120%);opacity:0;transition:transform .35s ease, opacity .35s ease;
+}
+.app-notif-toast.show{transform:translateX(0);opacity:1;}
+.app-notif-toast .ant-icon{font-size:18px;}
+.app-notif-toast .ant-title{font-size:12.5px;font-weight:700;color:var(--text-main);}
+.app-notif-toast .ant-msg{font-size:11.5px;color:var(--text-dim);margin-top:2px;line-height:1.4;}

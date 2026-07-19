@@ -45,7 +45,8 @@
     "jsonwebtoken": "^9.0.2",
     "mongodb": "^6.9.0",
     "nanoid": "^3.3.7",
-    "tweetnacl": "^1.0.3"
+    "tweetnacl": "^1.0.3",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "electron": "^32.0.0",
