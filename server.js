@@ -931,7 +931,7 @@ app.get('/api/bypasses', requireUser, async (req, res) => {
 // Dipanggil pas user pencet "Install"/"Pakai" di kartu Game atau Bypass
 app.post('/api/history', requireUser, async (req, res) => {
   try {
-    const { itemType, itemId } = req.body;
+    const { itemType, itemId, extractedFiles, steamPath, folderPath } = req.body;
     if (!['game', 'bypass'].includes(itemType)) return res.status(400).json({ error: 'itemType harus game/bypass.' });
     if (!ObjectId.isValid(itemId)) return res.status(400).json({ error: 'itemId tidak valid.' });
 
@@ -939,17 +939,24 @@ app.post('/api/history', requireUser, async (req, res) => {
     const item = await db.collection(collectionName).findOne({ _id: new ObjectId(itemId) });
     if (!item) return res.status(404).json({ error: 'Item tidak ditemukan.' });
 
-    await db.collection('history').insertOne({
+    const insertResult = await db.collection('history').insertOne({
       userId: req.user.discordId,
       username: req.user.username,
       itemType,
       itemId,
       itemName: item.name,
       itemImage: item.imageUrl || null,
+      // BUG FIX: dulu field ini (walau sudah dikirim client sejak awal) tidak pernah
+      // disimpan, jadi tombol Uninstall di halaman Histori tidak punya cara untuk tahu
+      // file apa saja & di folder mana yang harus dihapus di PC user — cuma bisa hapus
+      // catatan histori-nya doang, file game/bypass yang sebenarnya tetap ketinggalan.
+      extractedFiles: Array.isArray(extractedFiles) ? extractedFiles.filter(f => typeof f === 'string') : [],
+      steamPath: itemType === 'game' ? (steamPath || null) : null,
+      folderPath: itemType === 'bypass' ? (folderPath || null) : null,
       createdAt: new Date()
     });
 
-    res.json({ success: true });
+    res.json({ success: true, _id: insertResult.insertedId });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }

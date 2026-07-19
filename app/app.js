@@ -116,6 +116,7 @@ function grabElements() {
   els.gamesOnlyGrid  = document.getElementById('gamesOnlyGrid');
   els.bypassesGrid   = document.getElementById('bypassesGrid');
   els.historiListPage = document.getElementById('historiListPage');
+  els.historiStats    = document.getElementById('historiStats');
   els.gamesRoleFilter = document.getElementById('gamesRoleFilter');
   els.bypassesRoleFilter = document.getElementById('bypassesRoleFilter');
 }
@@ -829,6 +830,26 @@ function ensureProgressListener() {
   }
 }
 
+// ── META INSTALL LOKAL (localStorage) — dipakai uninstall ──
+// Sama seperti project lama: begitu install berhasil, extractedFiles/steamPath/folderPath
+// langsung disimpan di localStorage PC ini juga (dikunci per history _id dari server),
+// supaya uninstall punya sumber data yang PASTI ada & akurat, tidak cuma bergantung ke
+// hasil GET /api/history yang datang dari round-trip server.
+function getLocalInstallMeta() {
+  try { return JSON.parse(localStorage.getItem('installMeta') || '{}'); } catch (e) { return {}; }
+}
+function saveLocalInstallMeta(historyId, meta) {
+  if (!historyId) return;
+  const map = getLocalInstallMeta();
+  map[String(historyId)] = meta;
+  localStorage.setItem('installMeta', JSON.stringify(map));
+}
+function removeLocalInstallMeta(historyId) {
+  const map = getLocalInstallMeta();
+  delete map[String(historyId)];
+  localStorage.setItem('installMeta', JSON.stringify(map));
+}
+
 // ── INSTALL -> catat ke histori ──
 async function handleInstall(itemType, itemId, itemName) {
   _dlLastInstallArgs = [itemType, itemId, itemName];
@@ -869,10 +890,11 @@ async function handleInstall(itemType, itemId, itemName) {
       if (!result.success) throw new Error(result.error || 'Inject game gagal tanpa keterangan.');
 
       dlSetStage('Menyimpan ke histori...', 3);
-      await api('/api/history', {
+      const histResp = await api('/api/history', {
         method: 'POST',
         body: JSON.stringify({ itemType, itemId, extractedFiles: result.extractedFiles || [], steamPath })
       });
+      saveLocalInstallMeta(histResp?._id, { type: 'game', extractedFiles: result.extractedFiles || [], steamPath });
 
       dlSetSuccess(
         'Inject berhasil!',
@@ -924,7 +946,7 @@ async function handleInstall(itemType, itemId, itemName) {
       if (!result.success)  throw new Error(result.error || 'Install bypass gagal tanpa keterangan.');
 
       dlSetStage('Menyimpan ke histori...', 3);
-      await api('/api/history', {
+      const histResp = await api('/api/history', {
         method: 'POST',
         body: JSON.stringify({
           itemType, itemId,
@@ -932,6 +954,7 @@ async function handleInstall(itemType, itemId, itemName) {
           folderPath: result.folderPath || null
         })
       });
+      saveLocalInstallMeta(histResp?._id, { type: 'bypass', extractedFiles: result.extractedFiles || [], folderPath: result.folderPath || null });
 
       dlSetSuccess(
         'Bypass berhasil dipasang!',
@@ -950,40 +973,297 @@ ${result.extractedFiles?.length || 0} file berhasil dipasang.`
 }
 
 // ── HALAMAN HISTORI ──
+let _allHistori = [];
+let _historiFilter = 'all'; // all | game | bypass
+
 async function loadHistori() {
   if (!els.historiListPage) return;
-  els.historiListPage.innerHTML = `<div style="color:#8577a3;font-size:13px;">Memuat histori...</div>`;
+  renderHistoriSkeleton();
   try {
     const rows = await api('/api/history');
-    renderHistoriPage(rows);
+    _allHistori = rows;
+    renderHistoriStats(rows);
+    applyHistoriFilter();
   } catch (e) {
-    els.historiListPage.innerHTML = `<div style="color:#ff6b81;font-size:13px;">Gagal memuat histori: ${escapeHtml(e.message)}</div>`;
+    if (els.historiStats) els.historiStats.innerHTML = '';
+    els.historiListPage.innerHTML = `
+      <div class="histori-error-state">
+        <div class="her-icon">⚠️</div>
+        <div class="her-title">Gagal Memuat Histori</div>
+        <div class="her-msg">${escapeHtml(e.message)}</div>
+        <button class="her-retry" id="btnHistoriRetry">Coba Lagi</button>
+      </div>`;
+    document.getElementById('btnHistoriRetry')?.addEventListener('click', loadHistori);
   }
 }
 
-function renderHistoriPage(rows) {
-  if (!els.historiListPage) return;
-  els.historiListPage.innerHTML = rows.length ? rows.map(h => `
-    <div class="histori-row">
-      <div class="hicon">${h.itemType === 'game' ? '🎮' : '🛡️'}</div>
-      <div class="hinfo">
-        <div class="hname">${escapeHtml(h.itemName)}</div>
-        <div class="htime">${timeAgo(h.createdAt)}</div>
-      </div>
-      <button class="huninstall" data-id="${h._id}">Uninstall</button>
-    </div>
-  `).join('') : `<div style="color:#8577a3;font-size:13px;">Belum ada histori.</div>`;
+function renderHistoriSkeleton() {
+  if (els.historiStats) {
+    els.historiStats.innerHTML = [1, 2, 3].map(() => `
+      <div class="hstat-card">
+        <div class="hstat-icon-wrap skel-pulse hstat-skel-icon"></div>
+        <div style="flex:1;">
+          <div class="skel-pulse hstat-skel-num" style="margin-bottom:7px;"></div>
+          <div class="skel-pulse hstat-skel-label"></div>
+        </div>
+      </div>`).join('');
+  }
+  els.historiListPage.innerHTML = `<div class="histori-skel-list">${[1, 2, 3, 4].map(() => `<div class="skel-pulse hsk-row"></div>`).join('')}</div>`;
+}
 
-  els.historiListPage.querySelectorAll('.huninstall').forEach(btn => {
-    btn.addEventListener('click', async () => {
+function renderHistoriStats(rows) {
+  if (!els.historiStats) return;
+  const totalGame = rows.filter(r => r.itemType === 'game').length;
+  const totalBypass = rows.filter(r => r.itemType === 'bypass').length;
+  const stats = [
+    { icon: '📦', color: '#7c5cff', num: rows.length, label: 'Total Histori' },
+    { icon: '🎮', color: '#8b5cf6', num: totalGame,   label: 'Game Diinstall' },
+    { icon: '🛡️', color: '#0ea5e9', num: totalBypass, label: 'Bypass Dipakai' },
+  ];
+  els.historiStats.innerHTML = stats.map(s => `
+    <div class="hstat-card" style="--hic:${s.color};">
+      <div class="hstat-icon-wrap">${s.icon}</div>
+      <div>
+        <div class="hstat-num" style="color:${s.color};">${s.num}</div>
+        <div class="hstat-label">${s.label}</div>
+      </div>
+    </div>`).join('');
+
+  // Update angka di tab filter (sebelumnya selalu nampil "0" karena tidak pernah diisi)
+  const setCount = (id, n) => { const el = document.getElementById(id); if (el) el.textContent = n; };
+  setCount('htabCountAll', rows.length);
+  setCount('htabCountGame', totalGame);
+  setCount('htabCountBypass', totalBypass);
+}
+
+function wireHistoriTabs() {
+  document.querySelectorAll('#historiTabs .htab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('#historiTabs .htab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      _historiFilter = btn.dataset.filter;
+      applyHistoriFilter();
+    });
+  });
+}
+
+function applyHistoriFilter() {
+  const rows = _historiFilter === 'all' ? _allHistori : _allHistori.filter(r => r.itemType === _historiFilter);
+  renderHistoriCards(rows);
+}
+
+// Label grup tanggal: "Hari Ini" / "Kemarin" / "12 Juli 2026"
+function historiDateLabel(dateStr) {
+  const d = new Date(dateStr);
+  const now = new Date();
+  const startOfDay = dt => new Date(dt.getFullYear(), dt.getMonth(), dt.getDate()).getTime();
+  const diffDays = Math.round((startOfDay(now) - startOfDay(d)) / 86400000);
+  if (diffDays === 0) return 'Hari Ini';
+  if (diffDays === 1) return 'Kemarin';
+  return d.toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+function renderHistoriCards(rows) {
+  if (!els.historiListPage) return;
+
+  if (!rows.length) {
+    const empty = _historiFilter === 'all'
+      ? { icon: '🕒', title: 'Belum Ada Histori', sub: 'Game atau bypass yang kamu install akan muncul di sini.' }
+      : { icon: _historiFilter === 'game' ? '🎮' : '🛡️', title: `Belum Ada Histori ${_historiFilter === 'game' ? 'Game' : 'Bypass'}`, sub: `Kamu belum pernah install ${_historiFilter === 'game' ? 'game' : 'bypass'} apapun.` };
+    els.historiListPage.innerHTML = `
+      <div class="histori-empty">
+        <div class="histori-empty-icon">${empty.icon}</div>
+        <div class="histori-empty-title">${empty.title}</div>
+        <div class="histori-empty-sub">${empty.sub}</div>
+      </div>`;
+    return;
+  }
+
+  // Kelompokkan per tanggal (Hari Ini / Kemarin / tanggal lengkap), urutan sudah
+  // terbaru dulu karena /api/history sudah di-sort createdAt:-1 dari server.
+  const groups = [];
+  let currentLabel = null, currentGroup = null;
+  rows.forEach(h => {
+    const label = historiDateLabel(h.createdAt);
+    if (label !== currentLabel) {
+      currentLabel = label;
+      currentGroup = { label, items: [] };
+      groups.push(currentGroup);
+    }
+    currentGroup.items.push(h);
+  });
+
+  els.historiListPage.innerHTML = `
+    <div class="histori-groups">
+      ${groups.map(g => `
+        <div class="histori-group">
+          <div class="histori-group-date">
+            <span class="histori-date-label">${escapeHtml(g.label)}</span>
+            <span class="histori-date-line"></span>
+            <span class="histori-date-count">${g.items.length} item</span>
+          </div>
+          <div class="histori-cards">
+            ${g.items.map(renderHistoriCard).join('')}
+          </div>
+        </div>`).join('')}
+    </div>`;
+
+  wireHistoriCardActions();
+}
+
+function renderHistoriCard(h) {
+  const isGame = h.itemType === 'game';
+  // Ambil role TERKINI item ini (kalau masih ada di daftar games/bypasses yang aktif) —
+  // supaya badge role tetap akurat walau role item berubah setelah di-install.
+  const list = isGame ? allGames : allBypasses;
+  const liveItem = list.find(x => String(x._id) === String(h.itemId));
+  const role = liveItem?.role || null;
+  const d = new Date(h.createdAt);
+  const fullDate = d.toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) + ' • ' + d.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+
+  return `
+    <div class="histori-card" data-hid="${h._id}">
+      <div class="hcard-cover">
+        ${h.itemImage
+          ? `<img src="${escapeHtml(h.itemImage)}" alt="" loading="lazy" onerror="this.style.display='none';this.nextElementSibling.style.display='flex';">
+             <div class="hcard-cover-fallback" style="display:none;">${isGame ? '🎮' : '🛡️'}</div>`
+          : `<div class="hcard-cover-fallback">${isGame ? '🎮' : '🛡️'}</div>`
+        }
+        <span class="hcard-type-badge ${isGame ? 'hcard-type-game' : 'hcard-type-bypass'}">${isGame ? '🎮 Game' : '🛡️ Bypass'}</span>
+        <button class="hcard-uninstall" data-id="${h._id}" title="Hapus dari histori">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="3 6 5 6 21 6"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6m5 0V4a2 2 0 012-2h0a2 2 0 012 2v2"/></svg>
+        </button>
+      </div>
+      <div class="hcard-body">
+        <div class="hcard-name" title="${escapeHtml(h.itemName)}">${escapeHtml(h.itemName)}</div>
+        <div class="hcard-footer">
+          <div class="hcard-meta-row">
+            <span class="hcard-time">🕒 ${timeAgo(h.createdAt)}</span>
+            ${role ? `<span class="hcard-role ${role}">${escapeHtml(role)}</span>` : ''}
+          </div>
+          <div class="hcard-date-full">${fullDate}</div>
+        </div>
+      </div>
+    </div>`;
+}
+
+// Uninstall pakai konfirmasi 2 langkah (klik pertama jadi warning, klik kedua baru
+// benar-benar hapus) — supaya tidak kehapus tidak sengaja, tanpa perlu popup alert().
+async function wireHistoriCardActions() {
+  els.historiListPage.querySelectorAll('.hcard-uninstall').forEach(btn => {
+    btn.addEventListener('click', async (e) => {
+      e.stopPropagation();
+      if (!btn.classList.contains('confirm')) {
+        btn.classList.add('confirm');
+        btn.title = 'Klik lagi untuk konfirmasi hapus';
+        setTimeout(() => btn.classList.remove('confirm'), 3000); // batal otomatis kalau tidak jadi diklik
+        return;
+      }
+      const card = btn.closest('.histori-card');
+      const historiId = btn.dataset.id;
+      const row = _allHistori.find(h => String(h._id) === String(historiId));
+
+      // PENTING: utamakan data dari localStorage (installMeta) — ini disimpan LANGSUNG
+      // di PC ini tepat saat install barusan berhasil, jadi dijamin ada & akurat (persis
+      // pola project lama yang uninstall-nya sudah terbukti jalan). Data dari server
+      // (row.extractedFiles/dst) cuma dipakai sebagai fallback kalau localStorage-nya
+      // kosong (misal histori disinkron dari device lain, atau data dari sebelum fix ini).
+      const localMeta = getLocalInstallMeta()[String(historiId)];
+      const itemType     = localMeta?.type        ?? row?.itemType;
+      const extractedFiles = (localMeta?.extractedFiles ?? row?.extractedFiles) || [];
+      const steamPathMeta  = localMeta?.steamPath  ?? row?.steamPath  ?? null;
+      const folderPathMeta = localMeta?.folderPath ?? row?.folderPath ?? null;
+
+      btn.disabled = true;
       try {
-        await api('/api/history/' + btn.dataset.id, { method: 'DELETE' });
-        loadHistori();
-      } catch (e) {
-        alert('Gagal uninstall: ' + e.message);
+        let fileWarning = '';
+        let needRestartSteam = false;
+
+        // BUG FIX: sebelumnya di sini cuma langsung DELETE ke /api/history tanpa
+        // pernah menyentuh file di PC user sama sekali — jadi "uninstall" cuma
+        // menghilangkan catatannya, file .lua/.manifest (game) atau file bypass di
+        // folder game tetap ada. Sekarang panggil removeGame/removeBypass dulu.
+        if (itemType === 'game') {
+          if (extractedFiles.length) {
+            // steamPath mungkin tidak tersimpan (histori lama sebelum fix ini) —
+            // fallback ke deteksi ulang steamPath di PC ini kalau tidak ada.
+            const steamPath = steamPathMeta || await window.electronAPI.getSteamPath();
+            if (steamPath) {
+              const rmResult = await window.electronAPI.removeGame({ steamPath, extractedFiles });
+              if (!rmResult?.success) fileWarning = ` (file di PC gagal dihapus: ${rmResult?.error || 'tidak diketahui'})`;
+              else needRestartSteam = true; // file sudah kehapus, tapi Steam masih baca cache lama sampai di-restart
+            } else {
+              fileWarning = ' (Steam tidak ditemukan, file di PC tidak ikut dihapus)';
+            }
+          } else {
+            fileWarning = ' (histori lama, daftar file tidak tersimpan — hapus manual dari folder Steam kalau perlu)';
+          }
+        } else if (itemType === 'bypass') {
+          if (extractedFiles.length && folderPathMeta) {
+            const rmResult = await window.electronAPI.removeBypass({ folderPath: folderPathMeta, extractedFiles });
+            if (!rmResult?.success) fileWarning = ` (file di PC gagal dihapus: ${rmResult?.error || 'tidak diketahui'})`;
+          } else {
+            fileWarning = ' (histori lama, daftar file tidak tersimpan — hapus manual dari folder game kalau perlu)';
+          }
+        }
+
+        card?.classList.add('removing');
+        await api('/api/history/' + historiId, { method: 'DELETE' });
+        removeLocalInstallMeta(historiId);
+
+        if (needRestartSteam) {
+          // PENTING: file .lua/.manifest yang baru dihapus BARU benar-benar hilang dari
+          // Steam (unlock game hilang) setelah Steam di-restart — kalau tidak, Steam masih
+          // pakai cache lama dan kelihatan seperti "uninstall tidak berfungsi" padahal
+          // filenya sudah beneran terhapus dari PC.
+          showHistoriRestartToast();
+        } else {
+          showHistoriToast('Berhasil dihapus dari histori' + fileWarning);
+        }
+        setTimeout(() => loadHistori(), 220);
+      } catch (err) {
+        btn.disabled = false;
+        card?.classList.remove('removing');
+        showHistoriToast('Gagal hapus: ' + err.message);
       }
     });
   });
+}
+
+// Toast khusus uninstall game — kasih tombol "Restart Steam Sekarang" langsung di toastnya,
+// karena tanpa restart, perubahan (game/DLC hilang dari Steam) belum akan kelihatan.
+function showHistoriRestartToast() {
+  let toastEl = document.querySelector('.histori-toast');
+  if (!toastEl) {
+    toastEl = document.createElement('div');
+    toastEl.className = 'histori-toast';
+    document.body.appendChild(toastEl);
+  }
+  toastEl.innerHTML = `File berhasil dihapus. ⚠️ Restart Steam agar perubahan aktif —
+    <a href="#" id="historiRestartSteamBtn" style="color:#a78bfa;text-decoration:underline;font-weight:700;">Restart Sekarang</a>`;
+  toastEl.classList.add('show');
+  clearTimeout(_historiToastTimer);
+  _historiToastTimer = setTimeout(() => toastEl.classList.remove('show'), 8000); // lebih lama biar sempat diklik
+  document.getElementById('historiRestartSteamBtn')?.addEventListener('click', async (e) => {
+    e.preventDefault();
+    toastEl.classList.remove('show');
+    const steamPath = await window.electronAPI.getSteamPath();
+    if (steamPath) await window.electronAPI.restartSteam(steamPath);
+  });
+}
+
+let _historiToastTimer = null;
+function showHistoriToast(msg) {
+  let toastEl = document.querySelector('.histori-toast');
+  if (!toastEl) {
+    toastEl = document.createElement('div');
+    toastEl.className = 'histori-toast';
+    document.body.appendChild(toastEl);
+  }
+  toastEl.textContent = msg;
+  toastEl.classList.add('show');
+  clearTimeout(_historiToastTimer);
+  _historiToastTimer = setTimeout(() => toastEl.classList.remove('show'), 2400);
 }
 
 // ── CONFIG ──
@@ -1007,6 +1287,7 @@ document.addEventListener('DOMContentLoaded', () => {
   wireSearch();
   wireGamesRoleFilter();
   wireBypassesRoleFilter();
+  wireHistoriTabs();
   loadConfig();
   tryAutoLogin();
 });

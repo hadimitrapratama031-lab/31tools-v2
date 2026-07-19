@@ -148,14 +148,24 @@
       </section>
     </div>
 
-    <!-- ═══════════ PAGE: HISTORI (halaman sendiri, bukan popup) ═══════════ -->
+    <!-- ═══════════ PAGE: HISTORI ═══════════ -->
     <div class="page-content" id="pageHistori" style="display:none;">
-      <section class="section">
-        <div class="section-head">
-          <h3><span class="emoji">🕒</span> Histori</h3>
-        </div>
-        <div class="histori-list" id="historiListPage"></div>
-      </section>
+      <!-- Stats row -->
+      <div class="histori-stats" id="historiStats"></div>
+      <!-- Filter tabs -->
+      <div class="histori-tabs" id="historiTabs">
+        <button class="htab active" data-filter="all">
+          <span>📋</span> Semua <span class="htab-count" id="htabCountAll">0</span>
+        </button>
+        <button class="htab" data-filter="game">
+          <span>🎮</span> Game <span class="htab-count" id="htabCountGame">0</span>
+        </button>
+        <button class="htab" data-filter="bypass">
+          <span>🛡️</span> Bypass <span class="htab-count" id="htabCountBypass">0</span>
+        </button>
+      </div>
+      <!-- List container -->
+      <div id="historiListPage"></div>
     </div>
 
     <!-- ═══════════ PAGE: BYPASS (nampilin semua bypass yang tersedia buat role kamu) ═══════════ -->
