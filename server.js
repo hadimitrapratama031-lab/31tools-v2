@@ -475,7 +475,6 @@ const LOG_CATALOG = {
   admin_add_game:          { label: 'Tambah Game',                         icon: '➕', category: 'catalog', status: 'success' },
   admin_edit_game:         { label: 'Edit Game',                           icon: '✏️', category: 'catalog', status: 'success' },
   admin_delete_game:       { label: 'Hapus Game',                          icon: '🗑️', category: 'catalog', status: 'warning' },
-  admin_public_force_remove: { label: 'Force Remove Konten Public',         icon: '🧹', category: 'moderation', status: 'warning' },
   admin_add_bypass:        { label: 'Tambah Bypass',                       icon: '➕', category: 'catalog', status: 'success' },
   admin_edit_bypass:       { label: 'Edit Bypass',                         icon: '✏️', category: 'catalog', status: 'success' },
   admin_delete_bypass:     { label: 'Hapus Bypass',                        icon: '🗑️', category: 'catalog', status: 'warning' },
@@ -1007,116 +1006,6 @@ app.post('/api/admin/users/:discordId/premium-cleanup', requireAdmin, async (req
     }).catch(() => {});
 
     res.json({ success: true, scheduled: true, jobId: String(job._id), gameCount: job.gameCount, bypassCount: job.bypassCount });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-
-// ══════════════════════════════════════════════════════════════════════════
-// ADMIN — FORCE REMOVE INSTALLED CONTENT (PUBLIC USER)
-// Hapus SEMUA game & bypass yang diinstal user PUBLIC melalui launcher.
-// Berbeda dengan premium-cleanup (yang pakai getPremiumInstalledItems /
-// filter installedViaRole=gold/platinum), endpoint ini mengambil SEMUA
-// histori user tanpa filter role — karena Public tidak punya installedViaRole
-// premium, jadi satu-satunya cara adalah hapus semua yang tercatat di histori.
-// Job dikirim via WS 'premium:cleanup' (mekanisme yang sama dengan premium)
-// sehingga app client langsung hapus file tanpa perlu restart.
-// ══════════════════════════════════════════════════════════════════════════
-app.post('/api/admin/users/:discordId/public-cleanup', requireAdmin, async (req, res) => {
-  try {
-    const discordId = req.params.discordId;
-    const user = await db.collection('users').findOne({ discordId });
-    if (!user) return res.status(404).json({ error: 'User tidak ditemukan.' });
-
-    // Ambil SEMUA item yang pernah diinstal user ini lewat launcher
-    const allInstalled = await db.collection('history').find({ userId: discordId }).toArray();
-
-    if (!allInstalled.length) {
-      return res.json({ success: true, scheduled: false, message: 'User ini tidak punya game/bypass yang terpasang di histori.' });
-    }
-
-    const jobItems = allInstalled.map(h => ({
-      historyId: String(h._id),
-      itemType:  h.itemType,
-      itemId:    h.itemId,
-      itemName:  h.itemName,
-      extractedFiles: h.extractedFiles || [],
-      steamPath:  h.steamPath  || null,
-      folderPath: h.folderPath || null
-    }));
-
-    const gameCount   = jobItems.filter(i => i.itemType === 'game').length;
-    const bypassCount = jobItems.filter(i => i.itemType === 'bypass').length;
-
-    // Buat cleanup job langsung (immediate, bypass getAutoRemoveSettings)
-    const jobDoc = {
-      discordId,
-      username: user.username || discordId,
-      role: user.role,
-      reason: 'admin_public_force',
-      status: 'pending',
-      items: jobItems,
-      gameCount,
-      bypassCount,
-      scheduledAt: new Date(),
-      createdAt:   new Date(),
-      deliveredAt: null,
-      completedAt: null,
-      result: null
-    };
-    const inserted = await db.collection('premiumCleanups').insertOne(jobDoc);
-    jobDoc._id = inserted.insertedId;
-
-    // Notif ke user sebelum penghapusan
-    notifyUser(discordId, {
-      type: 'announcement',
-      title: 'Konten Launcher Akan Dihapus oleh Admin',
-      message: `Admin meminta penghapusan seluruh game (${gameCount}) dan bypass (${bypassCount}) yang kamu install melalui launcher. File akan dihapus segera saat app terbuka.`,
-      fields: [
-        field('🎮 Game', String(gameCount), true),
-        field('🛡️ Bypass', String(bypassCount), true),
-        field('👤 Diminta oleh', req.admin?.username || 'Admin', true)
-      ]
-    }).catch(() => {});
-
-    // Push langsung via WS kalau user sedang online
-    const pushed = wsNotify(discordId, 'premium:cleanup', {
-      jobId:      String(jobDoc._id),
-      items:      jobItems,
-      gameCount,
-      bypassCount,
-      reason:     'admin_public_force',
-      message:    `Admin meminta penghapusan ${gameCount} game dan ${bypassCount} bypass yang kamu install.`
-    });
-
-    if (pushed) {
-      await db.collection('premiumCleanups').updateOne(
-        { _id: jobDoc._id },
-        { $set: { status: 'delivered', deliveredAt: new Date() } }
-      );
-    }
-
-    logActivity({
-      type: 'admin_public_force_remove',
-      username: user.username || discordId,
-      discordId,
-      role: user.role,
-      admin: req.admin?.username || 'Admin',
-      status: 'success',
-      ip: getReqIp(req),
-      description: `Admin memicu Force Remove Public: hapus ${gameCount} game & ${bypassCount} bypass milik ${user.username || discordId}.`,
-      meta: { jobId: String(jobDoc._id), gameCount, bypassCount, items: jobItems.map(i => i.itemName) }
-    }).catch(() => {});
-
-    res.json({
-      success: true,
-      scheduled: true,
-      delivered: pushed,
-      jobId: String(jobDoc._id),
-      gameCount,
-      bypassCount
-    });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
