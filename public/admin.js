@@ -191,6 +191,7 @@ const PAGE_META = {
   logs:      { title: 'Logs',       breadcrumb: 'Pages / Logs' },
   verifyrole:{ title: 'Verify Role',breadcrumb: 'Pages / Verify Role' },
   webhooks:  { title: 'Webhook Settings', breadcrumb: 'Pages / Webhook Settings' },
+  paket:     { title: 'Paket', breadcrumb: 'Pages / Paket' },
 };
 let currentPage = 'games';
 
@@ -229,6 +230,7 @@ function loadPage(page) {
   else if (page === 'logs') renderLogs();
   else if (page === 'verifyrole') renderVerifyRole();
   else if (page === 'webhooks') renderWebhookSettings();
+  else if (page === 'paket') renderPaketSettings();
 }
 
 document.getElementById('btnAddItem').addEventListener('click', () => openItemModal(currentPage, null));
@@ -1334,6 +1336,7 @@ function renderUsersRows(rows, isFilteredEmpty) {
         <div class="user-card-actions-icons">
           <button class="icon-btn" title="Reset limit download harian" onclick="doResetQuota('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}')">♻️</button>
           <button class="icon-btn" title="Kirim notifikasi ke user ini" onclick="openSendNotifModal('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}')">📢</button>
+          <button class="icon-btn" title="Hapus manual game/bypass premium user ini" onclick="doManualPremiumCleanup('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}')">🧹</button>
         </div>
       </div>
     </div>
@@ -1360,6 +1363,21 @@ async function doResetQuota(discordId, username) {
   }
 }
 window.doResetQuota = doResetQuota;
+
+async function doManualPremiumCleanup(discordId, username) {
+  if (!confirm(`Hapus MANUAL seluruh game & bypass premium milik ${username} sekarang?\nProses ini langsung dijalankan begitu app user connect/dibuka.`)) return;
+  try {
+    const result = await api(`/api/admin/users/${discordId}/premium-cleanup`, { method: 'POST' });
+    if (!result.scheduled) {
+      showToast(`ℹ️ ${username} tidak punya game/bypass premium yang terpasang.`, 'info');
+    } else {
+      showToast(`🧹 Dijadwalkan: ${result.gameCount} game & ${result.bypassCount} bypass premium ${username} akan dihapus.`, 'success');
+    }
+  } catch (e) {
+    showToast('Gagal memicu hapus manual: ' + e.message, 'error');
+  }
+}
+window.doManualPremiumCleanup = doManualPremiumCleanup;
 
 // ─── Kirim notifikasi manual (In-App + opsional Discord DM/Webhook) ───
 let _sendNotifTarget = null; // discordId, atau null = broadcast ke semua
@@ -2584,6 +2602,66 @@ function whRowHtml(row) {
       </div>
     </div>
   `;
+}
+
+// ─── PAKET — Auto Remove Installed Premium Content ───
+let _paketWired = false;
+async function renderPaketSettings() {
+  try {
+    const settings = await api('/api/admin/settings/auto-remove');
+    document.getElementById('arEnabled').checked = settings.enabled !== false;
+    document.getElementById('arDelay').value = settings.delay || 'immediate';
+  } catch (e) {
+    showToast('Gagal memuat pengaturan Auto Remove: ' + e.message, 'error');
+  }
+  wirePaketPageOnce();
+}
+
+function wirePaketPageOnce() {
+  if (_paketWired) return;
+  _paketWired = true;
+
+  document.getElementById('btnSaveAutoRemove')?.addEventListener('click', async () => {
+    const statusEl = document.getElementById('arSaveStatus');
+    const btn = document.getElementById('btnSaveAutoRemove');
+    const enabled = document.getElementById('arEnabled').checked;
+    const delay = document.getElementById('arDelay').value;
+    btn.disabled = true;
+    statusEl.textContent = 'Menyimpan...';
+    try {
+      await api('/api/admin/settings/auto-remove', { method: 'PUT', body: JSON.stringify({ enabled, delay }) });
+      statusEl.textContent = `✅ Tersimpan — Auto Remove ${enabled ? 'AKTIF' : 'NONAKTIF'}, berlaku ${delay === 'immediate' ? 'langsung' : delay === '1h' ? 'setelah 1 jam' : 'setelah 24 jam'}.`;
+      showToast('Pengaturan Auto Remove berhasil disimpan.', 'success');
+    } catch (e) {
+      statusEl.textContent = '⚠️ Gagal menyimpan: ' + e.message;
+      showToast('Gagal menyimpan pengaturan: ' + e.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  });
+
+  document.getElementById('btnManualCleanup')?.addEventListener('click', async () => {
+    const input = document.getElementById('arManualDiscordId');
+    const statusEl = document.getElementById('arManualStatus');
+    const discordId = input.value.trim();
+    if (!discordId) { statusEl.textContent = 'Isi Discord ID dulu.'; return; }
+    if (!confirm(`Hapus MANUAL seluruh game & bypass premium milik Discord ID ${discordId}?`)) return;
+    const btn = document.getElementById('btnManualCleanup');
+    btn.disabled = true;
+    statusEl.textContent = 'Memproses...';
+    try {
+      const result = await api(`/api/admin/users/${encodeURIComponent(discordId)}/premium-cleanup`, { method: 'POST' });
+      statusEl.textContent = result.scheduled
+        ? `✅ Dijadwalkan: ${result.gameCount} game & ${result.bypassCount} bypass akan dihapus.`
+        : `ℹ️ ${result.message || 'Tidak ada konten premium yang terpasang.'}`;
+      showToast(statusEl.textContent, result.scheduled ? 'success' : 'info');
+    } catch (e) {
+      statusEl.textContent = '⚠️ Gagal: ' + e.message;
+      showToast('Gagal memicu hapus manual: ' + e.message, 'error');
+    } finally {
+      btn.disabled = false;
+    }
+  });
 }
 
 async function renderWebhookSettings() {

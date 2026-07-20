@@ -97,6 +97,10 @@
           <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg></span>
           Webhook Settings
         </button>
+        <button class="nav-item" data-page="paket">
+          <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg></span>
+          Paket
+        </button>
       </nav>
     </div>
     <div class="sidebar-footer">
@@ -694,6 +698,58 @@
         </div>
         <div class="card-body" id="whList">
           <div class="empty-cell"><span class="empty-icon">⏳</span>Memuat pengaturan webhook...</div>
+        </div>
+      </div>
+    </section>
+
+    <!-- PAKET PAGE -->
+    <section class="page" id="pagePaket">
+      <div class="page-header">
+        <div class="page-header-left">
+          <div class="page-header-icon" style="background:rgba(255,183,77,.16);">📦</div>
+          <div>
+            <div class="page-header-title">Paket — Auto Remove Installed Premium Content</div>
+            <div class="page-header-desc">Kalau masa aktif Gold/Platinum user habis, seluruh game &amp; bypass yang diinstal selagi paket itu aktif otomatis dihapus dari PC user.</div>
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">🧹 Auto Remove Installed Premium Content</div>
+          <div class="card-sub">Berlaku realtime kalau app user sedang terbuka; kalau app sedang tertutup, penghapusan dijalankan otomatis begitu user membuka app lagi. Proses tidak bisa dibatalkan oleh user biasa.</div>
+        </div>
+        <div class="card-body">
+          <div class="vr-toggle-row">
+            <label class="vr-toggle">
+              <input type="checkbox" id="arEnabled" checked>
+              <span>Aktifkan Auto Remove Installed Premium Content</span>
+            </label>
+          </div>
+          <div class="form-group" style="margin-top:16px;">
+            <label class="form-label">⏱️ Waktu Penghapusan (setelah paket berakhir)</label>
+            <select class="form-input" id="arDelay">
+              <option value="immediate">Langsung setelah paket berakhir</option>
+              <option value="1h">Setelah 1 jam</option>
+              <option value="24h">Setelah 24 jam</option>
+            </select>
+          </div>
+          <button class="btn btn-primary" id="btnSaveAutoRemove">💾 Simpan Pengaturan</button>
+          <div id="arSaveStatus" style="margin-top:10px;font-size:12px;color:var(--text-3);"></div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">🗑️ Hapus Manual</div>
+          <div class="card-sub">Hapus manual seluruh game &amp; bypass premium milik satu user (langsung, tidak mengikuti pengaturan waktu di atas). Cara cepat: buka halaman <b>Users</b> → klik ikon 🧹 di kartu user yang bersangkutan.</div>
+        </div>
+        <div class="card-body">
+          <div class="cover-row">
+            <input class="form-input" type="text" id="arManualDiscordId" placeholder="Masukkan Discord ID user..." style="margin:0;">
+            <button class="btn btn-secondary" id="btnManualCleanup" style="flex-shrink:0;">🧹 Hapus Sekarang</button>
+          </div>
+          <div id="arManualStatus" style="margin-top:10px;font-size:12px;color:var(--text-3);"></div>
         </div>
       </div>
     </section>

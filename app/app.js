@@ -576,6 +576,7 @@ function enterApp(user) {
   loadLeaderboard();
   flushPendingHistory().catch(() => {}); // coba kirim ulang histori yang sempat gagal tersimpan sesi sebelumnya
   startAutoRefresh(); // ← polling berkala supaya game/bypass baru dari admin langsung muncul
+  checkPendingPremiumCleanups(); // ← "kalau app tidak dibuka, pengecekan dilakukan saat app dibuka kembali"
 }
 
 // ── AUTO REFRESH — supaya game/bypass yang baru ditambahkan admin langsung
@@ -2056,6 +2057,8 @@ function connectRealtime() {
       renderBannerCarousel(msg.data);
     } else if (msg.event === 'leaderboard:update') {
       renderLeaderboard(msg.data);
+    } else if (msg.event === 'premium:cleanup') {
+      handlePremiumCleanup(msg.data);
     }
   };
 
@@ -2100,6 +2103,149 @@ function handleDeviceReset() {
   localStorage.removeItem('_savedUser');
   currentUser = null;
   location.reload();
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// AUTO REMOVE INSTALLED PREMIUM CONTENT
+// Dipicu server (event WS 'premium:cleanup') begitu masa aktif Gold/Platinum
+// habis — realtime kalau app lagi kebuka, atau lewat checkPendingPremiumCleanups()
+// begitu app dibuka lagi kalau tadi sempat tertutup. TIDAK ADA cara bagi user
+// biasa untuk membatalkan proses ini (tidak ada tombol skip/cancel di modal-nya).
+// ══════════════════════════════════════════════════════════════════════════
+const _processedCleanupJobs = new Set(); // cegah job yang sama diproses 2x (WS + polling nyaris bareng)
+
+async function checkPendingPremiumCleanups() {
+  try {
+    const { jobs } = await api('/api/premium-cleanup/pending');
+    for (const job of (jobs || [])) {
+      await handlePremiumCleanup(job);
+    }
+  } catch (e) {} // best-effort — jangan sampai gagal ganggu proses buka app
+}
+
+async function handlePremiumCleanup(job) {
+  if (!job || !job.jobId || _processedCleanupJobs.has(job.jobId)) return;
+  _processedCleanupJobs.add(job.jobId);
+
+  showPremiumCleanupModal('start', job);
+
+  try { await api(`/api/premium-cleanup/${job.jobId}/start`, { method: 'POST' }); } catch (e) {}
+
+  const results = [];
+  let needRestartSteam = false;
+  let cachedSteamPath = null;
+
+  for (const item of (job.items || [])) {
+    let removed = false, error = null;
+    try {
+      if (item.itemType === 'game') {
+        if (!item.extractedFiles || !item.extractedFiles.length) {
+          error = 'Data file tidak lengkap (histori lama)';
+        } else {
+          const steamPath = item.steamPath || cachedSteamPath || (cachedSteamPath = await window.electronAPI.getSteamPath());
+          if (!steamPath) { error = 'Steam tidak ditemukan di PC ini'; }
+          else {
+            const rm = await window.electronAPI.removeGame({ steamPath, extractedFiles: item.extractedFiles });
+            removed = !!rm?.success;
+            if (removed) needRestartSteam = true;
+            else error = rm?.error || 'Gagal menghapus file game';
+          }
+        }
+      } else if (item.itemType === 'bypass') {
+        if (!item.extractedFiles || !item.extractedFiles.length || !item.folderPath) {
+          error = 'Data file tidak lengkap (histori lama)';
+        } else {
+          const rm = await window.electronAPI.removeBypass({ folderPath: item.folderPath, extractedFiles: item.extractedFiles });
+          removed = !!rm?.success;
+          if (!removed) error = rm?.error || 'Gagal menghapus file bypass';
+        }
+      } else {
+        error = 'Tipe item tidak dikenal';
+      }
+    } catch (e) {
+      error = e.message || 'Terjadi kesalahan';
+    }
+
+    if (removed) removeLocalInstallMeta(item.historyId);
+    results.push({ historyId: item.historyId, itemType: item.itemType, itemName: item.itemName, removed, error });
+  }
+
+  let serverResult = { removedGames: [], removedBypass: [], failed: [] };
+  try {
+    serverResult = await api(`/api/premium-cleanup/${job.jobId}/complete`, {
+      method: 'POST',
+      body: JSON.stringify({ results })
+    });
+  } catch (e) {}
+
+  showPremiumCleanupModal('done', job, { ...serverResult, needRestartSteam });
+
+  // Refresh tampilan supaya konten yang barusan dihapus langsung hilang dari Histori/Games
+  setTimeout(() => {
+    loadHistori().catch(() => {});
+    loadGames().catch(() => {});
+    loadBypasses().catch(() => {});
+  }, 300);
+}
+
+// ── Modal Auto Remove — 2 state: 'start' (peringatan sebelum hapus, tanpa tombol
+// tutup — proses tidak bisa dibatalkan) dan 'done' (hasil akhir + tombol Perpanjang/Beli). ──
+function showPremiumCleanupModal(state, job, resultData) {
+  let overlay = document.getElementById('premiumCleanupOverlay');
+  if (!overlay) return;
+  overlay.style.display = 'flex';
+  const roleLabel = String(job.role || '').toUpperCase();
+
+  if (state === 'start') {
+    overlay.innerHTML = `
+      <div class="pcm-modal">
+        <div class="pcm-icon pcm-icon--warn">⏰</div>
+        <div class="pcm-title">Paket ${escapeHtml(roleLabel)} Kamu Telah Berakhir</div>
+        <div class="pcm-desc">
+          Seluruh <b>${job.gameCount || 0} game</b> dan <b>${job.bypassCount || 0} bypass</b> premium yang kamu install
+          akan otomatis dihapus dari PC ini sekarang. Proses ini tidak bisa dibatalkan.
+        </div>
+        <div class="pcm-progress"><div class="pcm-progress-bar"></div></div>
+        <div class="pcm-status">Sedang menghapus, mohon tunggu...</div>
+      </div>`;
+    return;
+  }
+
+  // state === 'done'
+  const removedGames  = resultData?.removedGames  || [];
+  const removedBypass = resultData?.removedBypass || [];
+  const failed        = resultData?.failed || [];
+  const ok = failed.length === 0;
+
+  overlay.innerHTML = `
+    <div class="pcm-modal">
+      <div class="pcm-icon ${ok ? 'pcm-icon--ok' : 'pcm-icon--partial'}">${ok ? '✅' : '⚠️'}</div>
+      <div class="pcm-title">${ok ? 'Konten Premium Berhasil Dihapus' : 'Penghapusan Selesai (Sebagian Gagal)'}</div>
+      <div class="pcm-desc">
+        <b>${removedGames.length}</b> game dan <b>${removedBypass.length}</b> bypass premium sudah dihapus dari PC ini.
+        ${failed.length ? `<br><span style="color:#ffb4b4;">${failed.length} item gagal dihapus otomatis — cek folder Steam/game secara manual kalau perlu.</span>` : ''}
+      </div>
+      <div class="pcm-actions">
+        ${resultData?.needRestartSteam ? `<button class="pcm-btn pcm-btn--ghost" id="pcmRestartSteamBtn">🔄 Restart Steam</button>` : ''}
+        <button class="pcm-btn pcm-btn--primary" id="pcmUpgradeBtn">🛒 Perpanjang / Beli Paket</button>
+      </div>
+      <button class="pcm-close" id="pcmCloseBtn">Tutup</button>
+    </div>`;
+
+  document.getElementById('pcmUpgradeBtn')?.addEventListener('click', () => {
+    closePremiumCleanupModal();
+    showPage('store');
+  });
+  document.getElementById('pcmCloseBtn')?.addEventListener('click', closePremiumCleanupModal);
+  document.getElementById('pcmRestartSteamBtn')?.addEventListener('click', async () => {
+    const steamPath = await window.electronAPI.getSteamPath();
+    if (steamPath) await window.electronAPI.restartSteam(steamPath);
+  });
+}
+
+function closePremiumCleanupModal() {
+  const overlay = document.getElementById('premiumCleanupOverlay');
+  if (overlay) overlay.style.display = 'none';
 }
 
 

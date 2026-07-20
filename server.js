@@ -277,6 +277,10 @@ async function applyExpiryIfNeeded(user) {
   }).catch(() => {});
   pushAccountUpdate(discordId).catch(() => {});
 
+  // Auto Remove Installed Premium Content — jadwalkan (& coba langsung kirim kalau
+  // user online) penghapusan seluruh game/bypass yang diinstal selagi dia Gold/Platinum.
+  schedulePremiumCleanup(discordId, username, oldRole, 'expired').catch(() => {});
+
   return updated || user;
 }
 
@@ -481,6 +485,10 @@ const LOG_CATALOG = {
   admin_edit_package:      { label: 'Edit Paket',                          icon: '✏️', category: 'catalog', status: 'success', reserved: true },
   admin_delete_package:    { label: 'Hapus Paket',                         icon: '🗑️', category: 'catalog', status: 'warning', reserved: true },
   settings_change:         { label: 'Perubahan Pengaturan',                icon: '⚙️', category: 'system', status: 'info' },
+  premium_expired:         { label: 'Paket Premium Berakhir',              icon: '⏰', category: 'billing', status: 'warning' },
+  premium_cleanup_start:   { label: 'Penghapusan Konten Premium Dimulai',  icon: '🧹', category: 'moderation', status: 'info' },
+  premium_cleanup_done:    { label: 'Penghapusan Konten Premium Selesai',  icon: '✅', category: 'moderation', status: 'success' },
+  premium_cleanup_manual:  { label: 'Hapus Manual Konten Premium (Admin)', icon: '🗑️', category: 'moderation', status: 'success' },
   system_error:            { label: 'Error Sistem',                       icon: '🚨', category: 'system', status: 'error' },
   other:                   { label: 'Aktivitas Lainnya',                  icon: 'ℹ️', category: 'system', status: 'info' }
 };
@@ -674,6 +682,335 @@ const webhookManager = require('./webhookManager')({ getDb: () => db });
 // DB (collection `devices` + audit trail `deviceLogs`), berlaku realtime.
 const deviceLock = require('./deviceLock')({ getDb: () => db });
 
+// ══════════════════════════════════════════════════════════════════════════
+// AUTO REMOVE INSTALLED PREMIUM CONTENT
+// ══════════════════════════════════════════════════════════════════════════
+// Begitu masa aktif Gold/Platinum user habis (lihat applyExpiryIfNeeded di atas —
+// dicek di SETIAP request lewat requireUser, termasuk polling /api/me/role-check
+// tiap 3 detik, jadi efeknya kerasa realtime walau user idle), seluruh game &
+// bypass yang diinstal SELAGI dia Gold/Platinum (ditandai `installedViaRole` di
+// collection `history`, lihat POST /api/history) dijadwalkan untuk dihapus dari
+// PC user — DAN HANYA game/bypass itu; file lain milik user tidak disentuh sama
+// sekali (Electron main.js yang benar-benar hapus file HANYA lewat whitelist
+// stplug-in/depotcache untuk game, dan hanya file hasil extract tercatat untuk
+// bypass — lihat ipcMain.handle('remove-game'/'remove-bypass') di main.js).
+//
+// Alur:
+//   1. Expired terdeteksi -> schedulePremiumCleanup() bikin 1 dokumen job di
+//      `premiumCleanups` (status 'pending') + log 'premium_expired'.
+//   2. Kalau delay = immediate & user LAGI ONLINE (ada koneksi WS) -> job
+//      langsung di-push via WS event 'premium:cleanup' (status jadi 'delivered').
+//   3. Kalau user OFFLINE atau delay-nya 1h/24h -> job tetap 'pending'. Setiap
+//      kali user connect ulang (WS) ATAU tiap sweep 2 menit (jaga-jaga kalau app
+//      dibuka lewat cara lain / WS gagal), job yang scheduledAt-nya sudah lewat
+//      otomatis di-deliver. Jadi TETAP jalan walau app sempat ditutup.
+//   4. Client (app.js) yang benar-benar mengeksekusi hapus file via IPC (main.js),
+//      lalu lapor balik lewat /api/premium-cleanup/:id/start & /:id/complete —
+//      di situ log 'premium_cleanup_start'/'premium_cleanup_done' dicatat dengan
+//      daftar lengkap game & bypass yang dihapus, dan histori DB-nya dibersihkan.
+// User biasa TIDAK PUNYA cara membatalkan job ini dari sisi app — tidak ada
+// endpoint/][tombol apapun di client untuk menolak/skip proses ini.
+// ══════════════════════════════════════════════════════════════════════════
+const AUTO_REMOVE_SETTINGS_ID = 'autoRemovePremium';
+const AUTO_REMOVE_DELAY_MS = { immediate: 0, '1h': 60 * 60 * 1000, '24h': 24 * 60 * 60 * 1000 };
+
+async function getAutoRemoveSettings() {
+  const defaults = { enabled: true, delay: 'immediate' };
+  try {
+    const doc = await db.collection('settings').findOne({ _id: AUTO_REMOVE_SETTINGS_ID });
+    if (!doc) return defaults;
+    return {
+      enabled: typeof doc.enabled === 'boolean' ? doc.enabled : defaults.enabled,
+      delay: AUTO_REMOVE_DELAY_MS.hasOwnProperty(doc.delay) ? doc.delay : defaults.delay
+    };
+  } catch (e) {
+    return defaults;
+  }
+}
+
+// Ambil semua item (game & bypass) yang masih tercatat di histori user & diinstal
+// SELAGI dia berperan gold/platinum — inilah yang dianggap "konten premium".
+async function getPremiumInstalledItems(discordId) {
+  return db.collection('history').find({
+    userId: discordId,
+    installedViaRole: { $in: ['gold', 'platinum'] }
+  }).toArray();
+}
+
+// Bikin & (kalau memungkinkan) langsung kirim job pembersihan konten premium untuk
+// satu user. `reason`: 'expired' (otomatis, dipanggil applyExpiryIfNeeded) atau
+// 'manual' (admin pencet tombol "Hapus Manual" di Admin Web).
+async function schedulePremiumCleanup(discordId, username, expiredRole, reason = 'expired') {
+  try {
+    const settings = reason === 'manual' ? { enabled: true, delay: 'immediate' } : await getAutoRemoveSettings();
+
+    logActivity({
+      type: 'premium_expired',
+      username, discordId, role: expiredRole,
+      status: 'warning',
+      description: reason === 'manual'
+        ? `Admin memicu penghapusan manual konten premium untuk ${username}.`
+        : `Masa aktif paket ${String(expiredRole).toUpperCase()} milik ${username} telah berakhir.`,
+      meta: { reason }
+    }).catch(() => {});
+
+    if (!settings.enabled && reason !== 'manual') {
+      logActivity({
+        type: 'premium_expired',
+        username, discordId, role: expiredRole,
+        status: 'info',
+        description: `Auto Remove Installed Premium Content NONAKTIF — konten premium ${username} TIDAK dihapus otomatis.`,
+        meta: { reason: 'auto_remove_disabled' }
+      }).catch(() => {});
+      return null;
+    }
+
+    const items = await getPremiumInstalledItems(discordId);
+    if (!items.length) return null; // tidak ada apapun yang perlu dihapus
+
+    const jobItems = items.map(h => ({
+      historyId: String(h._id), itemType: h.itemType, itemId: h.itemId,
+      itemName: h.itemName, extractedFiles: h.extractedFiles || [],
+      steamPath: h.steamPath || null, folderPath: h.folderPath || null
+    }));
+
+    const delayMs = AUTO_REMOVE_DELAY_MS[settings.delay] ?? 0;
+    const scheduledAt = new Date(Date.now() + delayMs);
+
+    const jobDoc = {
+      discordId, username, role: expiredRole, reason,
+      status: 'pending',
+      items: jobItems,
+      gameCount: jobItems.filter(i => i.itemType === 'game').length,
+      bypassCount: jobItems.filter(i => i.itemType === 'bypass').length,
+      scheduledAt, createdAt: new Date(),
+      deliveredAt: null, completedAt: null, result: null
+    };
+    const inserted = await db.collection('premiumCleanups').insertOne(jobDoc);
+    jobDoc._id = inserted.insertedId;
+
+    // Kasih tahu user SEBELUM penghapusan terjadi (spec: notifikasi dulu, baru hapus).
+    notifyUser(discordId, {
+      type: 'announcement',
+      title: 'Paket Premium Berakhir — Konten Akan Dihapus',
+      message: `Masa aktif paket ${String(expiredRole).toUpperCase()} kamu sudah berakhir. Seluruh game (${jobDoc.gameCount}) dan bypass (${jobDoc.bypassCount}) premium yang kamu install akan otomatis dihapus dari PC${delayMs > 0 ? ` dalam ${settings.delay === '1h' ? '1 jam' : '24 jam'}` : ' saat ini juga'}.`,
+      fields: [
+        field('📦 Paket Berakhir', String(expiredRole).toUpperCase(), true),
+        field('🎮 Game Terpasang', String(jobDoc.gameCount), true),
+        field('🛡️ Bypass Terpasang', String(jobDoc.bypassCount), true)
+      ],
+      dm: true, webhook: true
+    }).catch(() => {});
+
+    await tryDeliverCleanupJob(jobDoc);
+    return jobDoc;
+  } catch (e) {
+    console.warn('[AutoRemove] Gagal menjadwalkan pembersihan:', e.message);
+    return null;
+  }
+}
+
+// Coba kirim job ke client via WS SEKARANG (kalau sudah waktunya & user online).
+// Dipanggil: (a) langsung setelah job dibuat kalau delay=immediate, (b) setiap kali
+// user connect ulang WS (jaga-jaga job lama nunggak karena user lagi offline),
+// dan (c) sweep berkala buat job dengan delay 1h/24h.
+async function tryDeliverCleanupJob(jobDoc) {
+  if (jobDoc.status !== 'pending') return false;
+  if (new Date(jobDoc.scheduledAt).getTime() > Date.now()) return false; // belum waktunya
+  const sent = wsSendToUser(jobDoc.discordId, 'premium:cleanup', {
+    jobId: String(jobDoc._id),
+    role: jobDoc.role,
+    items: jobDoc.items,
+    gameCount: jobDoc.gameCount,
+    bypassCount: jobDoc.bypassCount
+  });
+  if (sent) {
+    await db.collection('premiumCleanups').updateOne(
+      { _id: jobDoc._id },
+      { $set: { status: 'delivered', deliveredAt: new Date() } }
+    );
+  }
+  return sent;
+}
+
+// Sweep berkala — jaring pengaman buat job yang sempat gagal terkirim (user offline
+// pas dijadwalkan) ATAU job dengan delay 1h/24h yang waktunya baru saja tiba.
+async function sweepPendingPremiumCleanups() {
+  try {
+    if (!db) return;
+    const due = await db.collection('premiumCleanups')
+      .find({ status: 'pending', scheduledAt: { $lte: new Date() } })
+      .limit(200)
+      .toArray();
+    for (const job of due) {
+      await tryDeliverCleanupJob(job).catch(() => {});
+    }
+  } catch (e) {
+    console.warn('[AutoRemove] Sweep gagal:', e.message);
+  }
+}
+setInterval(() => sweepPendingPremiumCleanups().catch(() => {}), 2 * 60 * 1000);
+
+// ── REST: konten yang app.js panggil buat eksekusi & lapor hasil ──
+
+// Dipanggil app.js SEGERA setelah login/startup — jaring pengaman kalau event WS
+// 'premium:cleanup' entah kenapa tidak sempat diterima (race condition koneksi,
+// dsb). Mengembalikan job yang statusnya 'pending'/'delivered' & sudah waktunya,
+// MILIK user yang sedang login SAJA.
+app.get('/api/premium-cleanup/pending', requireUser, async (req, res) => {
+  try {
+    const jobs = await db.collection('premiumCleanups').find({
+      discordId: req.user.discordId,
+      status: { $in: ['pending', 'delivered'] },
+      scheduledAt: { $lte: new Date() }
+    }).toArray();
+    res.json({ jobs: jobs.map(j => ({
+      jobId: String(j._id), role: j.role, items: j.items,
+      gameCount: j.gameCount, bypassCount: j.bypassCount
+    })) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Dipanggil app.js TEPAT SEBELUM mulai menghapus file di PC — menandai job
+// 'processing' & mencatat log audit "penghapusan dimulai" (terpisah utk game & bypass
+// sesuai permintaan, masing-masing dengan daftar nama-nya).
+app.post('/api/premium-cleanup/:id/start', requireUser, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+    const job = await db.collection('premiumCleanups').findOne({ _id: new ObjectId(req.params.id), discordId: req.user.discordId });
+    if (!job) return res.status(404).json({ error: 'Job tidak ditemukan.' });
+    if (job.status === 'done') return res.json({ success: true, alreadyDone: true });
+
+    await db.collection('premiumCleanups').updateOne({ _id: job._id }, { $set: { status: 'processing', startedAt: new Date() } });
+
+    const games = job.items.filter(i => i.itemType === 'game').map(i => i.itemName);
+    const bypasses = job.items.filter(i => i.itemType === 'bypass').map(i => i.itemName);
+    if (games.length) {
+      logActivity({
+        type: 'premium_cleanup_start', username: req.user.username, discordId: req.user.discordId,
+        role: job.role, status: 'info', ip: getReqIp(req), device: getReqDevice(req),
+        description: `Penghapusan ${games.length} game premium milik ${req.user.username} dimulai (paket ${String(job.role).toUpperCase()} berakhir).`,
+        meta: { jobId: String(job._id), itemType: 'game', games }
+      }).catch(() => {});
+    }
+    if (bypasses.length) {
+      logActivity({
+        type: 'premium_cleanup_start', username: req.user.username, discordId: req.user.discordId,
+        role: job.role, status: 'info', ip: getReqIp(req), device: getReqDevice(req),
+        description: `Penghapusan ${bypasses.length} bypass premium milik ${req.user.username} dimulai (paket ${String(job.role).toUpperCase()} berakhir).`,
+        meta: { jobId: String(job._id), itemType: 'bypass', bypasses }
+      }).catch(() => {});
+    }
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Dipanggil app.js SETELAH selesai mengeksekusi remove-game/remove-bypass untuk
+// SEMUA item di job ini. Body: { results: [{ historyId, itemType, itemName, removed, error }] }.
+// Histori (`history`) untuk item yang BERHASIL dihapus langsung dibersihkan di sini
+// (server-side, satu kali) — client tidak perlu panggil DELETE /api/history per-item.
+app.post('/api/premium-cleanup/:id/complete', requireUser, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+    const job = await db.collection('premiumCleanups').findOne({ _id: new ObjectId(req.params.id), discordId: req.user.discordId });
+    if (!job) return res.status(404).json({ error: 'Job tidak ditemukan.' });
+
+    const results = Array.isArray(req.body?.results) ? req.body.results : [];
+    const removedIds = results.filter(r => r.removed && ObjectId.isValid(r.historyId)).map(r => new ObjectId(r.historyId));
+    if (removedIds.length) {
+      await db.collection('history').deleteMany({ _id: { $in: removedIds }, userId: req.user.discordId });
+    }
+
+    const removedGames   = results.filter(r => r.removed && r.itemType === 'game').map(r => r.itemName);
+    const removedBypass  = results.filter(r => r.removed && r.itemType === 'bypass').map(r => r.itemName);
+    const failed         = results.filter(r => !r.removed).map(r => ({ itemName: r.itemName, itemType: r.itemType, error: r.error || 'Gagal' }));
+    const allOk  = results.length > 0 && failed.length === 0;
+    const status = results.length === 0 ? 'info' : (allOk ? 'success' : (failed.length === results.length ? 'error' : 'warning'));
+    const finalStatus = results.length === 0 ? 'done' : (allOk ? 'done' : 'partial');
+
+    await db.collection('premiumCleanups').updateOne(
+      { _id: job._id },
+      { $set: { status: finalStatus, completedAt: new Date(), result: { removedGames, removedBypass, failed } } }
+    );
+
+    logActivity({
+      type: 'premium_cleanup_done', username: req.user.username, discordId: req.user.discordId,
+      role: job.role, status, ip: getReqIp(req), device: getReqDevice(req),
+      description: `Penghapusan konten premium ${req.user.username} selesai — ${removedGames.length} game & ${removedBypass.length} bypass terhapus${failed.length ? `, ${failed.length} gagal` : ''}.`,
+      meta: { jobId: String(job._id), removedGames, removedBypass, failed }
+    }).catch(() => {});
+
+    notifyUser(req.user.discordId, {
+      type: 'announcement',
+      title: allOk || results.length === 0 ? 'Konten Premium Berhasil Dihapus' : 'Penghapusan Konten Premium Selesai (Sebagian Gagal)',
+      message: `${removedGames.length} game dan ${removedBypass.length} bypass premium sudah dihapus dari PC kamu karena paket ${String(job.role).toUpperCase()} sudah berakhir.${failed.length ? ` ${failed.length} item gagal dihapus otomatis, cek folder Steam/game secara manual kalau perlu.` : ''}`,
+      fields: [
+        field('🎮 Game Dihapus', String(removedGames.length), true),
+        field('🛡️ Bypass Dihapus', String(removedBypass.length), true),
+        ...(failed.length ? [field('⚠️ Gagal', String(failed.length), true)] : [])
+      ],
+      dm: true, webhook: true
+    }).catch(() => {});
+
+    pushAccountUpdate(req.user.discordId).catch(() => {});
+    res.json({ success: true, removedGames, removedBypass, failed });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── Admin Web: pengaturan Auto Remove (halaman Paket) ──
+app.get('/api/admin/settings/auto-remove', requireAdmin, async (req, res) => {
+  res.json(await getAutoRemoveSettings());
+});
+
+app.put('/api/admin/settings/auto-remove', requireAdmin, async (req, res) => {
+  try {
+    const { enabled, delay } = req.body;
+    if (!AUTO_REMOVE_DELAY_MS.hasOwnProperty(delay)) return res.status(400).json({ error: 'Delay tidak valid.' });
+    const next = { enabled: !!enabled, delay };
+    await db.collection('settings').updateOne({ _id: AUTO_REMOVE_SETTINGS_ID }, { $set: next }, { upsert: true });
+    logActivity({
+      type: 'settings_change', username: req.admin?.username || 'Admin', admin: req.admin?.username || 'Admin',
+      status: 'success', ip: getReqIp(req),
+      description: `Admin mengubah pengaturan Auto Remove Installed Premium Content — ${next.enabled ? 'AKTIF' : 'NONAKTIF'}, waktu hapus: ${next.delay === 'immediate' ? 'Langsung' : next.delay === '1h' ? '1 Jam' : '24 Jam'}.`,
+      meta: next
+    }).catch(() => {});
+    res.json(next);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Tombol "Hapus Manual" di Admin Web (halaman Paket / Users) — admin memicu langsung,
+// TIDAK bergantung ke status expired maupun pengaturan enabled/disabled (admin yang minta
+// eksplisit). Job tetap dieksekusi via client (WS kalau online, atau nunggu app dibuka).
+app.post('/api/admin/users/:discordId/premium-cleanup', requireAdmin, async (req, res) => {
+  try {
+    const discordId = req.params.discordId;
+    const user = await db.collection('users').findOne({ discordId });
+    if (!user) return res.status(404).json({ error: 'User tidak ditemukan.' });
+
+    const job = await schedulePremiumCleanup(discordId, user.username || discordId, user.role, 'manual');
+    if (!job) return res.json({ success: true, scheduled: false, message: 'Tidak ada game/bypass premium yang terpasang untuk user ini.' });
+
+    logActivity({
+      type: 'premium_cleanup_manual', username: user.username || discordId, discordId,
+      role: user.role, admin: req.admin?.username || 'Admin', status: 'success', ip: getReqIp(req),
+      description: `Admin memicu hapus manual konten premium untuk ${user.username || discordId} (${job.gameCount} game, ${job.bypassCount} bypass).`,
+      meta: { jobId: String(job._id), gameCount: job.gameCount, bypassCount: job.bypassCount }
+    }).catch(() => {});
+
+    res.json({ success: true, scheduled: true, jobId: String(job._id), gameCount: job.gameCount, bypassCount: job.bypassCount });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 // Pemetaan jenis notifikasi in-app (`type` di notifyUser) -> kategori webhook.
 // Dipakai supaya satu fungsi notifyUser tetap bisa dipanggil dari mana saja,
 // tapi webhook-nya otomatis nyampur ke channel Discord yang benar sesuai kategori.
@@ -725,6 +1062,11 @@ async function connectDB() {
     await db.collection('activityLogs').createIndex({ role: 1, createdAt: -1 });
     await db.collection('activityLogs').createIndex({ discordId: 1, createdAt: -1 });
     await db.collection('activityLogs').createIndex({ username: 'text', description: 'text', admin: 'text' });
+    // Auto Remove Installed Premium Content — index buat sweep & lookup job cepat,
+    // dan buat cari cepat semua histori install "premium" (gold/platinum) milik satu user.
+    await db.collection('premiumCleanups').createIndex({ status: 1, scheduledAt: 1 });
+    await db.collection('premiumCleanups').createIndex({ discordId: 1, createdAt: -1 });
+    await db.collection('history').createIndex({ userId: 1, installedViaRole: 1 });
     await db.collection('deviceLogs').createIndex({ discordId: 1, createdAt: -1 });
     await db.collection('deviceLogs').createIndex({ createdAt: -1 });
     await db.collection('banners').createIndex({ order: 1 });
@@ -1869,6 +2211,11 @@ app.post('/api/history', requireUser, async (req, res) => {
       extractedFiles: Array.isArray(extractedFiles) ? extractedFiles.filter(f => typeof f === 'string') : [],
       steamPath: itemType === 'game' ? (steamPath || null) : null,
       folderPath: itemType === 'bypass' ? (folderPath || null) : null,
+      // Role user PAS install ini terjadi — dipakai fitur Auto Remove Installed Premium
+      // Content: kalau nanti masa aktif Gold/Platinum user ini habis, HANYA item yang
+      // installedViaRole-nya 'gold'/'platinum' yang otomatis dihapus (item yang diinstal
+      // waktu masih Public/Admin tidak ikut kehapus).
+      installedViaRole: req.user.role,
       createdAt: new Date()
     });
 
@@ -4357,6 +4704,19 @@ wss.on('connection', (ws, req) => {
 
     wsRegister(discordId, ws);
     ws.send(JSON.stringify({ event: 'connected', data: { ok: true } }));
+
+    // Auto Remove Installed Premium Content — kalau ada job yang nunggak (misal
+    // waktu expired app-nya lagi ditutup, atau delay 1h/24h sudah lewat), langsung
+    // coba kirim sekarang juga selagi user baru saja online.
+    (async () => {
+      try {
+        if (!db) return;
+        const due = await db.collection('premiumCleanups').find({
+          discordId, status: 'pending', scheduledAt: { $lte: new Date() }
+        }).toArray();
+        for (const job of due) await tryDeliverCleanupJob(job).catch(() => {});
+      } catch (e) {}
+    })();
 
     ws.on('close', () => wsUnregister(discordId, ws));
     ws.on('error', () => wsUnregister(discordId, ws));
