@@ -665,115 +665,232 @@
     position:relative;
     border-radius:var(--radius-lg);
     overflow:hidden;
-    min-height:230px;
+    /* min-height dihapus — hero-carousel menentukan tingginya sendiri (240px fixed) */
     display:flex;
-    align-items:center;
-    padding:0 34px;
+    align-items:stretch;
+    padding:0;
   }
 
-  /* ══════════════ BANNER CAROUSEL ══════════════ */
-  .hero-carousel{ padding:0; background:transparent; }
+  /* ══════════════ BANNER CAROUSEL — fixed layout, konsisten di semua ukuran ══════════════ */
+
+  /* Wrapper carousel — tinggi FIXED supaya tidak berubah saat teks panjang/pendek */
+  .hero-carousel{
+    padding:0; background:transparent;
+    /* Tinggi carousel ditetapkan di sini — satu sumber kebenaran */
+    height:240px;
+    flex-shrink:0;
+    position:relative;
+    border-radius:var(--radius-lg);
+    overflow:hidden;
+  }
+
+  /* Track = container semua slide, selalu 100% dari hero-carousel */
   .hc-track{
     position:relative;
-    width:100%; height:100%; min-height:230px;
+    width:100%; height:100%;
+    /* Tidak boleh ada min-height yang bisa membesar — height sudah diatur parent */
   }
+
+  /* ── Tiap slide: absolute, selalu seukuran track ──
+     Tidak ada position:relative saat active — semua tetap absolute
+     supaya perpindahan tidak mengubah ukuran container */
   .hc-slide{
     position:absolute; inset:0;
-    display:flex; align-items:center;
-    padding:0 34px;
+    display:flex; align-items:stretch;
     opacity:0; visibility:hidden;
-    transform:translateX(24px) scale(.99);
-    transition:opacity .55s cubic-bezier(.4,0,.2,1), transform .55s cubic-bezier(.4,0,.2,1), visibility .55s;
+    transform:translateX(20px);
+    transition:opacity .45s cubic-bezier(.4,0,.2,1),
+                transform .45s cubic-bezier(.4,0,.2,1),
+                visibility .45s;
     overflow:hidden;
     border-radius:var(--radius-lg);
+    /* Tidak ada padding di level slide — diatur di hc-body dan hc-deco */
   }
   .hc-slide.active{
-    position:relative;
+    /* JANGAN ganti ke position:relative — tetap absolute! */
     opacity:1; visibility:visible;
-    transform:translateX(0) scale(1);
+    transform:translateX(0);
   }
+
+  /* Efek glow ambient — dekoratif saja, tidak pengaruhi layout */
   .hc-slide::before{
     content:"";
     position:absolute; inset:-20%;
-    background:radial-gradient(circle at 75% 30%, rgba(255,255,255,0.16), transparent 55%);
+    background:radial-gradient(circle at 70% 35%, rgba(255,255,255,0.12), transparent 55%);
     animation:hcGlowMove 9s ease-in-out infinite alternate;
-    pointer-events:none;
+    pointer-events:none; z-index:0;
   }
   @keyframes hcGlowMove{
-    0%{ transform:translate(0,0) scale(1); }
-    100%{ transform:translate(-6%,4%) scale(1.15); }
+    0%  { transform:translate(0,0) scale(1); }
+    100%{ transform:translate(-5%,3%) scale(1.12); }
   }
-  .hc-slide::after{
+
+  /* ── Layout 2 kolom: kiri konten (60%) + kanan dekorasi (40%) ── */
+  .hc-cols{
+    display:flex; width:100%; height:100%;
+    position:relative; z-index:1;
+  }
+
+  /* Kolom kiri — konten teks + tombol */
+  .hc-body{
+    /* Flex column dengan height penuh — konten tidak bisa mendorong keluar */
+    display:flex; flex-direction:column; justify-content:center;
+    flex:0 0 60%; min-width:0;
+    padding:24px 20px 24px 32px;
+    position:relative; z-index:2;
+    /* Overflow hidden supaya teks yang terlalu panjang tidak keluar */
+    overflow:hidden;
+  }
+
+  /* Kolom kanan — background ilustrasi / dekorasi */
+  .hc-deco{
+    flex:0 0 40%; min-width:0;
+    position:relative;
+    overflow:hidden;
+    display:flex; align-items:center; justify-content:center;
+  }
+  /* Overlay gradien dari kiri supaya konten kiri tidak terganggu gambar */
+  .hc-deco::before{
     content:"";
-    position:absolute; right:-10%; top:-30%; bottom:-30%;
-    width:55%;
-    background:linear-gradient(200deg, rgba(255,255,255,0.10) 0%, transparent 55%);
-    clip-path:polygon(35% 0, 100% 0, 100% 100%, 0% 100%);
+    position:absolute; inset:0; z-index:1;
+    background:linear-gradient(to right, rgba(10,6,16,0.55) 0%, transparent 50%);
     pointer-events:none;
   }
-  .hc-body{ position:relative; z-index:2; max-width:64%; }
-  .hc-icon{ font-size:26px; margin-bottom:6px; display:block; }
+  .hc-deco-img{
+    width:100%; height:100%;
+    object-fit:cover; object-position:center;
+    display:block;
+  }
+  /* Kalau tidak ada gambar → dekorasi abstrak */
+  .hc-deco-abstract{
+    position:absolute; inset:0;
+    display:flex; align-items:center; justify-content:center;
+    font-size:90px; opacity:.18;
+    user-select:none; pointer-events:none;
+    animation:hcDecoFloat 6s ease-in-out infinite;
+  }
+  .hc-deco-orb{
+    position:absolute;
+    border-radius:50%;
+    filter:blur(28px);
+    pointer-events:none;
+  }
+  .hc-deco-orb-1{
+    width:140px; height:140px;
+    top:-20px; right:10%;
+    background:rgba(255,255,255,0.12);
+    animation:hcDecoFloat 7s ease-in-out infinite;
+  }
+  .hc-deco-orb-2{
+    width:90px; height:90px;
+    bottom:10px; right:30%;
+    background:rgba(255,255,255,0.07);
+    animation:hcDecoFloat 5s ease-in-out infinite reverse;
+  }
+  @keyframes hcDecoFloat{
+    0%,100%{ transform:translateY(0) scale(1); }
+    50%     { transform:translateY(-8px) scale(1.04); }
+  }
+
+  /* ── Elemen teks dalam hc-body — semua diberi max-height + overflow clip ── */
+  .hc-icon{
+    font-size:22px; margin-bottom:6px; display:block;
+    flex-shrink:0;
+  }
   .hc-title{
     font-family:'Poppins',sans-serif;
-    font-size:34px; font-weight:800; letter-spacing:.5px;
-    margin:0 0 6px; color:#fff;
-    text-shadow:0 4px 20px rgba(0,0,0,0.35);
+    font-size:clamp(18px, 2.2vw, 30px);
+    font-weight:800; letter-spacing:.3px;
+    margin:0 0 5px; color:#fff;
+    line-height:1.2;
+    text-shadow:0 3px 16px rgba(0,0,0,0.4);
+    /* Judul max 2 baris */
+    display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical;
+    overflow:hidden;
+    flex-shrink:0;
   }
   .hc-subtitle{
-    font-size:13px; font-weight:600; margin:0 0 10px;
-    color:rgba(255,255,255,0.78);
+    font-size:clamp(11px, 1.1vw, 13px);
+    font-weight:600; margin:0 0 8px;
+    color:rgba(255,255,255,0.75);
+    /* Subtitle max 1 baris */
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    flex-shrink:0;
   }
   .hc-desc{
-    font-size:12.5px; line-height:1.5; margin:0 0 16px;
-    color:rgba(255,255,255,0.65);
-    max-width:420px;
+    font-size:clamp(10.5px, 1vw, 12.5px);
+    line-height:1.55; margin:0 0 0;
+    color:rgba(255,255,255,0.62);
+    /* Deskripsi max 4 baris, sisanya dipotong */
+    display:-webkit-box; -webkit-line-clamp:4; -webkit-box-orient:vertical;
+    overflow:hidden;
+    flex:1; /* ambil sisa ruang tapi tidak overflow */
+    min-height:0;
   }
+  /* Spacer dorong tombol ke bawah — dibuat otomatis lewat flex */
   .hc-cta{
     background:rgba(255,255,255,0.16);
-    color:#fff; border:1px solid rgba(255,255,255,0.35);
-    padding:11px 24px; border-radius:12px;
-    font-weight:700; font-size:13.5px; cursor:pointer;
+    color:#fff; border:1px solid rgba(255,255,255,0.32);
+    /* Ukuran tombol FIXED — tidak berubah apapun isinya */
+    padding:0; height:38px; min-width:130px; max-width:200px;
+    border-radius:10px;
+    font-weight:700;
+    font-size:clamp(11px,1vw,13px);
+    cursor:pointer;
     backdrop-filter:blur(6px);
-    transition:background .2s, transform .2s;
+    transition:background .18s, transform .18s;
+    margin-top:14px;
+    flex-shrink:0;
+    /* Teks tombol tidak overflow */
+    white-space:nowrap; overflow:hidden; text-overflow:ellipsis;
+    padding:0 18px;
   }
-  .hc-cta:hover{ background:rgba(255,255,255,0.26); transform:translateY(-1px); }
+  .hc-cta:hover{ background:rgba(255,255,255,0.24); transform:translateY(-1px); }
 
+  /* ── Navigasi prev/next ── */
   .hc-nav{
     position:absolute; top:50%; transform:translateY(-50%);
-    width:34px; height:34px; border-radius:50%;
-    background:rgba(10,6,16,0.45);
-    border:1px solid rgba(255,255,255,0.18);
-    color:#fff; font-size:19px; line-height:1;
+    width:32px; height:32px; border-radius:50%;
+    background:rgba(10,6,16,0.48);
+    border:1px solid rgba(255,255,255,0.16);
+    color:#fff; font-size:18px; line-height:1;
     display:flex; align-items:center; justify-content:center;
-    cursor:pointer; z-index:5;
+    cursor:pointer; z-index:10;
     opacity:0; transition:opacity .2s, background .2s;
+    flex-shrink:0;
   }
   .hero-carousel:hover .hc-nav{ opacity:1; }
-  .hc-nav:hover{ background:rgba(10,6,16,0.75); }
-  .hc-prev{ left:14px; }
-  .hc-next{ right:14px; }
+  .hc-nav:hover{ background:rgba(10,6,16,0.8); }
+  .hc-prev{ left:12px; }
+  .hc-next{ right:12px; }
 
+  /* ── Dots indikator ── */
   .hc-dots{
-    position:absolute; left:34px; bottom:16px; z-index:5;
-    display:flex; gap:7px;
+    position:absolute; left:32px; bottom:14px; z-index:10;
+    display:flex; gap:6px; align-items:center;
   }
   .hc-dot{
-    width:7px; height:7px; border-radius:50%;
-    background:rgba(255,255,255,0.3);
+    width:6px; height:6px; border-radius:50%;
+    background:rgba(255,255,255,0.28);
     cursor:pointer; transition:all .25s;
   }
-  .hc-dot.active{ width:20px; border-radius:5px; background:#fff; }
+  .hc-dot.active{ width:18px; border-radius:4px; background:#fff; }
 
+  /* ── Code banner (iframe) ── */
   .hc-code-slide{ padding:0; }
   .hc-code-frame{
     position:absolute; inset:0; width:100%; height:100%;
     border:none; border-radius:var(--radius-lg);
     background:linear-gradient(160deg,#241521 0%, #170f22 60%, #0d0a18 100%);
   }
+
+  /* ── Skeleton loading ── */
   .hc-skeleton{
-    position:relative; opacity:1; visibility:visible; transform:none;
+    opacity:1; visibility:visible; transform:none;
     background:linear-gradient(160deg,#241521 0%, #170f22 60%, #0d0a18 100%);
-    flex-direction:column; align-items:flex-start; justify-content:center; gap:12px;
+    display:flex; flex-direction:column;
+    align-items:flex-start; justify-content:center;
+    gap:12px; padding:0 32px;
   }
   .hc-skel-title, .hc-skel-text, .hc-skel-btn{
     border-radius:8px;
@@ -781,17 +898,19 @@
     background-size:400% 100%;
     animation:hcSkelShimmer 1.4s ease infinite;
   }
-  .hc-skel-title{ width:220px; height:30px; }
-  .hc-skel-text{ width:300px; height:14px; }
-  .hc-skel-btn{ width:140px; height:38px; border-radius:12px; }
+  .hc-skel-title{ width:clamp(160px,40%,240px); height:28px; }
+  .hc-skel-text { width:clamp(200px,55%,320px); height:12px; }
+  .hc-skel-btn  { width:clamp(100px,28%,150px); height:36px; border-radius:10px; }
   @keyframes hcSkelShimmer{
-    0%{ background-position:100% 50%; }
+    0%  { background-position:100% 50%; }
     100%{ background-position:0 50%; }
   }
+
+  /* ── Empty state ── */
   .hc-empty{
-    position:relative; opacity:1; visibility:visible; transform:none;
+    opacity:1; visibility:visible; transform:none;
     background:linear-gradient(160deg,#241521 0%, #170f22 60%, #0d0a18 100%);
-    align-items:center; justify-content:center;
+    display:flex; align-items:center; justify-content:center; flex-direction:column; gap:8px;
     color:var(--text-dim); font-size:13px;
   }
 
@@ -899,7 +1018,19 @@
   .section-head .filters{
     margin-left:auto;display:flex;gap:18px;
     font-size:12.5px;color:var(--text-dim);font-weight:600;
+    /* Kalau kategori banyak, biar tetap rapi di layar sempit / fullscreen-minimize —
+       scroll horizontal alih-alih numpuk/wrap berantakan. */
+    max-width:100%;overflow-x:auto;overflow-y:hidden;flex-wrap:nowrap;
+    white-space:nowrap;scrollbar-width:thin;-webkit-overflow-scrolling:touch;
+    padding-bottom:2px;
   }
+  .section-head .filters::-webkit-scrollbar{height:4px;}
+  .section-head .filters::-webkit-scrollbar-thumb{background:rgba(255,255,255,0.12);border-radius:4px;}
+  .section-head .filters span{
+    cursor:pointer;flex-shrink:0;padding:2px 1px;
+    transition:color .18s ease,transform .12s ease;
+  }
+  .section-head .filters span:hover{color:#e7e2f7;transform:translateY(-1px);}
   .section-head .filters span.active{color:#fff;position:relative;}
   .section-head .filters span.active::after{
     content:"";position:absolute;left:0;right:0;bottom:-6px;height:2px;
@@ -928,6 +1059,23 @@
     display:grid;
     grid-template-columns:repeat(auto-fill, 230px); /* lebar kartu TETAP 230px — makin lebar layar, makin banyak kolom yang muncul, bukan kartunya yang molor */
     gap:18px;
+  }
+
+  /* Animasi fade + slide halus tiap kali grid "New Games" diisi ulang
+     (ganti kategori / hasil search berubah) — dipicu ulang lewat
+     classList.remove()+reflow+classList.add() di app.js. */
+  .cards-row.cards-fade-in > *{
+    animation:dashGridFadeSlide .32s cubic-bezier(.2,.7,.3,1) both;
+  }
+  .cards-row.cards-fade-in > *:nth-child(1){animation-delay:.00s;}
+  .cards-row.cards-fade-in > *:nth-child(2){animation-delay:.02s;}
+  .cards-row.cards-fade-in > *:nth-child(3){animation-delay:.04s;}
+  .cards-row.cards-fade-in > *:nth-child(4){animation-delay:.06s;}
+  .cards-row.cards-fade-in > *:nth-child(5){animation-delay:.08s;}
+  .cards-row.cards-fade-in > *:nth-child(n+6){animation-delay:.1s;}
+  @keyframes dashGridFadeSlide{
+    from{opacity:0;transform:translateY(10px);}
+    to{opacity:1;transform:translateY(0);}
   }
 
   /* Placeholder "Segera Hadir" buat section yang fitur/datanya belum ada

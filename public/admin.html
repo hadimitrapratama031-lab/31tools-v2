@@ -779,6 +779,18 @@
         <input class="form-input" type="text" id="itemName" placeholder="Nama game atau bypass">
       </div>
 
+      <div class="form-row" id="categoryFieldRow">
+        <div class="form-group" style="flex:1;">
+          <label class="form-label">Kategori Game <span style="color:var(--text-faint);font-weight:400;">— wajib, dipakai buat filter kategori di Dashboard</span></label>
+          <div class="cover-row">
+            <select class="form-input" id="itemCategory" style="margin:0;"></select>
+            <button type="button" class="btn btn-secondary" id="btnAddCategory" title="Tambah kategori baru" style="flex-shrink:0;">＋</button>
+            <button type="button" class="btn btn-secondary" id="btnDeleteCategory" title="Hapus kategori yang dipilih" style="flex-shrink:0;">🗑️</button>
+          </div>
+          <div id="categoryStatus" style="margin-top:6px;font-size:11.5px;min-height:14px;color:var(--text-faint);"></div>
+        </div>
+      </div>
+
       <div class="form-row">
         <div class="form-group" style="flex:1;">
           <label class="form-label">Role Minimum <span style="color:var(--text-faint);font-weight:400;">— siapa yang boleh akses</span></label>

@@ -147,6 +147,7 @@ async function doDiscordAdminLogin() {
 function showShell() {
   document.getElementById('loginWrap').style.display = 'none';
   document.getElementById('shell').style.display = 'flex';
+  loadAdminCategories();
   loadPage('games');
   connectAdminWS();
 }
@@ -787,6 +788,7 @@ function renderTableRows(type, rows, isFilteredEmpty) {
         ${item.description ? `<div class="item-card__desc">${escapeHtml(item.description)}</div>` : ''}
 
         <div class="item-card__meta">
+          ${isGame && item.category ? `<span class="item-card__meta-chip">🏷️ ${escapeHtml((adminCategories.find(c => c.slug === item.category) || {}).name || item.category)}</span>` : ''}
           ${item.appId     ? `<span class="item-card__meta-chip">${idSvg} ${escapeHtml(item.appId)}</span>` : ''}
           ${item.sizeLabel ? `<span class="item-card__meta-chip">${sizeSvg} ${escapeHtml(item.sizeLabel)}</span>` : ''}
           ${item.createdAt ? `<span class="item-card__meta-chip item-card__meta-chip--time">${clockSvg} ${timeAgo(item.createdAt)}</span>` : ''}
@@ -821,6 +823,66 @@ async function deleteItem(type, id) {
   }
 }
 window.deleteItem = deleteItem;
+
+// ─── KATEGORI GAME (dipakai buat filter kategori Dashboard di app client) ───
+let adminCategories = [];
+
+async function loadAdminCategories() {
+  try {
+    adminCategories = await api('/api/admin/categories');
+    renderCategorySelect();
+  } catch (e) {
+    // gagal diam-diam — select kategori tetap ada, cuma kosong sampai reload berhasil
+  }
+}
+
+function renderCategorySelect(selectedSlug) {
+  const sel = document.getElementById('itemCategory');
+  if (!sel) return;
+  const current = selectedSlug !== undefined ? selectedSlug : sel.value;
+  sel.innerHTML = adminCategories.length
+    ? adminCategories.map(c => `<option value="${escapeHtml(c.slug)}">${escapeHtml(c.name)}</option>`).join('')
+    : `<option value="">— belum ada kategori —</option>`;
+  if (current && adminCategories.some(c => c.slug === current)) sel.value = current;
+}
+
+document.getElementById('btnAddCategory').addEventListener('click', async () => {
+  const name = prompt('Nama kategori baru (contoh: Racing, Horror, dll):');
+  if (!name || !name.trim()) return;
+  const statusEl = document.getElementById('categoryStatus');
+  try {
+    const created = await api('/api/admin/categories', { method: 'POST', body: JSON.stringify({ name: name.trim() }) });
+    await loadAdminCategories();
+    renderCategorySelect(created.slug);
+    statusEl.textContent = `✓ Kategori "${created.name}" ditambahkan.`;
+    statusEl.style.color = 'var(--green, #4ade80)';
+    showToast('Kategori berhasil ditambahkan.', 'success');
+  } catch (e) {
+    statusEl.textContent = e.message;
+    statusEl.style.color = 'var(--red)';
+    showToast('Gagal menambah kategori: ' + e.message, 'error');
+  }
+});
+
+document.getElementById('btnDeleteCategory').addEventListener('click', async () => {
+  const sel = document.getElementById('itemCategory');
+  const slug = sel.value;
+  const cat = adminCategories.find(c => c.slug === slug);
+  if (!cat) return;
+  if (!confirm(`Hapus kategori "${cat.name}"? Kategori hanya bisa dihapus kalau tidak ada game yang memakainya.`)) return;
+  const statusEl = document.getElementById('categoryStatus');
+  try {
+    await api(`/api/admin/categories/${cat._id}`, { method: 'DELETE' });
+    await loadAdminCategories();
+    statusEl.textContent = `✓ Kategori "${cat.name}" dihapus.`;
+    statusEl.style.color = 'var(--green, #4ade80)';
+    showToast('Kategori berhasil dihapus.', 'success');
+  } catch (e) {
+    statusEl.textContent = e.message;
+    statusEl.style.color = 'var(--red)';
+    showToast('Gagal menghapus kategori: ' + e.message, 'error');
+  }
+});
 
 // ─── MODAL ───
 let editingContext = null;
@@ -879,6 +941,14 @@ function openItemModal(type, item) {
   if (type === 'bypasses' && item?.appId && item?.imageUrl) {
     showBypassPreview(item.name, item.imageUrl, item.appId);
   }
+
+  // Kategori cuma relevan buat Game (dipakai filter kategori Dashboard) — Bypass tidak punya kategori.
+  const categoryFieldRow = document.getElementById('categoryFieldRow');
+  categoryFieldRow.style.display = (type === 'games') ? 'flex' : 'none';
+  if (type === 'games') {
+    renderCategorySelect(item?.category || (adminCategories[0]?.slug || ''));
+  }
+  document.getElementById('categoryStatus').textContent = '';
 
   document.getElementById('itemModalBackdrop').style.display = 'flex';
 }
@@ -1017,6 +1087,8 @@ document.getElementById('btnSaveItem').addEventListener('click', async () => {
   if (!body.name) { showToast('Nama wajib diisi.', 'error'); return; }
 
   if (type === 'games') {
+    body.category = document.getElementById('itemCategory').value;
+    if (!body.category) { showToast('Kategori wajib dipilih.', 'error'); return; }
     body.appId = appId;
     body.storeUrl = appId ? (lookupData?.storeUrl || `https://store.steampowered.com/app/${appId}/`) : null;
     body.manifestUrl = document.getElementById('itemManifestUrl').value.trim() || null;

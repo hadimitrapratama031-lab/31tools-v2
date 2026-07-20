@@ -709,6 +709,8 @@ async function connectDB() {
 
     await db.collection('users').createIndex({ discordId: 1 }, { unique: true });
     await db.collection('games').createIndex({ role: 1 });
+    await db.collection('games').createIndex({ category: 1 });
+    await db.collection('categories').createIndex({ slug: 1 }, { unique: true });
     await db.collection('bypasses').createIndex({ role: 1 });
     await db.collection('history').createIndex({ userId: 1, createdAt: -1 });
     await db.collection('pendingLogins').createIndex({ createdAt: 1 }, { expireAfterSeconds: 600 });
@@ -733,6 +735,11 @@ async function connectDB() {
     // masih kosong sama sekali (deploy pertama kali / DB baru), supaya banner
     // yang sudah diedit/dihapus admin TIDAK PERNAH ditimpa ulang tiap restart.
     seedDefaultBannersIfEmpty().catch(e => console.warn('[Seed Banner] Gagal:', e.message));
+
+    // Seed kategori default (Action/Sport/Puzzle/Mystery) — HANYA kalau koleksi
+    // `categories` masih kosong sama sekali, supaya kategori yang sudah
+    // diedit/ditambah/dihapus admin TIDAK PERNAH ditimpa ulang tiap restart.
+    seedDefaultCategoriesIfEmpty().catch(e => console.warn('[Seed Kategori] Gagal:', e.message));
 
     // Cron ringan: cek tiap 5 menit apakah minggu leaderboard sudah berganti,
     // kalau ya snapshot leaderboard minggu sebelumnya ke `leaderboardHistory`.
@@ -1296,7 +1303,20 @@ app.get('/api/games', requireUser, async (req, res) => {
       imageUrl: g.imageUrl || '', role: g.role || 'public',
       sizeLabel: g.sizeLabel || '', appId: g.appId || null,
       isOnline: g.isOnline !== false, createdAt: g.createdAt || null,
+      category: g.category || null,
     })));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Daftar kategori game (Action/Sport/Puzzle/dst) — dipakai app client buat
+// render tombol filter kategori di halaman Dashboard secara dinamis (bukan
+// hardcode), jadi kalau admin nambah/hapus kategori langsung kebawa otomatis.
+app.get('/api/categories', requireUser, async (req, res) => {
+  try {
+    const categories = await db.collection('categories').find({}).sort({ order: 1, name: 1 }).toArray();
+    res.json(categories.map(c => ({ _id: c._id, name: c.name, slug: c.slug })));
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -2334,13 +2354,20 @@ app.get('/api/admin/games', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/admin/games', requireAdmin, async (req, res) => {
-  const { name, description, imageUrl, role, appId, storeUrl, manifestUrl, sizeBytes, sizeLabel, isOnline } = req.body;
+  const { name, description, imageUrl, role, appId, storeUrl, manifestUrl, sizeBytes, sizeLabel, isOnline, category } = req.body;
   if (!name || !ROLE_LEVEL.hasOwnProperty(role)) return res.status(400).json({ error: 'Nama & role wajib diisi dengan benar.' });
+  // Kategori WAJIB — setiap game minimal harus punya satu kategori supaya
+  // filter kategori di Dashboard selalu punya data yang valid buat ditampilkan.
+  const categorySlug = String(category || '').trim();
+  if (!categorySlug) return res.status(400).json({ error: 'Kategori wajib dipilih.' });
+  const categoryDoc = await db.collection('categories').findOne({ slug: categorySlug });
+  if (!categoryDoc) return res.status(400).json({ error: 'Kategori tidak valid.' });
   const doc = {
     name,
     description: description || '',
     imageUrl: imageUrl || null,
     role,
+    category: categorySlug,
     appId: appId ? String(appId) : null,
     storeUrl: storeUrl || null,
     manifestUrl: manifestUrl || null,
@@ -2369,7 +2396,7 @@ app.post('/api/admin/games', requireAdmin, async (req, res) => {
 
 app.put('/api/admin/games/:id', requireAdmin, async (req, res) => {
   if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
-  const { name, description, imageUrl, role, appId, storeUrl, manifestUrl, sizeBytes, sizeLabel, isOnline } = req.body;
+  const { name, description, imageUrl, role, appId, storeUrl, manifestUrl, sizeBytes, sizeLabel, isOnline, category } = req.body;
   const update = {};
   if (name !== undefined) update.name = name;
   if (description !== undefined) update.description = description;
@@ -2383,6 +2410,14 @@ app.put('/api/admin/games/:id', requireAdmin, async (req, res) => {
   if (role !== undefined) {
     if (!ROLE_LEVEL.hasOwnProperty(role)) return res.status(400).json({ error: 'Role tidak valid.' });
     update.role = role;
+  }
+  if (category !== undefined) {
+    // Kategori WAJIB — tolak kalau admin coba kosongkan kategori game yang sudah ada.
+    const categorySlug = String(category || '').trim();
+    if (!categorySlug) return res.status(400).json({ error: 'Kategori wajib dipilih.' });
+    const categoryDoc = await db.collection('categories').findOne({ slug: categorySlug });
+    if (!categoryDoc) return res.status(400).json({ error: 'Kategori tidak valid.' });
+    update.category = categorySlug;
   }
   await db.collection('games').updateOne({ _id: new ObjectId(req.params.id) }, { $set: update });
 
@@ -2412,6 +2447,68 @@ app.delete('/api/admin/games/:id', requireAdmin, async (req, res) => {
     ip: getReqIp(req),
     description: `Admin menghapus game "${game?.name || req.params.id}".`,
     meta: { gameId: req.params.id, name: game?.name }
+  }).catch(() => {});
+
+  res.json({ success: true });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// ADMIN: KATEGORI GAME — dikelola dari halaman "Kelola Game", dipakai buat
+// isi pilihan kategori pas tambah/edit game, dan buat render tombol filter
+// kategori (Action/Sport/Puzzle/Mystery/dst) di halaman Dashboard app client.
+// ══════════════════════════════════════════════════════════════════════════
+app.get('/api/admin/categories', requireAdmin, async (req, res) => {
+  const categories = await db.collection('categories').find({}).sort({ order: 1, name: 1 }).toArray();
+  res.json(categories);
+});
+
+app.post('/api/admin/categories', requireAdmin, async (req, res) => {
+  const name = String(req.body.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Nama kategori wajib diisi.' });
+  const slug = slugify(name);
+  if (!slug) return res.status(400).json({ error: 'Nama kategori tidak valid.' });
+  const existing = await db.collection('categories').findOne({ slug });
+  if (existing) return res.status(400).json({ error: 'Kategori dengan nama tersebut sudah ada.' });
+
+  const count = await db.collection('categories').countDocuments({});
+  const doc = { name, slug, order: count, createdAt: new Date() };
+  const result = await db.collection('categories').insertOne(doc);
+
+  logActivity({
+    type: 'admin_add_category',
+    username: req.admin?.username || 'Admin',
+    admin: req.admin?.username || 'Admin',
+    status: 'success',
+    ip: getReqIp(req),
+    description: `Admin menambahkan kategori baru "${name}".`,
+    meta: { categoryId: result.insertedId, name }
+  }).catch(() => {});
+
+  res.json({ ...doc, _id: result.insertedId });
+});
+
+app.delete('/api/admin/categories/:id', requireAdmin, async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+  const category = await db.collection('categories').findOne({ _id: new ObjectId(req.params.id) });
+  if (!category) return res.status(404).json({ error: 'Kategori tidak ditemukan.' });
+
+  // Jangan izinkan hapus kategori yang masih dipakai game — supaya tidak ada
+  // game yang "kehilangan" kategorinya (setiap game wajib minimal 1 kategori).
+  const inUse = await db.collection('games').countDocuments({ category: category.slug });
+  if (inUse > 0) {
+    return res.status(400).json({ error: `Kategori masih dipakai oleh ${inUse} game. Ubah kategori game tersebut dulu sebelum menghapus.` });
+  }
+
+  await db.collection('categories').deleteOne({ _id: new ObjectId(req.params.id) });
+
+  logActivity({
+    type: 'admin_delete_category',
+    username: req.admin?.username || 'Admin',
+    admin: req.admin?.username || 'Admin',
+    status: 'warning',
+    ip: getReqIp(req),
+    description: `Admin menghapus kategori "${category.name}".`,
+    meta: { categoryId: req.params.id, name: category.name }
   }).catch(() => {});
 
   res.json({ success: true });
@@ -2677,6 +2774,29 @@ function buildPromoBannerCode({
 }`;
 
   return { html, css };
+}
+
+// Ubah nama kategori jadi slug (lowercase, tanpa spasi/simbol) — dipakai sebagai
+// value unik penyimpanan di `game.category` supaya konsisten walau nama kategori
+// diketik beda kapitalisasi/spasi oleh admin.
+function slugify(name) {
+  return String(name || '')
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, '-')
+    .replace(/^-+|-+$/g, '');
+}
+
+async function seedDefaultCategoriesIfEmpty() {
+  if (!db) return;
+  const existing = await db.collection('categories').countDocuments({});
+  if (existing > 0) return; // sudah pernah ada isinya — jangan timpa
+
+  const defaults = ['Action', 'Sport', 'Puzzle', 'Mystery'];
+  await db.collection('categories').insertMany(
+    defaults.map((name, i) => ({ name, slug: slugify(name), order: i, createdAt: new Date() }))
+  );
+  console.log('✅ Kategori default berhasil dibuat:', defaults.join(', '));
 }
 
 async function seedDefaultBannersIfEmpty() {

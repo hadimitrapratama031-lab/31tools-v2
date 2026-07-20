@@ -120,6 +120,80 @@ function grabElements() {
   els.historiStats    = document.getElementById('historiStats');
   els.gamesRoleFilter = document.getElementById('gamesRoleFilter');
   els.bypassesRoleFilter = document.getElementById('bypassesRoleFilter');
+  els.dashCategoryFilters = document.getElementById('dashCategoryFilters');
+}
+
+// ── FILTER KATEGORI DI DASHBOARD ("New Games") ──
+// Kategori diambil dari /api/categories (data asli database, admin bisa
+// tambah/hapus kategori dari Kelola Game). Filter kerja 100% di sisi client
+// terhadap data `allGames` yang sudah ada di memori — TIDAK fetch ulang ke
+// server tiap kali kategori diganti, jadi instan & tetap ringan walau jumlah
+// game ada ratusan/ribuan.
+let allCategories = [];
+let activeDashCategoryFilter = 'all';
+
+async function loadCategories() {
+  try {
+    allCategories = await api('/api/categories');
+    renderDashCategoryFilters();
+  } catch (e) {
+    // Diam-diam gagal — tombol "All Games" tetap ada, filter kategori lain cuma gak nongol
+  }
+}
+
+function renderDashCategoryFilters() {
+  if (!els.dashCategoryFilters) return;
+  const chips = [{ slug: 'all', name: 'All Games' }, ...allCategories.map(c => ({ slug: c.slug, name: c.name }))];
+  els.dashCategoryFilters.innerHTML = chips.map(c => `
+    <span data-category="${escapeHtml(c.slug)}" class="${c.slug === activeDashCategoryFilter ? 'active' : ''}">${escapeHtml(c.name)}</span>
+  `).join('');
+}
+
+function applyDashCategoryFilter() {
+  if (!els.dashNewGrid) return;
+  const q = els.searchInput ? els.searchInput.value.trim().toLowerCase() : '';
+  let filtered = q ? allGames.filter(g => g.name.toLowerCase().includes(q)) : allGames;
+  if (activeDashCategoryFilter !== 'all') {
+    filtered = filtered.filter(g => g.category === activeDashCategoryFilter);
+  }
+  renderDashGamesGrid(filtered);
+}
+
+// Render khusus grid "New Games" di Dashboard — beda dari renderGrid() biasa
+// karena butuh animasi fade/slide halus tiap ganti kategori, dan empty state
+// yang lebih ramah ("Belum ada game pada kategori ini.") dibanding pesan generik.
+function renderDashGamesGrid(games) {
+  if (!els.dashNewGrid) return;
+  els.dashNewGrid.classList.remove('cards-fade-in');
+  // Force reflow supaya animasi bisa di-retrigger tiap kali grid diisi ulang
+  void els.dashNewGrid.offsetWidth;
+
+  if (!games.length) {
+    els.dashNewGrid.innerHTML = `
+      <div class="dash-empty-placeholder">
+        <div class="dash-empty-placeholder__icon">🎮</div>
+        <div class="dash-empty-placeholder__title">Belum ada game pada kategori ini.</div>
+        <div class="dash-empty-placeholder__text">Coba pilih kategori lain atau cek lagi nanti.</div>
+      </div>`;
+  } else {
+    els.dashNewGrid.innerHTML = games.map((g, i) => renderGameCard(g, i)).join('');
+    els.dashNewGrid.querySelectorAll('.game-card').forEach(card => {
+      card.addEventListener('click', () => openDetailPage(games[+card.dataset.idx], 'game'));
+    });
+  }
+  els.dashNewGrid.classList.add('cards-fade-in');
+}
+
+function wireDashCategoryFilter() {
+  if (!els.dashCategoryFilters) return;
+  els.dashCategoryFilters.addEventListener('click', (e) => {
+    const chip = e.target.closest('[data-category]');
+    if (!chip) return;
+    els.dashCategoryFilters.querySelectorAll('[data-category]').forEach(c => c.classList.remove('active'));
+    chip.classList.add('active');
+    activeDashCategoryFilter = chip.dataset.category;
+    applyDashCategoryFilter();
+  });
 }
 
 // ── FILTER ROLE DI HALAMAN GAMES ──
@@ -495,6 +569,7 @@ function enterApp(user) {
   loadNotifications();
 
   showPage('dashboard'); // halaman utama selalu yang pertama muncul
+  loadCategories();
   loadGames();
   loadBypasses();
   loadBanners();
@@ -926,8 +1001,8 @@ async function loadGames() {
       if (badge) badge.textContent = games.length;
     }
 
-    // Render ke dashboard grid
-    renderGrid(els.dashNewGrid, games);
+    // Render ke dashboard grid — ikut filter kategori & search yang lagi aktif
+    applyDashCategoryFilter();
     // "Games On Sale" itu fitur beda yang belum ada datanya sendiri — sebelumnya
     // cuma nampilin game yang sama (dibalik urutannya) jadi keliatan dobel sama
     // New Games. Untuk sekarang dikosongin dulu + kasih placeholder, biar gak
@@ -1219,7 +1294,7 @@ function applySearchAndFilters() {
   if (!els.searchInput) return;
   const q = els.searchInput.value.trim().toLowerCase();
   const filtered = q ? allGames.filter(g => g.name.toLowerCase().includes(q)) : allGames;
-  renderGrid(els.dashNewGrid, filtered);
+  applyDashCategoryFilter();
   if (document.getElementById(PAGE_IDS.games)?.style.display !== 'none') {
     const roleFiltered = activeGamesRoleFilter === 'all' ? filtered : filtered.filter(g => g.role === activeGamesRoleFilter);
     renderGrid(els.gamesOnlyGrid, roleFiltered);
@@ -2264,6 +2339,7 @@ document.addEventListener('DOMContentLoaded', () => {
   wireSearch();
   wireGamesRoleFilter();
   wireBypassesRoleFilter();
+  wireDashCategoryFilter();
   wireDetailPage();
   wireHistoriTabs();
   wirePackageCard();
