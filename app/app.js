@@ -497,6 +497,8 @@ function enterApp(user) {
   showPage('dashboard'); // halaman utama selalu yang pertama muncul
   loadGames();
   loadBypasses();
+  loadBanners();
+  loadLeaderboard();
   flushPendingHistory().catch(() => {}); // coba kirim ulang histori yang sempat gagal tersimpan sesi sebelumnya
   startAutoRefresh(); // ← polling berkala supaya game/bypass baru dari admin langsung muncul
 }
@@ -948,6 +950,174 @@ async function loadGames() {
     if (els.dashNewGrid) els.dashNewGrid.innerHTML = msg;
     if (els.gamesOnlyGrid) els.gamesOnlyGrid.innerHTML = msg;
   }
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// BANNER CAROUSEL — halaman utama. Data 100% dari /api/banners (dikelola dari
+// Admin Web), auto-slide, next/prev, dot indicator, update realtime lewat
+// WebSocket ('banners:update') tanpa perlu reload app sama sekali.
+// ══════════════════════════════════════════════════════════════════════════
+let bannerSlides = [];
+let bannerIndex = 0;
+let bannerAutoTimer = null;
+const BANNER_AUTO_MS = 6000; // auto-slide tiap 6 detik (dalam rentang 5-7 detik yang diminta)
+
+async function loadBanners() {
+  try {
+    const banners = await api('/api/banners');
+    renderBannerCarousel(banners);
+  } catch (e) {
+    renderBannerCarousel([]); // gagal load → tampilkan empty state, bukan data palsu
+  }
+}
+
+function renderBannerCarousel(banners) {
+  const track = document.getElementById('hcTrack');
+  const dotsWrap = document.getElementById('hcDots');
+  if (!track || !dotsWrap) return;
+
+  bannerSlides = Array.isArray(banners) ? banners : [];
+  clearInterval(bannerAutoTimer);
+
+  if (bannerSlides.length === 0) {
+    track.innerHTML = `
+      <div class="hc-slide hc-empty active">
+        <div class="hc-body" style="max-width:100%;text-align:center;">
+          <div class="hc-icon">🗂️</div>
+          <div class="hc-title" style="font-size:18px;">Belum ada banner</div>
+          <div class="hc-desc" style="margin:0 auto;">Admin belum menambahkan banner promosi.</div>
+        </div>
+      </div>`;
+    dotsWrap.innerHTML = '';
+    return;
+  }
+
+  track.innerHTML = bannerSlides.map((b, i) => `
+    <div class="hc-slide${i === 0 ? ' active' : ''}" data-idx="${i}"
+         style="background:linear-gradient(135deg, ${escapeHtml(b.gradientFrom || '#7b5cff')}, ${escapeHtml(b.gradientTo || '#241a3d')});">
+      <div class="hc-body">
+        ${b.icon ? `<span class="hc-icon">${escapeHtml(b.icon)}</span>` : ''}
+        <h1 class="hc-title">${escapeHtml(b.title)}</h1>
+        ${b.subtitle ? `<div class="hc-subtitle">${escapeHtml(b.subtitle)}</div>` : ''}
+        ${b.description ? `<p class="hc-desc">${escapeHtml(b.description)}</p>` : ''}
+        ${b.ctaText ? `<button class="hc-cta" data-link="${escapeHtml(b.ctaLink || '')}">${escapeHtml(b.ctaText)}</button>` : ''}
+      </div>
+    </div>
+  `).join('');
+
+  dotsWrap.innerHTML = bannerSlides.map((_, i) =>
+    `<span class="hc-dot${i === 0 ? ' active' : ''}" data-idx="${i}"></span>`
+  ).join('');
+
+  bannerIndex = 0;
+  goToBannerSlide(0, false);
+
+  if (bannerSlides.length > 1) startBannerAutoplay();
+}
+
+function goToBannerSlide(idx, restartAutoplay = true) {
+  if (bannerSlides.length === 0) return;
+  const n = bannerSlides.length;
+  bannerIndex = ((idx % n) + n) % n;
+
+  document.querySelectorAll('#hcTrack .hc-slide').forEach(el => {
+    el.classList.toggle('active', Number(el.dataset.idx) === bannerIndex);
+  });
+  document.querySelectorAll('#hcDots .hc-dot').forEach(el => {
+    el.classList.toggle('active', Number(el.dataset.idx) === bannerIndex);
+  });
+
+  if (restartAutoplay && bannerSlides.length > 1) startBannerAutoplay();
+}
+
+function startBannerAutoplay() {
+  clearInterval(bannerAutoTimer);
+  bannerAutoTimer = setInterval(() => goToBannerSlide(bannerIndex + 1, false), BANNER_AUTO_MS);
+}
+
+// Klik prev/next/dot/CTA — event delegation, jadi tetap jalan walau slide-nya
+// baru saja diganti/dirender ulang lewat realtime update.
+document.getElementById('hcPrev')?.addEventListener('click', () => goToBannerSlide(bannerIndex - 1));
+document.getElementById('hcNext')?.addEventListener('click', () => goToBannerSlide(bannerIndex + 1));
+document.getElementById('hcDots')?.addEventListener('click', (e) => {
+  const dot = e.target.closest('.hc-dot');
+  if (dot) goToBannerSlide(Number(dot.dataset.idx));
+});
+document.getElementById('hcTrack')?.addEventListener('click', (e) => {
+  const btn = e.target.closest('.hc-cta');
+  if (!btn) return;
+  const link = btn.dataset.link;
+  if (!link) return;
+  // Link internal (mis. "#store", "#games") pindah halaman di app; link http(s)
+  // dibuka lewat browser default kalau ada API shell (Electron), fallback window.open.
+  if (link.startsWith('#')) {
+    const page = link.slice(1);
+    if (document.getElementById('page' + page.charAt(0).toUpperCase() + page.slice(1))) {
+      showPage(page);
+    }
+  } else if (window.electronAPI?.openExternal) {
+    window.electronAPI.openExternal(link);
+  } else {
+    window.open(link, '_blank');
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// TOP INSTALLER MINGGUAN — leaderboard realtime dari /api/leaderboard, dihitung
+// server dari data histori install asli (bukan dummy), update otomatis lewat
+// WebSocket ('leaderboard:update') setiap ada install baru dari user manapun.
+// ══════════════════════════════════════════════════════════════════════════
+const LB_ROLE_LABEL = { public: 'Public', gold: 'Gold', platinum: 'Platinum', admin: 'Admin' };
+const LB_RANK_BADGE = { 1: '🥇', 2: '🥈', 3: '🥉' };
+
+async function loadLeaderboard() {
+  try {
+    const data = await api('/api/leaderboard');
+    renderLeaderboard(data);
+  } catch (e) {
+    renderLeaderboard({ entries: [] });
+  }
+}
+
+function formatInstallCount(n) {
+  if (n >= 1000) return (n / 1000).toFixed(n % 1000 === 0 ? 0 : 1) + ' K';
+  return String(n);
+}
+
+function renderLeaderboard(data) {
+  const list = document.getElementById('lbList');
+  if (!list) return;
+  const entries = (data && Array.isArray(data.entries)) ? data.entries : [];
+
+  if (entries.length === 0) {
+    list.innerHTML = `
+      <div class="lb-empty">
+        <div class="lb-empty-icon">🏆</div>
+        <div>Belum ada install minggu ini.<br>Jadilah yang pertama!</div>
+      </div>`;
+    return;
+  }
+
+  list.innerHTML = entries.map((u, i) => {
+    const rank = i + 1;
+    const roleClass = u.role || 'public';
+    const avatar = u.avatarUrl || 'https://cdn.discordapp.com/embed/avatars/0.png';
+    return `
+      <div class="lb-row rank-${rank}">
+        <div class="lb-rank">${LB_RANK_BADGE[rank] || rank}</div>
+        <div class="lb-avatar-wrap">
+          <img src="${escapeHtml(avatar)}" alt="" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'">
+          ${rank <= 3 ? `<span class="lb-badge">${LB_RANK_BADGE[rank]}</span>` : ''}
+        </div>
+        <div class="lb-info">
+          <div class="name">
+            ${escapeHtml(u.username || 'Unknown')}
+            <span class="lb-role-tag ${roleClass}">${LB_ROLE_LABEL[roleClass] || roleClass}</span>
+          </div>
+        </div>
+        <div class="score"><span class="flame">🔥</span> ${formatInstallCount(u.installs || 0)}</div>
+      </div>`;
+  }).join('');
 }
 
 // ── SEARCH ──
@@ -1713,6 +1883,10 @@ function connectRealtime() {
       setNotifUnreadCount(msg.data.unread);
     } else if (msg.event === 'device:reset') {
       handleDeviceReset();
+    } else if (msg.event === 'banners:update') {
+      renderBannerCarousel(msg.data);
+    } else if (msg.event === 'leaderboard:update') {
+      renderLeaderboard(msg.data);
     }
   };
 

@@ -1784,3 +1784,43 @@ select.form-input option {
   .log-detail-changes { grid-template-columns: 1fr; }
   .log-detail-changes .arrow { display: none; }
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   BANNER CAROUSEL & TOP INSTALLER — Admin panel additions
+   ══════════════════════════════════════════════════════════════════════════ */
+.banner-admin-list { display: flex; flex-direction: column; }
+.banner-admin-item:last-child { border-bottom: none !important; }
+.banner-admin-item:hover { background: rgba(255,255,255,.02); }
+
+.btn-icon-sm {
+  width: 22px; height: 18px;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(255,255,255,.05);
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  color: var(--text-dim);
+  font-size: 9px;
+  cursor: pointer;
+  transition: background .15s, color .15s;
+}
+.btn-icon-sm:hover:not(:disabled) { background: rgba(167,139,250,.18); color: #a78bfa; }
+.btn-icon-sm:disabled { cursor: not-allowed; }
+
+/* Toggle switch (Aktif/Nonaktif banner) */
+.switch { position: relative; display: inline-block; width: 38px; height: 21px; flex-shrink: 0; }
+.switch input { opacity: 0; width: 0; height: 0; }
+.switch-slider {
+  position: absolute; cursor: pointer; inset: 0;
+  background: rgba(255,255,255,.12);
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  transition: background .2s;
+}
+.switch-slider::before {
+  content: ""; position: absolute;
+  height: 15px; width: 15px; left: 2px; top: 2px;
+  background: #fff; border-radius: 50%;
+  transition: transform .2s;
+}
+.switch input:checked + .switch-slider { background: linear-gradient(90deg,#7c5cff,#5b8dff); border-color: transparent; }
+.switch input:checked + .switch-slider::before { transform: translateX(17px); }

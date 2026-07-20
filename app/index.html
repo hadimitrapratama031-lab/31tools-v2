@@ -100,37 +100,33 @@
     <div class="page-content" id="pageDashboard">
 
       <div class="hero-row">
-        <div class="hero">
-          <div class="figure"></div>
-          <div class="hero-content">
-            <h1>THRONE</h1>
-            <div class="hero-actions">
-              <button class="btn-primary">Start Game</button>
-              <div class="play-round">▶</div>
+        <!-- BANNER CAROUSEL — 100% code-driven (tanpa gambar statis), data dari
+             /api/banners (dikelola dari Admin Web), auto-slide + realtime update
+             lewat WebSocket ('banners:update'). -->
+        <div class="hero hero-carousel" id="bannerCarousel">
+          <div class="hc-track" id="hcTrack">
+            <div class="hc-slide hc-skeleton">
+              <div class="hc-skel-title"></div>
+              <div class="hc-skel-text"></div>
+              <div class="hc-skel-btn"></div>
             </div>
           </div>
+          <button class="hc-nav hc-prev" id="hcPrev" aria-label="Sebelumnya">‹</button>
+          <button class="hc-nav hc-next" id="hcNext" aria-label="Berikutnya">›</button>
+          <div class="hc-dots" id="hcDots"></div>
         </div>
 
-        <div class="leaderboard">
-          <div class="lb-row">
-            <img src="https://i.pravatar.cc/60?img=33" alt="">
-            <div class="name">Edwin</div>
-            <div class="score"><span class="flame">🔥</span> 996 K</div>
+        <!-- TOP INSTALLER MINGGUAN — leaderboard realtime dari /api/leaderboard,
+             update otomatis lewat WebSocket ('leaderboard:update'). -->
+        <div class="leaderboard" id="leaderboard">
+          <div class="lb-head">
+            <span class="lb-head-title">🏆 Top Installer Mingguan</span>
           </div>
-          <div class="lb-row">
-            <img src="https://i.pravatar.cc/60?img=45" alt="">
-            <div class="name">Cassie</div>
-            <div class="score"><span class="flame">🔥</span> 751 K</div>
-          </div>
-          <div class="lb-row">
-            <img src="https://i.pravatar.cc/60?img=51" alt="">
-            <div class="name">Bezi</div>
-            <div class="score"><span class="flame">🔥</span> 526 K</div>
-          </div>
-          <div class="lb-row">
-            <img src="https://i.pravatar.cc/60?img=15" alt="">
-            <div class="name">Debbie</div>
-            <div class="score"><span class="flame">🔥</span> 135 K</div>
+          <div class="lb-list" id="lbList">
+            <div class="lb-row lb-skel"><div class="lb-skel-avatar"></div><div class="lb-skel-name"></div><div class="lb-skel-score"></div></div>
+            <div class="lb-row lb-skel"><div class="lb-skel-avatar"></div><div class="lb-skel-name"></div><div class="lb-skel-score"></div></div>
+            <div class="lb-row lb-skel"><div class="lb-skel-avatar"></div><div class="lb-skel-name"></div><div class="lb-skel-score"></div></div>
+            <div class="lb-row lb-skel"><div class="lb-skel-avatar"></div><div class="lb-skel-name"></div><div class="lb-skel-score"></div></div>
           </div>
         </div>
       </div>

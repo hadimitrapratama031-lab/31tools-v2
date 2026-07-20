@@ -720,6 +720,14 @@ async function connectDB() {
     await db.collection('activityLogs').createIndex({ username: 'text', description: 'text', admin: 'text' });
     await db.collection('deviceLogs').createIndex({ discordId: 1, createdAt: -1 });
     await db.collection('deviceLogs').createIndex({ createdAt: -1 });
+    await db.collection('banners').createIndex({ order: 1 });
+    await db.collection('banners').createIndex({ isActive: 1 });
+    await db.collection('leaderboardHistory').createIndex({ weekStart: -1 });
+
+    // Cron ringan: cek tiap 5 menit apakah minggu leaderboard sudah berganti,
+    // kalau ya snapshot leaderboard minggu sebelumnya ke `leaderboardHistory`.
+    checkLeaderboardWeekRollover().catch(() => {});
+    setInterval(() => checkLeaderboardWeekRollover().catch(() => {}), 5 * 60 * 1000);
   } catch (e) {
     console.error('❌ Gagal konek MongoDB:', e.message);
     // TIDAK process.exit() — server tetap jalan supaya endpoint /health dan interactions tetap bisa diakses
@@ -1111,6 +1119,91 @@ async function computeUserStats(discordId) {
     db.collection('history').countDocuments({ userId: discordId, itemType: 'bypass' })
   ]);
   return { downloads, installs, total: downloads + installs };
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// WEEKLY LEADERBOARD — "Top Installer Mingguan"
+// Dihitung langsung dari koleksi `history` (tiap install game/bypass = 1 entri),
+// bukan data dummy. Minggu berjalan dari Senin 00:00 WIB (UTC+7) s/d Senin
+// berikutnya, otomatis "reset" karena window waktunya ikut geser tiap kali
+// dihitung ulang — tidak butuh proses reset manual.
+// ══════════════════════════════════════════════════════════════════════════
+const WIB_OFFSET_MS = 7 * 60 * 60 * 1000;
+
+function getWeekRangeWIB(d = new Date()) {
+  const wib = new Date(d.getTime() + WIB_OFFSET_MS);
+  const day = wib.getUTCDay(); // 0=Minggu..6=Sabtu
+  const diffToMonday = (day + 6) % 7; // jarak ke Senin terakhir
+  wib.setUTCHours(0, 0, 0, 0);
+  wib.setUTCDate(wib.getUTCDate() - diffToMonday);
+  const weekStart = new Date(wib.getTime() - WIB_OFFSET_MS); // balik ke instant UTC asli
+  const weekEnd = new Date(weekStart.getTime() + 7 * 24 * 60 * 60 * 1000);
+  return { weekStart, weekEnd };
+}
+
+// Agregasi top installer minggu ini. itemType game & bypass dua-duanya dihitung
+// sebagai "install" (sesuai request: total install/download 7 hari terakhir).
+async function computeWeeklyLeaderboard(limit = 5, range = null) {
+  if (!db) return { weekStart: null, weekEnd: null, entries: [] };
+  const { weekStart, weekEnd } = range || getWeekRangeWIB();
+
+  const rows = await db.collection('history').aggregate([
+    { $match: { createdAt: { $gte: weekStart, $lt: weekEnd } } },
+    { $group: { _id: '$userId', installs: { $sum: 1 } } },
+    { $sort: { installs: -1 } },
+    { $limit: limit },
+    { $lookup: { from: 'users', localField: '_id', foreignField: 'discordId', as: 'user' } },
+    { $unwind: { path: '$user', preserveNullAndEmptyArrays: true } },
+    { $project: {
+        _id: 0,
+        discordId: '$_id',
+        installs: 1,
+        username: { $ifNull: ['$user.username', 'Unknown'] },
+        avatarUrl: '$user.avatarUrl',
+        role: { $ifNull: ['$user.role', 'public'] }
+    } }
+  ]).toArray();
+
+  return { weekStart, weekEnd, entries: rows };
+}
+
+// Cron ringan (dipanggil tiap 5 menit dari connectDB): kalau minggu berjalan
+// sudah berganti dibanding yang tersimpan di `settings`, snapshot leaderboard
+// minggu yang baru saja berakhir ke `leaderboardHistory` (histori mingguan).
+async function checkLeaderboardWeekRollover() {
+  if (!db) return;
+  const { weekStart } = getWeekRangeWIB();
+  const settingsDoc = await db.collection('settings').findOne({ _id: 'leaderboardWeek' });
+  const storedWeekStart = settingsDoc?.weekStart ? new Date(settingsDoc.weekStart) : null;
+
+  if (!storedWeekStart) {
+    await db.collection('settings').updateOne(
+      { _id: 'leaderboardWeek' },
+      { $set: { weekStart } },
+      { upsert: true }
+    );
+    return;
+  }
+
+  if (storedWeekStart.getTime() !== weekStart.getTime()) {
+    // Minggu sudah berganti — snapshot leaderboard minggu sebelumnya.
+    const prevWeekEnd = weekStart;
+    const prevWeekStart = storedWeekStart;
+    const snapshot = await computeWeeklyLeaderboard(5, { weekStart: prevWeekStart, weekEnd: prevWeekEnd });
+    if (snapshot.entries.length > 0) {
+      await db.collection('leaderboardHistory').insertOne({
+        weekStart: prevWeekStart,
+        weekEnd: prevWeekEnd,
+        entries: snapshot.entries,
+        createdAt: new Date()
+      });
+    }
+    await db.collection('settings').updateOne(
+      { _id: 'leaderboardWeek' },
+      { $set: { weekStart } },
+      { upsert: true }
+    );
+  }
 }
 
 // ── Refresh token — perpanjang sesi tanpa login Discord ulang ──
@@ -1679,6 +1772,40 @@ app.get('/api/bypasses', requireUser, async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
+// APP — BANNER CAROUSEL (halaman utama)
+// Data 100% dari DB (koleksi `banners`), dikelola dari Admin Web. Endpoint ini
+// cuma mengembalikan banner yang isActive=true DAN sedang dalam masa aktifnya
+// (startAt/endAt), diurutkan sesuai `order` yang diatur admin.
+// ══════════════════════════════════════════════════════════════════════════
+app.get('/api/banners', requireUser, async (req, res) => {
+  try {
+    const now = new Date();
+    const banners = await db.collection('banners').find({
+      isActive: true,
+      $and: [
+        { $or: [{ startAt: null }, { startAt: { $exists: false } }, { startAt: { $lte: now } }] },
+        { $or: [{ endAt: null }, { endAt: { $exists: false } }, { endAt: { $gte: now } }] }
+      ]
+    }).sort({ order: 1, createdAt: 1 }).toArray();
+    res.json(banners);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// APP — TOP INSTALLER MINGGUAN (leaderboard)
+// ══════════════════════════════════════════════════════════════════════════
+app.get('/api/leaderboard', requireUser, async (req, res) => {
+  try {
+    const data = await computeWeeklyLeaderboard(5);
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
 // APP — HISTORI
 // ══════════════════════════════════════════════════════════════════════════
 // Dipanggil pas user pencet "Install"/"Pakai" di kartu Game atau Bypass
@@ -1729,6 +1856,13 @@ app.post('/api/history', requireUser, async (req, res) => {
       description: `${req.user.username} meng-install ${itemType === 'game' ? 'game' : 'bypass'} "${itemNameResolved}".`,
       meta: { itemType, itemId }
     }).catch(() => {});
+
+    // Realtime: setiap install baru langsung mengubah Top Installer Mingguan —
+    // broadcast leaderboard terbaru ke semua client yang sedang online, tanpa
+    // perlu refresh/restart app.
+    computeWeeklyLeaderboard(5)
+      .then(lb => wsBroadcastAll('leaderboard:update', lb))
+      .catch(() => {});
 
     notifyUser(req.user.discordId, {
       type: 'download_success',
@@ -2359,6 +2493,165 @@ app.delete('/api/admin/bypasses/:id', requireAdmin, async (req, res) => {
   }).catch(() => {});
 
   res.json({ success: true });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// ADMIN — BANNER CAROUSEL (CRUD + reorder)
+// ══════════════════════════════════════════════════════════════════════════
+async function broadcastActiveBanners() {
+  try {
+    const now = new Date();
+    const banners = await db.collection('banners').find({
+      isActive: true,
+      $and: [
+        { $or: [{ startAt: null }, { startAt: { $exists: false } }, { startAt: { $lte: now } }] },
+        { $or: [{ endAt: null }, { endAt: { $exists: false } }, { endAt: { $gte: now } }] }
+      ]
+    }).sort({ order: 1, createdAt: 1 }).toArray();
+    wsBroadcastAll('banners:update', banners);
+  } catch (e) { /* noop */ }
+}
+
+app.get('/api/admin/banners', requireAdmin, async (req, res) => {
+  const banners = await db.collection('banners').find({}).sort({ order: 1, createdAt: 1 }).toArray();
+  res.json(banners);
+});
+
+app.post('/api/admin/banners', requireAdmin, async (req, res) => {
+  const { title, subtitle, description, ctaText, ctaLink, gradientFrom, gradientTo, icon, isActive, startAt, endAt } = req.body;
+  if (!title) return res.status(400).json({ error: 'Judul banner wajib diisi.' });
+
+  const lastBanner = await db.collection('banners').find({}).sort({ order: -1 }).limit(1).toArray();
+  const nextOrder = lastBanner.length ? (lastBanner[0].order || 0) + 1 : 0;
+
+  const doc = {
+    title,
+    subtitle: subtitle || '',
+    description: description || '',
+    ctaText: ctaText || 'Selengkapnya',
+    ctaLink: ctaLink || '',
+    gradientFrom: gradientFrom || '#7b5cff',
+    gradientTo: gradientTo || '#241a3d',
+    icon: icon || '',
+    order: nextOrder,
+    isActive: isActive === false ? false : true,
+    startAt: startAt ? new Date(startAt) : null,
+    endAt: endAt ? new Date(endAt) : null,
+    createdAt: new Date(),
+    updatedAt: new Date()
+  };
+  const result = await db.collection('banners').insertOne(doc);
+
+  logActivity({
+    type: 'admin_add_banner',
+    username: req.admin?.username || 'Admin',
+    admin: req.admin?.username || 'Admin',
+    status: 'success',
+    ip: getReqIp(req),
+    description: `Admin menambahkan banner baru "${doc.title}".`,
+    meta: { bannerId: result.insertedId, title: doc.title }
+  }).catch(() => {});
+
+  broadcastActiveBanners();
+  res.json({ ...doc, _id: result.insertedId });
+});
+
+app.put('/api/admin/banners/reorder', requireAdmin, async (req, res) => {
+  const { order } = req.body; // array of banner _id, urutan baru
+  if (!Array.isArray(order)) return res.status(400).json({ error: '`order` harus array of id.' });
+  const invalid = order.find(id => !ObjectId.isValid(id));
+  if (invalid) return res.status(400).json({ error: 'Ada ID banner yang tidak valid.' });
+
+  await Promise.all(order.map((id, idx) =>
+    db.collection('banners').updateOne({ _id: new ObjectId(id) }, { $set: { order: idx, updatedAt: new Date() } })
+  ));
+
+  logActivity({
+    type: 'admin_reorder_banner',
+    username: req.admin?.username || 'Admin',
+    admin: req.admin?.username || 'Admin',
+    status: 'success',
+    ip: getReqIp(req),
+    description: `Admin mengubah urutan banner.`,
+    meta: { order }
+  }).catch(() => {});
+
+  broadcastActiveBanners();
+  res.json({ success: true });
+});
+
+app.put('/api/admin/banners/:id', requireAdmin, async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+  const { title, subtitle, description, ctaText, ctaLink, gradientFrom, gradientTo, icon, isActive, startAt, endAt } = req.body;
+  const update = { updatedAt: new Date() };
+  if (title !== undefined) update.title = title;
+  if (subtitle !== undefined) update.subtitle = subtitle;
+  if (description !== undefined) update.description = description;
+  if (ctaText !== undefined) update.ctaText = ctaText;
+  if (ctaLink !== undefined) update.ctaLink = ctaLink;
+  if (gradientFrom !== undefined) update.gradientFrom = gradientFrom;
+  if (gradientTo !== undefined) update.gradientTo = gradientTo;
+  if (icon !== undefined) update.icon = icon;
+  if (isActive !== undefined) update.isActive = isActive === false ? false : true;
+  if (startAt !== undefined) update.startAt = startAt ? new Date(startAt) : null;
+  if (endAt !== undefined) update.endAt = endAt ? new Date(endAt) : null;
+
+  await db.collection('banners').updateOne({ _id: new ObjectId(req.params.id) }, { $set: update });
+
+  logActivity({
+    type: 'admin_edit_banner',
+    username: req.admin?.username || 'Admin',
+    admin: req.admin?.username || 'Admin',
+    status: 'success',
+    ip: getReqIp(req),
+    description: `Admin mengubah banner "${update.title || req.params.id}".`,
+    meta: { bannerId: req.params.id, update }
+  }).catch(() => {});
+
+  broadcastActiveBanners();
+  res.json({ success: true });
+});
+
+app.delete('/api/admin/banners/:id', requireAdmin, async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+  const banner = await db.collection('banners').findOne({ _id: new ObjectId(req.params.id) });
+  await db.collection('banners').deleteOne({ _id: new ObjectId(req.params.id) });
+
+  logActivity({
+    type: 'admin_delete_banner',
+    username: req.admin?.username || 'Admin',
+    admin: req.admin?.username || 'Admin',
+    status: 'warning',
+    ip: getReqIp(req),
+    description: `Admin menghapus banner "${banner?.title || req.params.id}".`,
+    meta: { bannerId: req.params.id, title: banner?.title }
+  }).catch(() => {});
+
+  broadcastActiveBanners();
+  res.json({ success: true });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// ADMIN — TOP INSTALLER MINGGUAN (leaderboard) — view only, dihitung realtime
+// dari koleksi `history`. `history-list` mengembalikan snapshot minggu-minggu
+// sebelumnya (opsional) yang tersimpan di `leaderboardHistory`.
+// ══════════════════════════════════════════════════════════════════════════
+app.get('/api/admin/leaderboard', requireAdmin, async (req, res) => {
+  try {
+    const data = await computeWeeklyLeaderboard(5);
+    res.json(data);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/admin/leaderboard/history', requireAdmin, async (req, res) => {
+  try {
+    const rows = await db.collection('leaderboardHistory').find({}).sort({ weekStart: -1 }).limit(12).toArray();
+    res.json(rows);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
 });
 
 // ══════════════════════════════════════════════════════════════════════════

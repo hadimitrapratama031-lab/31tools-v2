@@ -60,6 +60,14 @@
           <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg></span>
           Bypass
         </button>
+        <button class="nav-item" data-page="banners">
+          <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><rect x="3" y="5" width="18" height="14" rx="2"/><path stroke-linecap="round" stroke-linejoin="round" d="M3 9h18M8 5v4"/></svg></span>
+          Banner
+        </button>
+        <button class="nav-item" data-page="leaderboard">
+          <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg></span>
+          Top Installer
+        </button>
         <button class="nav-item" data-page="users">
           <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0z"/></svg></span>
           Users
@@ -312,6 +320,66 @@
         </div>
         <table id="tableBypasses"></table>
         <div class="pagination" id="bypassesPagination" style="display:none;"></div>
+      </div>
+    </section>
+
+    <!-- BANNERS PAGE -->
+    <section class="page" id="pageBanners">
+      <div class="page-header">
+        <div class="page-header-left">
+          <div class="page-header-icon" style="background:rgba(255,215,106,.16);">🖼️</div>
+          <div>
+            <div class="page-header-title">Banner Carousel</div>
+            <div class="page-header-desc">Kelola banner promosi di halaman utama aplikasi — tanpa gambar statis, 100% dibuat lewat kode.</div>
+          </div>
+        </div>
+        <div class="page-header-actions" style="margin-left:auto;">
+          <button class="btn btn-primary" id="btnAddBanner" style="display:flex;align-items:center;gap:6px;">
+            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>
+            Tambah Banner
+          </button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <div class="table-toolbar">
+          <div class="table-toolbar-title">🖼️ Daftar Banner</div>
+          <div class="table-toolbar-filters" style="margin-left:auto;color:var(--text-faint);font-size:12px;">
+            Drag pakai tombol ↑ ↓ untuk ubah urutan tampil di carousel.
+          </div>
+        </div>
+        <div id="bannerList" class="banner-admin-list"></div>
+      </div>
+    </section>
+
+    <!-- LEADERBOARD PAGE -->
+    <section class="page" id="pageLeaderboard">
+      <div class="page-header">
+        <div class="page-header-left">
+          <div class="page-header-icon" style="background:rgba(61,217,245,.16);">🏆</div>
+          <div>
+            <div class="page-header-title">Top Installer Mingguan</div>
+            <div class="page-header-desc">Leaderboard dihitung realtime dari histori install asli (Senin 00:00 WIB s/d sekarang).</div>
+          </div>
+        </div>
+        <div class="page-header-actions" style="margin-left:auto;">
+          <button class="btn btn-outline" id="btnRefreshLeaderboard">↻ Refresh</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <div class="table-toolbar">
+          <div class="table-toolbar-title">🏆 Peringkat Minggu Ini</div>
+          <div class="table-toolbar-filters" id="lbWeekRange" style="margin-left:auto;color:var(--text-faint);font-size:12px;"></div>
+        </div>
+        <div id="lbAdminList" class="banner-admin-list"></div>
+      </div>
+
+      <div class="table-wrap" style="margin-top:18px;">
+        <div class="table-toolbar">
+          <div class="table-toolbar-title">🗂️ Histori Minggu Sebelumnya</div>
+        </div>
+        <table id="tableLeaderboardHistory"></table>
       </div>
     </section>
 
@@ -935,6 +1003,86 @@
     <div class="modal-body" id="logDetailBody"></div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeLogDetailModal()">Tutup</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MODAL: BANNER — Tambah/Edit ═══ -->
+<div class="modal-backdrop" id="bannerModalBackdrop" style="display:none;" onclick="if(event.target===this)closeBannerModal()">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="bannerModalTitle">Tambah Banner</div>
+        <div class="modal-subtitle">Dibuat 100% dengan kode (gradient + teks) — tanpa upload gambar.</div>
+      </div>
+      <button class="modal-close" onclick="closeBannerModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Judul</label>
+        <input class="form-input" type="text" id="bannerTitle" placeholder="Contoh: Selamat Datang di ThreeOne Store">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Subjudul <span style="color:var(--text-faint);font-weight:400;">(opsional)</span></label>
+        <input class="form-input" type="text" id="bannerSubtitle" placeholder="Contoh: Akses ribuan game & bypass premium">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Deskripsi Singkat</label>
+        <textarea class="form-input" id="bannerDescription" placeholder="Deskripsi singkat banner ini..." style="min-height:64px;"></textarea>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+        <div class="form-group">
+          <label class="form-label">Teks Tombol CTA</label>
+          <input class="form-input" type="text" id="bannerCtaText" placeholder="Contoh: Mulai Download">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Link/Aksi Tombol <span style="color:var(--text-faint);font-weight:400;">(# untuk halaman internal)</span></label>
+          <input class="form-input" type="text" id="bannerCtaLink" placeholder="#store, #games, atau https://...">
+        </div>
+      </div>
+
+      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;">
+        <div class="form-group">
+          <label class="form-label">Warna Gradient (dari)</label>
+          <input class="form-input" type="color" id="bannerGradientFrom" value="#7b5cff" style="height:40px;padding:4px;">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Warna Gradient (ke)</label>
+          <input class="form-input" type="color" id="bannerGradientTo" value="#241a3d" style="height:40px;padding:4px;">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Emoji/Icon <span style="color:var(--text-faint);font-weight:400;">(opsional)</span></label>
+          <input class="form-input" type="text" id="bannerIcon" placeholder="🎮">
+        </div>
+      </div>
+
+      <div class="modal-divider"><span>Masa Aktif (opsional)</span></div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
+        <div class="form-group">
+          <label class="form-label">Mulai Tampil</label>
+          <input class="form-input" type="datetime-local" id="bannerStartAt">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Berhenti Tampil</label>
+          <input class="form-input" type="datetime-local" id="bannerEndAt">
+        </div>
+      </div>
+
+      <div class="form-group" style="display:flex;align-items:center;gap:10px;margin-top:4px;">
+        <input type="checkbox" id="bannerIsActive" checked style="width:16px;height:16px;">
+        <label class="form-label" style="margin:0;" for="bannerIsActive">Aktifkan banner ini sekarang</label>
+      </div>
+
+      <div class="modal-divider"><span>Preview</span></div>
+      <div id="bannerPreviewBox" style="border-radius:14px;min-height:120px;padding:20px 26px;display:flex;flex-direction:column;justify-content:center;transition:background .2s;">
+        <div id="bannerPreviewTitle" style="font-family:'Sora',sans-serif;font-weight:800;font-size:22px;color:#fff;margin-bottom:4px;">Judul Banner</div>
+        <div id="bannerPreviewDesc" style="font-size:12.5px;color:rgba(255,255,255,0.7);"></div>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeBannerModal()">Batal</button>
+      <button class="btn btn-primary" id="btnSaveBanner">Simpan Banner</button>
     </div>
   </div>
 </div>

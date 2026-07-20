@@ -183,6 +183,8 @@ const PAGE_META = {
   dashboard: { title: 'Dashboard',  breadcrumb: 'Pages / Dashboard' },
   games:     { title: 'Game',       breadcrumb: 'Pages / Game' },
   bypasses:  { title: 'Bypass',     breadcrumb: 'Pages / Bypass' },
+  banners:   { title: 'Banner',     breadcrumb: 'Pages / Banner' },
+  leaderboard:{ title: 'Top Installer', breadcrumb: 'Pages / Top Installer' },
   users:     { title: 'Users',      breadcrumb: 'Pages / Users' },
   history:   { title: 'Histori',    breadcrumb: 'Pages / Histori' },
   logs:      { title: 'Logs',       breadcrumb: 'Pages / Logs' },
@@ -219,6 +221,8 @@ function loadPage(page) {
   if (page === 'dashboard') renderDashboard();
   else if (page === 'games') renderTable('games');
   else if (page === 'bypasses') renderTable('bypasses');
+  else if (page === 'banners') renderBannerAdmin();
+  else if (page === 'leaderboard') renderLeaderboardAdmin();
   else if (page === 'users') renderUsers();
   else if (page === 'history') renderHistory();
   else if (page === 'logs') renderLogs();
@@ -2773,3 +2777,273 @@ document.getElementById('dmConfirmBtn')?.addEventListener('click', async () => {
     btn.disabled = false; btn.textContent = 'Konfirmasi';
   }
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// BANNER CAROUSEL — Admin CRUD (Tambah/Edit/Hapus/Reorder/Aktif-Nonaktif)
+// Data 100% dari koleksi `banners` di DB, realtime ke semua user via WS
+// ('banners:update') begitu ada perubahan dari sini.
+// ══════════════════════════════════════════════════════════════════════════
+let _bannerList = [];
+let _bannerEditId = null;
+
+async function renderBannerAdmin() {
+  const wrap = document.getElementById('bannerList');
+  wrap.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-faint);font-size:12.5px;">Memuat banner...</div>`;
+  try {
+    _bannerList = await api('/api/admin/banners');
+    drawBannerAdminList();
+  } catch (e) {
+    wrap.innerHTML = `<div style="padding:24px;text-align:center;color:var(--red);font-size:12.5px;">Gagal memuat banner: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function drawBannerAdminList() {
+  const wrap = document.getElementById('bannerList');
+  if (!_bannerList.length) {
+    wrap.innerHTML = `
+      <div style="padding:40px 20px;text-align:center;color:var(--text-faint);">
+        <div style="font-size:32px;margin-bottom:8px;">🗂️</div>
+        <div style="font-size:13px;">Belum ada banner. Klik "Tambah Banner" untuk membuat yang pertama.</div>
+      </div>`;
+    return;
+  }
+
+  wrap.innerHTML = _bannerList.map((b, idx) => {
+    const now = new Date();
+    const startAt = b.startAt ? new Date(b.startAt) : null;
+    const endAt = b.endAt ? new Date(b.endAt) : null;
+    const withinPeriod = (!startAt || startAt <= now) && (!endAt || endAt >= now);
+    const liveNow = b.isActive && withinPeriod;
+
+    return `
+    <div class="banner-admin-item" style="display:flex;align-items:center;gap:14px;padding:14px 16px;border-bottom:1px solid var(--border);">
+      <div style="display:flex;flex-direction:column;gap:2px;">
+        <button class="btn-icon-sm" title="Naikkan urutan" onclick="moveBanner('${b._id}', -1)" ${idx === 0 ? 'disabled style="opacity:.3;"' : ''}>▲</button>
+        <button class="btn-icon-sm" title="Turunkan urutan" onclick="moveBanner('${b._id}', 1)" ${idx === _bannerList.length - 1 ? 'disabled style="opacity:.3;"' : ''}>▼</button>
+      </div>
+      <div style="width:120px;height:64px;border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;padding:8px;
+                  background:linear-gradient(135deg, ${escapeHtml(b.gradientFrom || '#7b5cff')}, ${escapeHtml(b.gradientTo || '#241a3d')});">
+        <span style="font-size:20px;">${escapeHtml(b.icon || '🖼️')}</span>
+      </div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:700;font-size:13.5px;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(b.title)}</div>
+        <div style="font-size:11.5px;color:var(--text-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(b.subtitle || b.description || '—')}</div>
+        <div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap;">
+          <span class="tag ${liveNow ? 'gold' : 'public'}" style="font-size:10px;">${liveNow ? '● Tayang' : (b.isActive ? '○ Di luar jadwal' : '○ Nonaktif')}</span>
+          ${b.ctaText ? `<span class="tag public" style="font-size:10px;">🔘 ${escapeHtml(b.ctaText)}</span>` : ''}
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+        <label class="switch" title="Aktif/Nonaktif">
+          <input type="checkbox" ${b.isActive ? 'checked' : ''} onchange="toggleBannerActive('${b._id}', this.checked)">
+          <span class="switch-slider"></span>
+        </label>
+        <button class="btn btn-secondary btn-sm" onclick="openBannerModal('${b._id}')">✎ Edit</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteBanner('${b._id}')">🗑</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function moveBanner(id, dir) {
+  const idx = _bannerList.findIndex(b => b._id === id);
+  const swapIdx = idx + dir;
+  if (idx < 0 || swapIdx < 0 || swapIdx >= _bannerList.length) return;
+  [_bannerList[idx], _bannerList[swapIdx]] = [_bannerList[swapIdx], _bannerList[idx]];
+  drawBannerAdminList(); // optimistic UI
+  try {
+    await api('/api/admin/banners/reorder', { method: 'PUT', body: JSON.stringify({ order: _bannerList.map(b => b._id) }) });
+    showToast('✅ Urutan banner diperbarui.', 'success');
+  } catch (e) {
+    showToast('Gagal ubah urutan: ' + e.message, 'error');
+    renderBannerAdmin();
+  }
+}
+
+async function toggleBannerActive(id, isActive) {
+  try {
+    await api(`/api/admin/banners/${id}`, { method: 'PUT', body: JSON.stringify({ isActive }) });
+    showToast(isActive ? '✅ Banner diaktifkan.' : '✅ Banner dinonaktifkan.', 'success');
+    const b = _bannerList.find(x => x._id === id);
+    if (b) b.isActive = isActive;
+    drawBannerAdminList();
+  } catch (e) {
+    showToast('Gagal: ' + e.message, 'error');
+    renderBannerAdmin();
+  }
+}
+
+async function deleteBanner(id) {
+  const b = _bannerList.find(x => x._id === id);
+  if (!confirm(`Yakin mau hapus banner "${b?.title || ''}"? Tindakan ini tidak bisa dibatalkan.`)) return;
+  try {
+    await api(`/api/admin/banners/${id}`, { method: 'DELETE' });
+    showToast('✅ Banner dihapus.', 'success');
+    renderBannerAdmin();
+  } catch (e) {
+    showToast('Gagal hapus banner: ' + e.message, 'error');
+  }
+}
+
+function toLocalDatetimeInput(dateVal) {
+  if (!dateVal) return '';
+  const d = new Date(dateVal);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+function openBannerModal(id) {
+  _bannerEditId = id || null;
+  const b = id ? _bannerList.find(x => x._id === id) : null;
+
+  document.getElementById('bannerModalTitle').textContent = b ? 'Edit Banner' : 'Tambah Banner';
+  document.getElementById('bannerTitle').value = b?.title || '';
+  document.getElementById('bannerSubtitle').value = b?.subtitle || '';
+  document.getElementById('bannerDescription').value = b?.description || '';
+  document.getElementById('bannerCtaText').value = b?.ctaText || 'Selengkapnya';
+  document.getElementById('bannerCtaLink').value = b?.ctaLink || '';
+  document.getElementById('bannerGradientFrom').value = b?.gradientFrom || '#7b5cff';
+  document.getElementById('bannerGradientTo').value = b?.gradientTo || '#241a3d';
+  document.getElementById('bannerIcon').value = b?.icon || '';
+  document.getElementById('bannerStartAt').value = toLocalDatetimeInput(b?.startAt);
+  document.getElementById('bannerEndAt').value = toLocalDatetimeInput(b?.endAt);
+  document.getElementById('bannerIsActive').checked = b ? !!b.isActive : true;
+
+  updateBannerPreview();
+  document.getElementById('bannerModalBackdrop').style.display = 'flex';
+}
+
+function closeBannerModal() {
+  document.getElementById('bannerModalBackdrop').style.display = 'none';
+  _bannerEditId = null;
+}
+
+function updateBannerPreview() {
+  const from = document.getElementById('bannerGradientFrom').value;
+  const to = document.getElementById('bannerGradientTo').value;
+  const title = document.getElementById('bannerTitle').value || 'Judul Banner';
+  const desc = document.getElementById('bannerDescription').value || '';
+  const box = document.getElementById('bannerPreviewBox');
+  if (box) box.style.background = `linear-gradient(135deg, ${from}, ${to})`;
+  document.getElementById('bannerPreviewTitle').textContent = title;
+  document.getElementById('bannerPreviewDesc').textContent = desc;
+}
+['bannerTitle', 'bannerDescription', 'bannerGradientFrom', 'bannerGradientTo'].forEach(id => {
+  document.getElementById(id)?.addEventListener('input', updateBannerPreview);
+});
+
+document.getElementById('btnAddBanner')?.addEventListener('click', () => openBannerModal(null));
+
+document.getElementById('btnSaveBanner')?.addEventListener('click', async () => {
+  const btn = document.getElementById('btnSaveBanner');
+  const payload = {
+    title: document.getElementById('bannerTitle').value.trim(),
+    subtitle: document.getElementById('bannerSubtitle').value.trim(),
+    description: document.getElementById('bannerDescription').value.trim(),
+    ctaText: document.getElementById('bannerCtaText').value.trim(),
+    ctaLink: document.getElementById('bannerCtaLink').value.trim(),
+    gradientFrom: document.getElementById('bannerGradientFrom').value,
+    gradientTo: document.getElementById('bannerGradientTo').value,
+    icon: document.getElementById('bannerIcon').value.trim(),
+    isActive: document.getElementById('bannerIsActive').checked,
+    startAt: document.getElementById('bannerStartAt').value ? new Date(document.getElementById('bannerStartAt').value).toISOString() : null,
+    endAt: document.getElementById('bannerEndAt').value ? new Date(document.getElementById('bannerEndAt').value).toISOString() : null,
+  };
+  if (!payload.title) { showToast('Judul banner wajib diisi.', 'error'); return; }
+
+  btn.disabled = true; btn.textContent = 'Menyimpan...';
+  try {
+    if (_bannerEditId) {
+      await api(`/api/admin/banners/${_bannerEditId}`, { method: 'PUT', body: JSON.stringify(payload) });
+    } else {
+      await api('/api/admin/banners', { method: 'POST', body: JSON.stringify(payload) });
+    }
+    showToast('✅ Banner berhasil disimpan.', 'success');
+    closeBannerModal();
+    renderBannerAdmin();
+  } catch (e) {
+    showToast('Gagal simpan banner: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Simpan Banner';
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// TOP INSTALLER MINGGUAN — Admin view (realtime dari histori install asli)
+// ══════════════════════════════════════════════════════════════════════════
+const LB_ADMIN_ROLE_LABEL = { public: 'Public', gold: 'Gold', platinum: 'Platinum', admin: 'Admin' };
+
+function fmtWeekRange(weekStart, weekEnd) {
+  if (!weekStart) return '';
+  const opts = { day: '2-digit', month: 'short' };
+  const s = new Date(weekStart).toLocaleDateString('id-ID', opts);
+  const e = new Date(new Date(weekEnd).getTime() - 1).toLocaleDateString('id-ID', opts);
+  return `${s} — ${e}`;
+}
+
+async function renderLeaderboardAdmin() {
+  const wrap = document.getElementById('lbAdminList');
+  wrap.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-faint);font-size:12.5px;">Memuat leaderboard...</div>`;
+  try {
+    const data = await api('/api/admin/leaderboard');
+    document.getElementById('lbWeekRange').textContent = fmtWeekRange(data.weekStart, data.weekEnd);
+    drawLeaderboardAdminList(data.entries || []);
+    renderLeaderboardHistoryTable();
+  } catch (e) {
+    wrap.innerHTML = `<div style="padding:24px;text-align:center;color:var(--red);font-size:12.5px;">Gagal memuat leaderboard: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function drawLeaderboardAdminList(entries) {
+  const wrap = document.getElementById('lbAdminList');
+  if (!entries.length) {
+    wrap.innerHTML = `
+      <div style="padding:40px 20px;text-align:center;color:var(--text-faint);">
+        <div style="font-size:32px;margin-bottom:8px;">🏆</div>
+        <div style="font-size:13px;">Belum ada install minggu ini.</div>
+      </div>`;
+    return;
+  }
+  const medal = { 1: '🥇', 2: '🥈', 3: '🥉' };
+  wrap.innerHTML = entries.map((u, i) => {
+    const rank = i + 1;
+    return `
+    <div style="display:flex;align-items:center;gap:14px;padding:12px 16px;border-bottom:1px solid var(--border);">
+      <div style="width:26px;text-align:center;font-size:15px;font-weight:800;">${medal[rank] || rank}</div>
+      <img src="${escapeHtml(u.avatarUrl || 'https://cdn.discordapp.com/embed/avatars/0.png')}" style="width:34px;height:34px;border-radius:50%;object-fit:cover;" onerror="this.src='https://cdn.discordapp.com/embed/avatars/0.png'">
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:700;font-size:13px;color:var(--text-main);">${escapeHtml(u.username)}</div>
+        <div style="font-size:11px;color:var(--text-faint);">${escapeHtml(u.discordId)}</div>
+      </div>
+      ${roleTagHtml(u.role)}
+      <div style="font-weight:800;font-size:13.5px;color:var(--text-main);min-width:70px;text-align:right;">🔥 ${u.installs}</div>
+    </div>`;
+  }).join('');
+}
+
+async function renderLeaderboardHistoryTable() {
+  const table = document.getElementById('tableLeaderboardHistory');
+  try {
+    const rows = await api('/api/admin/leaderboard/history');
+    if (!rows.length) {
+      table.innerHTML = `<tbody><tr><td style="padding:20px;text-align:center;color:var(--text-faint);">Belum ada histori minggu sebelumnya.</td></tr></tbody>`;
+      return;
+    }
+    table.innerHTML = `
+      <thead><tr><th>Minggu</th><th>Juara 1</th><th>Juara 2</th><th>Juara 3</th></tr></thead>
+      <tbody>
+        ${rows.map(r => `
+          <tr>
+            <td>${fmtWeekRange(r.weekStart, r.weekEnd)}</td>
+            ${[0, 1, 2].map(i => r.entries[i]
+              ? `<td>${escapeHtml(r.entries[i].username)} <span style="color:var(--text-faint);">(🔥${r.entries[i].installs})</span></td>`
+              : `<td style="color:var(--text-faint);">—</td>`
+            ).join('')}
+          </tr>`).join('')}
+      </tbody>`;
+  } catch (e) {
+    table.innerHTML = `<tbody><tr><td style="padding:20px;text-align:center;color:var(--red);">Gagal memuat histori: ${escapeHtml(e.message)}</td></tr></tbody>`;
+  }
+}
+
+document.getElementById('btnRefreshLeaderboard')?.addEventListener('click', renderLeaderboardAdmin);
