@@ -729,6 +729,11 @@ async function connectDB() {
     await db.collection('banners').createIndex({ isActive: 1 });
     await db.collection('leaderboardHistory').createIndex({ weekStart: -1 });
 
+    // Seed 3 banner default (Code Banner) — HANYA jalan kalau koleksi `banners`
+    // masih kosong sama sekali (deploy pertama kali / DB baru), supaya banner
+    // yang sudah diedit/dihapus admin TIDAK PERNAH ditimpa ulang tiap restart.
+    seedDefaultBannersIfEmpty().catch(e => console.warn('[Seed Banner] Gagal:', e.message));
+
     // Cron ringan: cek tiap 5 menit apakah minggu leaderboard sudah berganti,
     // kalau ya snapshot leaderboard minggu sebelumnya ke `leaderboardHistory`.
     checkLeaderboardWeekRollover().catch(() => {});
@@ -2562,6 +2567,182 @@ function sanitizeBannerCss(css) {
 function sanitizeBannerJs(js) {
   if (!js) return '';
   return String(js).slice(0, BANNER_MAX_CODE_LEN);
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// SEED — 3 Banner Default (Code Banner)
+// Dipakai sekali di connectDB() KALAU koleksi `banners` masih kosong (baru
+// deploy / DB baru). Style-nya nurut tema asli App (lihat app/style.css:
+// --accent #7c5cff, --accent-2 #4facfe, background ungu-pink, radius-lg 22px,
+// font Poppins buat judul) + pola visual "badge pill → judul 2 baris → deskripsi
+// → CTA pill → ikon dekoratif dalam ring + titik-titik" seperti referensi.
+// ──────────────────────────────────────────────────────────────────────────
+// Builder generik biar HTML/CSS 3 banner konsisten & gampang dirawat — tinggal
+// ganti parameter warna/teks/icon per banner, bukan copy-paste seluruh style.
+function buildPromoBannerCode({
+  badgeIcon, badgeText, badgeColor,
+  titleLine1, titleLine2, desc, ctaText,
+  accentFrom, accentTo, ringEmoji, ringBadgeEmoji, glow1, glow2
+}) {
+  const html = `<div class="promo-banner">
+  <div class="promo-dots">
+    <span class="pd" style="top:14%;right:18%;"></span>
+    <span class="pd" style="top:28%;right:9%;"></span>
+    <span class="pd" style="top:8%;right:32%;"></span>
+    <span class="pd" style="top:42%;right:24%;"></span>
+  </div>
+  <div class="promo-blob promo-blob-1"></div>
+  <div class="promo-blob promo-blob-2"></div>
+
+  <div class="promo-content">
+    <span class="promo-badge">${badgeIcon} ${badgeText}</span>
+    <h1 class="promo-title">${titleLine1}<br><span class="promo-title-accent">${titleLine2}</span></h1>
+    <p class="promo-desc">${desc}</p>
+    <button class="promo-cta" type="button">${ctaText}</button>
+  </div>
+
+  <div class="promo-ring">
+    <span class="promo-ring-icon">${ringEmoji}</span>
+    <span class="promo-ring-badge">${ringBadgeEmoji}</span>
+  </div>
+</div>`;
+
+  const css = `.promo-banner{
+  position:relative; width:100%; height:100%;
+  display:flex; align-items:center; padding:0 42px;
+  overflow:hidden;
+  background:
+    radial-gradient(circle at 82% 25%, ${glow1} 0%, transparent 55%),
+    radial-gradient(circle at 12% 90%, ${glow2} 0%, transparent 50%),
+    linear-gradient(135deg, #241a3d 0%, #2b1c4e 45%, #3a2166 100%);
+}
+.promo-dots{ position:absolute; inset:0; z-index:1; pointer-events:none; }
+.pd{ position:absolute; width:4px; height:4px; border-radius:50%; background:rgba(255,255,255,.35); }
+.promo-blob{ position:absolute; border-radius:50%; filter:blur(46px); opacity:.5; pointer-events:none; }
+.promo-blob-1{ width:230px; height:230px; background:${accentFrom}; top:-80px; right:8%; animation:promoFloat 7s ease-in-out infinite; }
+.promo-blob-2{ width:190px; height:190px; background:${accentTo}; bottom:-70px; left:6%; animation:promoFloat 8s ease-in-out infinite reverse; }
+@keyframes promoFloat{
+  0%,100%{ transform:translateY(0) scale(1); }
+  50%{ transform:translateY(-14px) scale(1.07); }
+}
+.promo-content{ position:relative; z-index:2; max-width:56%; }
+.promo-badge{
+  display:inline-flex; align-items:center; gap:6px;
+  padding:6px 14px; border-radius:999px; margin-bottom:14px;
+  background:rgba(255,255,255,.08); border:1px solid rgba(255,255,255,.16);
+  font-size:11px; font-weight:800; letter-spacing:.4px; text-transform:uppercase;
+  color:${badgeColor};
+}
+.promo-title{
+  margin:0 0 12px; font-size:32px; font-weight:800; line-height:1.18;
+  color:#fff; text-shadow:0 4px 20px rgba(0,0,0,.35); letter-spacing:.2px;
+}
+.promo-title-accent{
+  background:linear-gradient(90deg, ${accentFrom}, ${accentTo});
+  -webkit-background-clip:text; background-clip:text; color:transparent;
+}
+.promo-desc{
+  margin:0 0 20px; font-size:13px; line-height:1.65;
+  color:rgba(255,255,255,.68); max-width:380px;
+}
+.promo-cta{
+  border:none; cursor:default; padding:12px 26px; border-radius:12px;
+  font-weight:800; font-size:13.5px; color:#1a1030;
+  background:linear-gradient(90deg, ${accentFrom}, ${accentTo});
+  box-shadow:0 10px 24px -8px ${accentFrom};
+}
+.promo-ring{
+  position:relative; z-index:2; margin-left:auto; flex-shrink:0;
+  width:120px; height:120px; border-radius:50%;
+  display:flex; align-items:center; justify-content:center;
+  background:radial-gradient(circle, rgba(255,255,255,.09), rgba(255,255,255,.02));
+  border:1px solid rgba(255,255,255,.14);
+  animation:promoRingFloat 4.5s ease-in-out infinite;
+}
+.promo-ring-icon{ font-size:46px; filter:drop-shadow(0 6px 14px rgba(0,0,0,.35)); }
+.promo-ring-badge{
+  position:absolute; bottom:2px; right:2px; font-size:20px;
+  background:#1a1030; border-radius:50%; width:32px; height:32px;
+  display:flex; align-items:center; justify-content:center;
+  border:2px solid rgba(255,255,255,.15);
+}
+@keyframes promoRingFloat{
+  0%,100%{ transform:translateY(0); }
+  50%{ transform:translateY(-10px); }
+}
+@media (max-width:680px){
+  .promo-content{ max-width:100%; }
+  .promo-ring{ display:none; }
+  .promo-title{ font-size:24px; }
+}`;
+
+  return { html, css };
+}
+
+async function seedDefaultBannersIfEmpty() {
+  if (!db) return;
+  const existing = await db.collection('banners').countDocuments({});
+  if (existing > 0) return; // sudah pernah ada isinya (termasuk kalau semua sempat dihapus admin) — jangan timpa
+
+  const banner1 = buildPromoBannerCode({
+    badgeIcon: '⭐', badgeText: 'Paket Premium', badgeColor: '#ffd76a',
+    titleLine1: 'GOLD &', titleLine2: 'PLATINUM',
+    desc: 'Akses unlimited, role terverifikasi, dan fitur eksklusif hanya untuk member.',
+    ctaText: 'Lihat Paket',
+    accentFrom: '#a78bfa', accentTo: '#c084fc',
+    ringEmoji: '🛡️', ringBadgeEmoji: '✅',
+    glow1: 'rgba(167,139,250,.32)', glow2: 'rgba(192,132,252,.28)'
+  });
+
+  const banner2 = buildPromoBannerCode({
+    badgeIcon: '🔥', badgeText: 'Update Mingguan', badgeColor: '#7dd3fc',
+    titleLine1: 'GAME & BYPASS', titleLine2: 'TERBARU',
+    desc: 'Koleksi terus bertambah tiap minggu — cek daftar game terbaru sebelum kehabisan slot download harianmu.',
+    ctaText: 'Jelajahi Game',
+    accentFrom: '#4facfe', accentTo: '#38f0e0',
+    ringEmoji: '🎮', ringBadgeEmoji: '🆕',
+    glow1: 'rgba(79,172,254,.30)', glow2: 'rgba(56,240,224,.24)'
+  });
+
+  const banner3 = buildPromoBannerCode({
+    badgeIcon: '🔔', badgeText: 'Jangan Ketinggalan', badgeColor: '#f5a3d0',
+    titleLine1: 'AKTIFKAN', titleLine2: 'NOTIFIKASI',
+    desc: 'Dapat kabar realtime soal limit download, masa aktif paket, dan pengumuman penting dari admin.',
+    ctaText: 'Cek Notifikasi',
+    accentFrom: '#f472b6', accentTo: '#fb923c',
+    ringEmoji: '🔔', ringBadgeEmoji: '✨',
+    glow1: 'rgba(244,114,182,.30)', glow2: 'rgba(251,146,60,.24)'
+  });
+
+  const docsBase = [
+    { title: 'Gold & Platinum', description: 'Akses unlimited, role terverifikasi, dan fitur eksklusif hanya untuk member.', b: banner1 },
+    { title: 'Game & Bypass Terbaru', description: 'Koleksi terus bertambah tiap minggu.', b: banner2 },
+    { title: 'Aktifkan Notifikasi', description: 'Dapat kabar realtime soal akun & paket kamu.', b: banner3 }
+  ];
+
+  const now = new Date();
+  const docs = docsBase.map((d, i) => ({
+    bannerType: 'code',
+    title: d.title,
+    subtitle: '',
+    description: d.description,
+    ctaText: 'Selengkapnya',
+    ctaLink: '',
+    gradientFrom: '#7b5cff',
+    gradientTo: '#241a3d',
+    icon: '',
+    imageUrl: null, imageData: null,
+    codeHtml: sanitizeBannerHtml(d.b.html),
+    codeCss: sanitizeBannerCss(d.b.css),
+    codeJs: '',
+    order: i,
+    isActive: true,
+    startAt: null, endAt: null,
+    createdAt: now, updatedAt: now
+  }));
+
+  await db.collection('banners').insertMany(docs);
+  console.log(`✅ ${docs.length} banner default berhasil di-seed (koleksi 'banners' sebelumnya kosong).`);
 }
 
 // Validasi field gambar banner. Menerima SALAH SATU dari:
