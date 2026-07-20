@@ -159,7 +159,7 @@
       </div>
 
       <div class="dash-grid">
-        <div style="display:flex;flex-direction:column;gap:16px;">
+        <div class="dash-col">
           <div class="welcome-banner">
             <div>
               <h2>Selamat datang, <span id="welcomeAdminName">Admin</span>! 👋</h2>
@@ -180,18 +180,18 @@
             <div class="welcome-jellyfish">🎮</div>
             <div class="welcome-banner-orb"></div>
           </div>
-          <div class="card">
+          <div class="card dash-card-fill">
             <div class="card-header">
               <div>
                 <div class="card-title">📈 Login 7 Hari Terakhir</div>
                 <div class="card-sub" id="dashChartSub">—</div>
               </div>
             </div>
-            <div class="card-body"><canvas id="dashLoginChart" height="130"></canvas></div>
+            <div class="card-body dash-chart-body"><canvas id="dashLoginChart" height="130"></canvas></div>
           </div>
         </div>
 
-        <div style="display:flex;flex-direction:column;gap:16px;">
+        <div class="dash-col">
           <div class="card">
             <div class="card-header"><div class="card-title">🎯 Distribusi Role</div></div>
             <div class="card-body">
@@ -216,9 +216,9 @@
               </div>
             </div>
           </div>
-          <div class="card">
+          <div class="card dash-card-fill">
             <div class="card-header"><div class="card-title">⚡ Aktivitas Terbaru</div></div>
-            <div class="card-body" style="padding-top:8px;">
+            <div class="card-body dash-activity-body" style="padding-top:8px;">
               <div class="activity-list" id="dashActivity">
                 <div class="activity-item"><span style="color:var(--text-faint);font-size:12.5px;">Memuat...</span></div>
               </div>

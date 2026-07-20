@@ -1359,17 +1359,23 @@
 .notif-item .ni-msg{font-size:11.5px;color:var(--text-dim);margin-top:2px;line-height:1.4;}
 .notif-item .ni-time{font-size:10px;color:var(--text-faint);margin-top:4px;}
 
-/* Generic realtime toast (notifikasi baru muncul, terpisah dari toast ganti paket) */
-.app-notif-toast{
+/* Toast notifikasi realtime — tiap notif jadi elemen sendiri, ditumpuk di 1 stack container */
+.app-notif-stack{
   position:fixed;top:16px;right:16px;z-index:999;
+  display:flex;flex-direction:column;gap:10px;
+  pointer-events:none;
+}
+.app-notif-toast{
   width:300px;padding:12px 14px;border-radius:14px;
   background:var(--panel-solid);border:1px solid rgba(255,255,255,0.12);
   box-shadow:0 20px 40px rgba(10,5,25,0.5);
   display:flex;gap:10px;align-items:flex-start;
   transform:translateX(120%);opacity:0;pointer-events:none;
   transition:transform .35s ease, opacity .35s ease;
+  cursor:pointer;
 }
 .app-notif-toast.show{transform:translateX(0);opacity:1;pointer-events:auto;}
+.app-notif-toast.hide{transform:translateX(120%);opacity:0;pointer-events:none;}
 .app-notif-toast .ant-icon{font-size:18px;}
 .app-notif-toast .ant-title{font-size:12.5px;font-weight:700;color:var(--text-main);}
 .app-notif-toast .ant-msg{font-size:11.5px;color:var(--text-dim);margin-top:2px;line-height:1.4;}
