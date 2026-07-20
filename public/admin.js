@@ -62,6 +62,7 @@ async function doLogin() {
 }
 
 document.getElementById('btnAdminLogout').addEventListener('click', () => {
+  api('/api/admin/logout', { method: 'POST' }).catch(() => {});
   localStorage.removeItem('adminToken');
   if (_adminWs) { try { _adminWs.onclose = null; _adminWs.close(); } catch {} }
   location.reload();
@@ -184,6 +185,7 @@ const PAGE_META = {
   bypasses:  { title: 'Bypass',     breadcrumb: 'Pages / Bypass' },
   users:     { title: 'Users',      breadcrumb: 'Pages / Users' },
   history:   { title: 'Histori',    breadcrumb: 'Pages / Histori' },
+  logs:      { title: 'Logs',       breadcrumb: 'Pages / Logs' },
   verifyrole:{ title: 'Verify Role',breadcrumb: 'Pages / Verify Role' },
   webhooks:  { title: 'Webhook Settings', breadcrumb: 'Pages / Webhook Settings' },
 };
@@ -219,6 +221,7 @@ function loadPage(page) {
   else if (page === 'bypasses') renderTable('bypasses');
   else if (page === 'users') renderUsers();
   else if (page === 'history') renderHistory();
+  else if (page === 'logs') renderLogs();
   else if (page === 'verifyrole') renderVerifyRole();
   else if (page === 'webhooks') renderWebhookSettings();
 }
@@ -435,6 +438,9 @@ function connectAdminWS() {
         if (currentPage === 'dashboard') {
           prependActivity(msg.data);
           refreshDashboardStatsDebounced();
+        }
+        if (currentPage === 'logs') {
+          handleRealtimeLog(msg.data);
         }
       } else if (msg.event === 'user:update') {
         if (typeof mergeUserUpdate === 'function') mergeUserUpdate(msg.data);
@@ -1762,6 +1768,452 @@ function renderHistoryRows(rows, isFilteredEmpty) {
     `;
   }).join('');
 }
+
+// ─── LOGS — Pusat Riwayat Aktivitas Sistem (Audit Log) ───
+// Full server-driven (search/filter/sort/pagination dieksekusi di MongoDB lewat
+// /api/admin/logs) — tetap cepat walau datanya ratusan ribu/jutaan baris.
+// Realtime lewat event WebSocket 'activity' yang sama dipakai Dashboard.
+const LOG_STATUS_LABEL = { success: 'Sukses', warning: 'Warning', error: 'Error', info: 'Info' };
+const LOG_CATEGORY_LABEL = {
+  auth: 'Autentikasi', app: 'Aplikasi', billing: 'Paket & Billing',
+  moderation: 'Moderasi User', comms: 'Komunikasi', catalog: 'Katalog Konten', system: 'Sistem'
+};
+let logsCatalog = null; // diisi dari response server (LOG_CATALOG)
+const logsUiState = { page: 1, perPage: 25, search: '', type: 'all', status: 'all', role: 'all', sort: 'newest', dateFrom: '', dateTo: '' };
+let logsSearchTimeout = null;
+let _logsToolbarWired = false;
+
+function logSkeletonRows(n = 8) {
+  let html = '';
+  for (let i = 0; i < n; i++) {
+    html += `<tr class="log-skel-row">
+      <td><div style="display:flex;align-items:center;gap:8px;"><div class="log-skel log-skel--icon"></div><div class="log-skel log-skel--sm" style="width:90px;"></div></div></td>
+      <td><div class="log-skel log-skel--sm"></div></td>
+      <td><div class="log-skel log-skel--sm" style="width:70px;"></div></td>
+      <td><div class="log-skel log-skel--md"></div></td>
+      <td><div class="log-skel log-skel--sm" style="width:50px;"></div></td>
+      <td><div class="log-skel log-skel--sm" style="width:60px;"></div></td>
+      <td><div class="log-skel log-skel--sm" style="width:80px;"></div></td>
+      <td><div class="log-skel log-skel--sm" style="width:70px;margin-left:auto;"></div></td>
+    </tr>`;
+  }
+  return html;
+}
+
+async function renderLogs() {
+  const tbody = document.getElementById('tableLogs');
+  if (!tbody) return;
+  tbody.innerHTML = logSkeletonRows();
+
+  wireLogsToolbarOnce();
+
+  try {
+    const params = new URLSearchParams({
+      page: logsUiState.page,
+      perPage: logsUiState.perPage,
+      search: logsUiState.search,
+      type: logsUiState.type,
+      status: logsUiState.status,
+      role: logsUiState.role,
+      sort: logsUiState.sort,
+      dateFrom: logsUiState.dateFrom,
+      dateTo: logsUiState.dateTo
+    });
+    const data = await api(`/api/admin/logs?${params.toString()}`);
+    logsCatalog = data.catalog || logsCatalog;
+    renderLogsStats(data.stats || {});
+    renderLogsStatusChips(data.stats || {});
+    renderLogsTypeFilterOptions(data.byType || {});
+    renderLogsRows(data.rows || [], (data.total || 0) === 0 && hasActiveLogFilters());
+    renderPagination('logsPagination', data.total || 0, data.page || 1, data.perPage || logsUiState.perPage, (p) => {
+      logsUiState.page = p;
+      renderLogs();
+    });
+  } catch (e) {
+    tbody.innerHTML = `<tr><td class="hist-td-empty" colspan="8"><span class="empty-icon">⚠️</span>Gagal memuat: ${escapeHtml(e.message)}</td></tr>`;
+  }
+}
+
+function hasActiveLogFilters() {
+  const s = logsUiState;
+  return !!(s.search || s.type !== 'all' || s.status !== 'all' || s.role !== 'all' || s.dateFrom || s.dateTo);
+}
+
+function renderLogsStats(stats) {
+  const el = document.getElementById('logsStats');
+  if (!el) return;
+  el.innerHTML = `
+    <div class="page-stat-pill">
+      <div class="page-stat-pill-icon" style="background:rgba(123,92,255,.16);">🧾</div>
+      <div><div class="page-stat-pill-value">${stats.all ?? 0}</div><div class="page-stat-pill-label">Total Log</div></div>
+    </div>
+    <div class="page-stat-pill">
+      <div class="page-stat-pill-icon" style="background:rgba(61,217,245,.16);">📅</div>
+      <div><div class="page-stat-pill-value">${stats.today ?? 0}</div><div class="page-stat-pill-label">Hari Ini</div></div>
+    </div>
+    <div class="page-stat-pill">
+      <div class="page-stat-pill-icon" style="background:rgba(74,222,128,.16);">✅</div>
+      <div><div class="page-stat-pill-value">${stats.success ?? 0}</div><div class="page-stat-pill-label">Sukses</div></div>
+    </div>
+    <div class="page-stat-pill">
+      <div class="page-stat-pill-icon" style="background:rgba(255,215,106,.16);">⚠️</div>
+      <div><div class="page-stat-pill-value">${stats.warning ?? 0}</div><div class="page-stat-pill-label">Warning</div></div>
+    </div>
+    <div class="page-stat-pill">
+      <div class="page-stat-pill-icon" style="background:rgba(248,113,113,.16);">🚨</div>
+      <div><div class="page-stat-pill-value">${stats.error ?? 0}</div><div class="page-stat-pill-label">Error</div></div>
+    </div>
+  `;
+}
+
+function renderLogsStatusChips(stats) {
+  const el = document.getElementById('logsStatusFilter');
+  if (!el) return;
+  const chips = [
+    { key: 'all',     label: 'Semua',    count: stats.all ?? 0 },
+    { key: 'success', label: '✅ Sukses', count: stats.success ?? 0 },
+    { key: 'warning', label: '⚠️ Warning', count: stats.warning ?? 0 },
+    { key: 'error',   label: '🚨 Error',  count: stats.error ?? 0 },
+    { key: 'info',    label: 'ℹ️ Info',   count: stats.info ?? 0 },
+  ];
+  el.innerHTML = chips.map(c => `
+    <button class="filter-chip ${logsUiState.status === c.key ? 'active' : ''}" data-status="${c.key}">
+      ${c.label} <span class="count">${c.count}</span>
+    </button>
+  `).join('');
+  el.querySelectorAll('.filter-chip').forEach(btn => {
+    btn.addEventListener('click', () => {
+      if (logsUiState.status === btn.dataset.status) return;
+      logsUiState.status = btn.dataset.status;
+      logsUiState.page = 1;
+      renderLogs();
+    });
+  });
+}
+
+function renderLogsTypeFilterOptions(byType) {
+  const sel = document.getElementById('logsTypeFilter');
+  if (!sel || !logsCatalog) return;
+  if (sel.dataset.built === '1') {
+    // Sudah dibangun sekali — cuma sinkronkan value yg lagi aktif, hindari rebuild
+    // tiap fetch (biar dropdown gak "berkedip"/reset scroll pas user lagi milih).
+    sel.value = logsUiState.type;
+    return;
+  }
+  // Kelompokkan per kategori biar dropdown panjang tetap gampang ditelusuri.
+  const byCategory = {};
+  Object.entries(logsCatalog).forEach(([key, meta]) => {
+    if (!byCategory[meta.category]) byCategory[meta.category] = [];
+    byCategory[meta.category].push({ key, ...meta });
+  });
+  let html = `<option value="all">Semua Jenis Log</option>`;
+  Object.entries(byCategory).forEach(([cat, items]) => {
+    html += `<optgroup label="${escapeHtml(LOG_CATEGORY_LABEL[cat] || cat)}">`;
+    items.forEach(item => {
+      const count = byType[item.key] || 0;
+      html += `<option value="${item.key}">${item.icon} ${escapeHtml(item.label)}${item.reserved ? ' (belum tersedia)' : ''} — ${count}</option>`;
+    });
+    html += `</optgroup>`;
+  });
+  sel.innerHTML = html;
+  sel.dataset.built = '1';
+  sel.value = logsUiState.type;
+}
+
+function wireLogsToolbarOnce() {
+  if (_logsToolbarWired) return;
+  _logsToolbarWired = true;
+
+  const searchEl = document.getElementById('searchLogs');
+  if (searchEl) {
+    searchEl.value = logsUiState.search;
+    searchEl.addEventListener('input', (e) => {
+      clearTimeout(logsSearchTimeout);
+      const val = e.target.value;
+      logsSearchTimeout = setTimeout(() => {
+        logsUiState.search = val;
+        logsUiState.page = 1;
+        renderLogs();
+      }, 350);
+    });
+  }
+
+  const typeEl = document.getElementById('logsTypeFilter');
+  if (typeEl) {
+    typeEl.addEventListener('change', (e) => {
+      logsUiState.type = e.target.value;
+      logsUiState.page = 1;
+      renderLogs();
+    });
+  }
+
+  const roleEl = document.getElementById('logsRoleFilter');
+  if (roleEl) {
+    roleEl.addEventListener('change', (e) => {
+      logsUiState.role = e.target.value;
+      logsUiState.page = 1;
+      renderLogs();
+    });
+  }
+
+  const dateFromEl = document.getElementById('logsDateFrom');
+  const dateToEl = document.getElementById('logsDateTo');
+  if (dateFromEl) {
+    dateFromEl.addEventListener('change', (e) => {
+      logsUiState.dateFrom = e.target.value;
+      logsUiState.page = 1;
+      renderLogs();
+    });
+  }
+  if (dateToEl) {
+    dateToEl.addEventListener('change', (e) => {
+      logsUiState.dateTo = e.target.value;
+      logsUiState.page = 1;
+      renderLogs();
+    });
+  }
+
+  const sortEl = document.getElementById('logsSort');
+  if (sortEl) {
+    sortEl.addEventListener('change', (e) => {
+      logsUiState.sort = e.target.value;
+      logsUiState.page = 1;
+      renderLogs();
+    });
+  }
+
+  const perPageEl = document.getElementById('logsPerPage');
+  if (perPageEl) {
+    perPageEl.addEventListener('change', (e) => {
+      logsUiState.perPage = parseInt(e.target.value, 10) || 25;
+      logsUiState.page = 1;
+      renderLogs();
+    });
+  }
+
+  const refreshBtn = document.getElementById('btnLogsRefresh');
+  if (refreshBtn) refreshBtn.addEventListener('click', () => renderLogs());
+}
+
+// Cache baris log yang lagi ditampilkan (dipakai modal detail biar buka instan
+// tanpa fetch ulang, kecuali user buka dari sumber lain / link langsung).
+let logsRowsCache = {};
+
+function logInitials(str) {
+  return (str || '?').slice(0, 2).toUpperCase();
+}
+
+function logBadgeHtml(status) {
+  const s = status || 'info';
+  return `<span class="log-badge log-badge--${s}">${LOG_STATUS_LABEL[s] || s}</span>`;
+}
+
+function logRoleChipHtml(role) {
+  if (!role) return `<span class="log-cell-muted">—</span>`;
+  const icon = ROLE_TAG_ICON[role] || '';
+  return `<span class="log-role-chip ${role}">${icon} ${escapeHtml(role)}</span>`;
+}
+
+function logRowHtml(item) {
+  const meta = (logsCatalog && logsCatalog[item.type]) || { icon: item.icon || 'ℹ️', label: item.label || item.type, category: item.category || 'system' };
+  const dateObj = new Date(item.createdAt);
+  const dateStr = dateObj.toLocaleDateString('id-ID', { day: '2-digit', month: 'short', year: 'numeric' });
+  const timeStr = dateObj.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' });
+  const deviceShort = item.device ? String(item.device).slice(0, 28) + (String(item.device).length > 28 ? '…' : '') : null;
+
+  return `
+    <tr class="log-row" data-id="${item._id || ''}">
+      <td>
+        <div class="log-type-cell">
+          <div class="log-type-icon cat-${meta.category}">${meta.icon}</div>
+          <div>
+            <div class="log-type-label">${escapeHtml(meta.label)}</div>
+            <div class="log-type-cat">${escapeHtml(LOG_CATEGORY_LABEL[meta.category] || meta.category || '')}</div>
+          </div>
+        </div>
+      </td>
+      <td>
+        ${item.username ? `
+          <div class="log-user-cell">
+            <div class="log-user-avatar">${logInitials(item.username)}</div>
+            <div>
+              <div class="log-user-name" title="${escapeHtml(item.username)}">${escapeHtml(item.username)}</div>
+              ${item.discordId ? `<div class="log-user-sub">${escapeHtml(item.discordId)}</div>` : ''}
+            </div>
+          </div>` : `<span class="log-cell-muted">—</span>`}
+      </td>
+      <td>${item.admin ? `<span class="log-admin-name">👤 ${escapeHtml(item.admin)}</span>` : `<span class="log-cell-muted">—</span>`}</td>
+      <td><div class="log-desc-cell">${escapeHtml(item.description || '')}</div></td>
+      <td>${logRoleChipHtml(item.role)}</td>
+      <td>${logBadgeHtml(item.status)}</td>
+      <td>
+        <div class="log-meta-cell">
+          ${item.ip ? `<span class="ip">🌐 ${escapeHtml(item.ip)}</span>` : '<span>—</span>'}
+          ${deviceShort ? `<span class="dev" title="${escapeHtml(item.device)}">🖥️ ${escapeHtml(deviceShort)}</span>` : ''}
+        </div>
+      </td>
+      <td>
+        <div class="log-time-cell">
+          <div class="hist-time-abs">${dateStr}, ${timeStr}</div>
+          <div class="hist-time-rel">${timeAgo(item.createdAt)}</div>
+        </div>
+      </td>
+    </tr>
+  `;
+}
+
+function renderLogsRows(rows, isFilteredEmpty) {
+  const tbody = document.getElementById('tableLogs');
+  if (!tbody) return;
+  logsRowsCache = {};
+  rows.forEach(r => { if (r._id) logsRowsCache[r._id] = r; });
+
+  if (!rows.length) {
+    tbody.innerHTML = `<tr><td class="hist-td-empty" colspan="8">
+      <div class="hist-empty">
+        <span class="hist-empty__icon">${isFilteredEmpty ? '🔍' : '🧾'}</span>
+        <div class="hist-empty__text">${isFilteredEmpty ? 'Tidak ada log yang cocok dengan filter.' : 'Belum ada aktivitas yang tercatat.'}</div>
+      </div>
+    </td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = rows.map(logRowHtml).join('');
+  tbody.querySelectorAll('.log-row[data-id]').forEach(tr => {
+    tr.addEventListener('click', () => openLogDetailModal(tr.dataset.id));
+  });
+}
+
+// ── Detail Log (modal) ──
+async function openLogDetailModal(id) {
+  const backdrop = document.getElementById('logDetailModalBackdrop');
+  const body = document.getElementById('logDetailBody');
+  const titleEl = document.getElementById('logDetailTitle');
+  const subEl = document.getElementById('logDetailSubtitle');
+  if (!backdrop || !body) return;
+
+  backdrop.style.display = 'flex';
+  titleEl.textContent = 'Detail Log';
+  subEl.textContent = 'Memuat...';
+  body.innerHTML = `<div class="hist-empty" style="padding:24px 0;"><span class="empty-icon">⏳</span>Memuat detail...</div>`;
+
+  let item = logsRowsCache[id];
+  try {
+    if (!item) item = await api(`/api/admin/logs/${id}`);
+    else {
+      // Tetap refresh dari server biar detail selalu representasi TERBARU (mis.
+      // kalau dibuka lama setelah baris di-cache), tapi gagal-diam kalau offline.
+      api(`/api/admin/logs/${id}`).then(fresh => { item = fresh; renderLogDetailBody(item); }).catch(() => {});
+    }
+    renderLogDetailBody(item);
+  } catch (e) {
+    body.innerHTML = `<div class="hist-empty" style="padding:24px 0;"><span class="empty-icon">⚠️</span>Gagal memuat detail: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderLogDetailBody(item) {
+  const body = document.getElementById('logDetailBody');
+  const titleEl = document.getElementById('logDetailTitle');
+  const subEl = document.getElementById('logDetailSubtitle');
+  if (!item) return;
+
+  const meta = (logsCatalog && logsCatalog[item.type]) || { icon: item.icon || 'ℹ️', label: item.label || item.type, category: item.category || 'system' };
+  const dateObj = new Date(item.createdAt);
+  const fullDate = dateObj.toLocaleString('id-ID', { dateStyle: 'full', timeStyle: 'medium' });
+
+  titleEl.textContent = meta.label;
+  subEl.textContent = `${LOG_CATEGORY_LABEL[meta.category] || meta.category} · ${fullDate}`;
+
+  let html = `
+    <div class="log-detail-head">
+      <div class="log-detail-icon cat-${meta.category}" style="background:rgba(123,92,255,.16);">${meta.icon}</div>
+      <div>
+        <div class="log-detail-desc">${escapeHtml(item.description || '—')}</div>
+        <div style="margin-top:6px;">${logBadgeHtml(item.status)}</div>
+      </div>
+    </div>
+    <div class="log-detail-grid">
+      <div class="log-detail-item"><span class="l">Username</span><span class="v">${item.username ? escapeHtml(item.username) : '—'}</span></div>
+      <div class="log-detail-item"><span class="l">Discord ID</span><span class="v mono">${item.discordId ? escapeHtml(item.discordId) : '—'}</span></div>
+      <div class="log-detail-item"><span class="l">Role User</span><span class="v">${item.role ? logRoleChipHtml(item.role) : '—'}</span></div>
+      <div class="log-detail-item"><span class="l">Admin Terkait</span><span class="v">${item.admin ? escapeHtml(item.admin) : '—'}</span></div>
+      <div class="log-detail-item"><span class="l">IP Address</span><span class="v mono">${item.ip ? escapeHtml(item.ip) : '—'}</span></div>
+      <div class="log-detail-item"><span class="l">Device / PC</span><span class="v mono" style="word-break:break-all;">${item.device ? escapeHtml(item.device) : '—'}</span></div>
+      <div class="log-detail-item"><span class="l">Tanggal &amp; Waktu</span><span class="v">${fullDate}</span></div>
+      <div class="log-detail-item"><span class="l">ID Log</span><span class="v mono">${escapeHtml(item._id || '—')}</span></div>
+    </div>
+  `;
+
+  if (item.changes && (item.changes.before !== null || item.changes.after !== null)) {
+    const fmt = (v) => v === null || v === undefined ? '(kosong)' : (typeof v === 'object' ? JSON.stringify(v) : String(v));
+    html += `
+      <div class="log-detail-section-title">🔀 Detail Perubahan (Before → After)</div>
+      <div class="log-detail-changes">
+        <div class="before">${escapeHtml(fmt(item.changes.before))}</div>
+        <div class="arrow">→</div>
+        <div class="after">${escapeHtml(fmt(item.changes.after))}</div>
+      </div>
+    `;
+  }
+
+  if (item.meta && Object.keys(item.meta).length) {
+    html += `
+      <div class="log-detail-section-title">🗂️ Data Tambahan</div>
+      <div class="log-detail-json">${escapeHtml(JSON.stringify(item.meta, null, 2))}</div>
+    `;
+  }
+
+  body.innerHTML = html;
+}
+
+function closeLogDetailModal() {
+  const backdrop = document.getElementById('logDetailModalBackdrop');
+  if (backdrop) backdrop.style.display = 'none';
+}
+window.closeLogDetailModal = closeLogDetailModal;
+
+// ── Realtime — event 'activity' dari WebSocket admin, langsung tampil di
+// halaman Logs TANPA refresh, selama baris barunya cocok dengan filter yang
+// lagi aktif & kita lagi di halaman pertama (urutan terbaru dulu). Kalau tidak
+// cocok, cukup refresh angka statistik ringkasan supaya tetap akurat.
+let _logsStatsRefreshTimer = null;
+function handleRealtimeLog(item) {
+  const st = logsUiState;
+  const matchesFilter =
+    st.page === 1 && st.sort !== 'oldest' &&
+    (st.type === 'all' || st.type === item.type) &&
+    (st.status === 'all' || st.status === item.status) &&
+    (st.role === 'all' || st.role === item.role) &&
+    (!st.search || `${item.username||''} ${item.discordId||''} ${item.admin||''} ${item.description||''}`.toLowerCase().includes(st.search.toLowerCase()));
+
+  if (matchesFilter) {
+    const tbody = document.getElementById('tableLogs');
+    if (tbody) {
+      const emptyRow = tbody.querySelector('.hist-td-empty');
+      if (emptyRow) tbody.innerHTML = '';
+      if (item._id) logsRowsCache[item._id] = item;
+      const wrap = document.createElement('tbody');
+      wrap.innerHTML = logRowHtml(item);
+      const node = wrap.firstElementChild;
+      node.classList.add('log-row-new');
+      node.addEventListener('click', () => openLogDetailModal(node.dataset.id));
+      tbody.insertBefore(node, tbody.firstChild);
+      // Jaga jumlah baris tetap sesuai perPage biar tidak melar tanpa batas.
+      while (tbody.children.length > logsUiState.perPage) tbody.removeChild(tbody.lastElementChild);
+    }
+  }
+
+  // Debounce refresh kartu ringkasan & chip status/jenis (angka total, hari ini, dst)
+  clearTimeout(_logsStatsRefreshTimer);
+  _logsStatsRefreshTimer = setTimeout(() => {
+    if (currentPage !== 'logs') return;
+    const params = new URLSearchParams({ page: 1, perPage: 1, search: '', type: 'all', status: 'all', role: 'all', sort: 'newest' });
+    api(`/api/admin/logs?${params.toString()}`).then(data => {
+      renderLogsStats(data.stats || {});
+    }).catch(() => {});
+  }, 1500);
+}
+
 // ─── BYPASS: App ID auto-search (nama + cover dari Steam, tanpa hubcap manifest) ───
 
 let _bypassLookupTimeout = null;

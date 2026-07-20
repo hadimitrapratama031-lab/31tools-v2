@@ -68,6 +68,10 @@
           <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg></span>
           Histori
         </button>
+        <button class="nav-item" data-page="logs">
+          <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z"/></svg></span>
+          Logs
+        </button>
         <button class="nav-item" data-page="verifyrole">
           <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"/></svg></span>
           Verify Role
@@ -414,6 +418,79 @@
         </div>
 
         <div class="pagination" id="historyPagination" style="display:none;"></div>
+      </div>
+    </section>
+
+    <!-- LOGS PAGE -->
+    <section class="page" id="pageLogs">
+      <div class="page-header">
+        <div class="page-header-left">
+          <div class="page-header-icon" style="background:rgba(123,92,255,.16);">🧾</div>
+          <div>
+            <div class="page-header-title">Logs — Riwayat Aktivitas Sistem</div>
+            <div class="page-header-desc">Pusat audit untuk semua aktivitas App &amp; Admin Web — login, install, moderasi user, perubahan katalog, dan lainnya.</div>
+          </div>
+        </div>
+        <div class="page-header-right">
+          <button class="btn btn-secondary btn-sm" id="btnLogsRefresh">🔄 Refresh</button>
+        </div>
+      </div>
+
+      <div class="page-stats" id="logsStats"></div>
+
+      <div class="table-wrap hist-panel">
+        <div class="table-toolbar">
+          <div class="table-toolbar-title">🧾 Semua Log</div>
+          <div class="table-search">
+            <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="searchLogs" placeholder="Cari username / Discord ID / admin / aktivitas...">
+          </div>
+          <div class="table-toolbar-filters">
+            <div class="filter-chips" id="logsStatusFilter"></div>
+          </div>
+          <div class="hist-toolbar-right log-toolbar-right">
+            <select class="hist-select" id="logsTypeFilter" title="Jenis Log"></select>
+            <select class="hist-select" id="logsRoleFilter" title="Role">
+              <option value="all">Semua Role</option>
+              <option value="public">🌐 Public</option>
+              <option value="gold">🥇 Gold</option>
+              <option value="platinum">💎 Platinum</option>
+              <option value="admin">👑 Admin</option>
+            </select>
+            <input type="date" class="hist-select" id="logsDateFrom" title="Dari tanggal">
+            <input type="date" class="hist-select" id="logsDateTo" title="Sampai tanggal">
+            <select class="hist-select" id="logsSort" title="Urutkan">
+              <option value="newest">Terbaru dulu</option>
+              <option value="oldest">Terlama dulu</option>
+            </select>
+            <select class="hist-select" id="logsPerPage" title="Baris per halaman">
+              <option value="15">15 / halaman</option>
+              <option value="25" selected>25 / halaman</option>
+              <option value="50">50 / halaman</option>
+              <option value="100">100 / halaman</option>
+            </select>
+          </div>
+        </div>
+
+        <div class="hist-table-scroll">
+          <table class="hist-table log-table">
+            <thead>
+              <tr>
+                <th>Jenis Aktivitas</th>
+                <th>User</th>
+                <th>Admin</th>
+                <th>Deskripsi</th>
+                <th>Role</th>
+                <th>Status</th>
+                <th>IP / Device</th>
+                <th>Waktu</th>
+              </tr>
+            </thead>
+            <tbody id="tableLogs"></tbody>
+          </table>
+        </div>
+
+        <div class="pagination" id="logsPagination" style="display:none;"></div>
       </div>
     </section>
 
@@ -841,6 +918,23 @@
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeDmConfirmModal()">Batal</button>
       <button class="btn btn-primary" id="dmConfirmBtn" style="background:var(--red);border-color:var(--red);">Konfirmasi</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MODAL: LOGS — Detail Log ═══ -->
+<div class="modal-backdrop" id="logDetailModalBackdrop" style="display:none;" onclick="if(event.target===this)closeLogDetailModal()">
+  <div class="modal modal-lg log-detail-modal">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="logDetailTitle">Detail Log</div>
+        <div class="modal-subtitle" id="logDetailSubtitle">—</div>
+      </div>
+      <button class="modal-close" onclick="closeLogDetailModal()">✕</button>
+    </div>
+    <div class="modal-body" id="logDetailBody"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeLogDetailModal()">Tutup</button>
     </div>
   </div>
 </div>

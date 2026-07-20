@@ -427,40 +427,95 @@ function broadcastAdmin(event, data) {
   }
 }
 
-// Ikon default per jenis aktivitas — SATU-SATUNYA sumber kebenaran urutan/jenis
-// aktivitas yang muncul di panel "Aktivitas Terbaru" & dipakai juga buat hitung
-// grafik login (type: 'login').
-const ACTIVITY_ICON = {
-  login: '🔑',
-  logout: '🚪',
-  install: '⬇️',
-  download_failed: '⚠️',
-  purchase: '💳',
-  renewal: '🔄',
-  request_game: '🎯',
-  admin_add_game: '➕',
-  admin_edit_game: '✏️',
-  admin_delete_game: '🗑️',
-  admin_add_bypass: '➕',
-  admin_edit_bypass: '✏️',
-  admin_delete_bypass: '🗑️',
-  admin_reset_quota: '♻️',
-  announcement: '📢',
-  system_error: '🚨',
-  account_status: '🛡️'
+// ══════════════════════════════════════════════════════════════════════════
+// LOG CATALOG — SATU-SATUNYA sumber kebenaran untuk SEMUA jenis log sistem:
+// icon, label (Bahasa Indonesia, dipakai di halaman Logs & Aktivitas Terbaru),
+// kategori (buat pengelompokan filter di halaman Logs), dan status default
+// (dipakai kalau logActivity() dipanggil tanpa `status` eksplisit).
+// Beberapa key ditandai `reserved: true` — jenis log ini BELUM punya fitur
+// nyata di aplikasi (contoh: Voucher & Paket belum jadi entity terpisah,
+// "Request Game" belum jadi alur user->admin). Sengaja tetap didaftarkan di
+// sini supaya halaman Logs sudah siap begitu fitur itu dibangun, TANPA
+// berpura-pura log itu sudah ada datanya sekarang (sama seperti pola jujur
+// yang sudah dipakai di quickActionRequestGame() pada admin.js).
+// ══════════════════════════════════════════════════════════════════════════
+const LOG_CATALOG = {
+  login:                 { label: 'Login User',                icon: '🔑', category: 'auth',       status: 'success' },
+  logout:                { label: 'Logout User',                icon: '🚪', category: 'auth',       status: 'info' },
+  admin_login:           { label: 'Login Admin',                 icon: '🛡️', category: 'auth',       status: 'success' },
+  admin_logout:          { label: 'Logout Admin',                 icon: '🚪', category: 'auth',       status: 'info' },
+  install:               { label: 'Install Game/Bypass Berhasil', icon: '⬇️', category: 'app',        status: 'success' },
+  download_failed:       { label: 'Install/Download Gagal',       icon: '⚠️', category: 'app',        status: 'error' },
+  download:              { label: 'Download Game',                icon: '📥', category: 'app',        status: 'success' },
+  request_game:          { label: 'Request Game',                 icon: '🎯', category: 'app',        status: 'info', reserved: true },
+  set_paket:             { label: 'Set Paket User',                icon: '📦', category: 'billing',    status: 'success' },
+  purchase:              { label: 'Pembelian Paket',                icon: '💳', category: 'billing',    status: 'success' },
+  renewal:                { label: 'Perpanjangan Paket',             icon: '🔄', category: 'billing',    status: 'success' },
+  admin_reset_quota:      { label: 'Reset Download/Bypass Limit',     icon: '♻️', category: 'moderation', status: 'success' },
+  device_reset:           { label: 'Reset Device',                    icon: '🖥️', category: 'moderation', status: 'success' },
+  device_allow_change:    { label: 'Izinkan Ganti Device',             icon: '🔓', category: 'moderation', status: 'success' },
+  user_ban:               { label: 'Ban User',                         icon: '⛔', category: 'moderation', status: 'warning' },
+  user_unban:             { label: 'Unban User',                        icon: '✅', category: 'moderation', status: 'success' },
+  user_suspend:           { label: 'Suspend User',                      icon: '⏸️', category: 'moderation', status: 'warning' },
+  user_unsuspend:         { label: 'Unsuspend User',                     icon: '▶️', category: 'moderation', status: 'success' },
+  account_status:         { label: 'Perubahan Status Akun',               icon: '🛡️', category: 'moderation', status: 'info' },
+  edit_user:               { label: 'Edit Data User',                     icon: '✏️', category: 'moderation', status: 'success' },
+  announcement:            { label: 'Pengumuman / Broadcast',              icon: '📢', category: 'comms', status: 'info' },
+  discord_dm:              { label: 'Discord DM',                          icon: '✉️', category: 'comms', status: 'info' },
+  discord_webhook:         { label: 'Discord Webhook',                     icon: '🔗', category: 'comms', status: 'info' },
+  admin_add_game:          { label: 'Tambah Game',                         icon: '➕', category: 'catalog', status: 'success' },
+  admin_edit_game:         { label: 'Edit Game',                           icon: '✏️', category: 'catalog', status: 'success' },
+  admin_delete_game:       { label: 'Hapus Game',                          icon: '🗑️', category: 'catalog', status: 'warning' },
+  admin_add_bypass:        { label: 'Tambah Bypass',                       icon: '➕', category: 'catalog', status: 'success' },
+  admin_edit_bypass:       { label: 'Edit Bypass',                         icon: '✏️', category: 'catalog', status: 'success' },
+  admin_delete_bypass:     { label: 'Hapus Bypass',                        icon: '🗑️', category: 'catalog', status: 'warning' },
+  admin_add_voucher:       { label: 'Tambah Voucher',                      icon: '➕', category: 'catalog', status: 'success', reserved: true },
+  admin_edit_voucher:      { label: 'Edit Voucher',                        icon: '✏️', category: 'catalog', status: 'success', reserved: true },
+  admin_delete_voucher:    { label: 'Hapus Voucher',                       icon: '🗑️', category: 'catalog', status: 'warning', reserved: true },
+  admin_add_package:       { label: 'Tambah Paket',                        icon: '➕', category: 'catalog', status: 'success', reserved: true },
+  admin_edit_package:      { label: 'Edit Paket',                          icon: '✏️', category: 'catalog', status: 'success', reserved: true },
+  admin_delete_package:    { label: 'Hapus Paket',                         icon: '🗑️', category: 'catalog', status: 'warning', reserved: true },
+  settings_change:         { label: 'Perubahan Pengaturan',                icon: '⚙️', category: 'system', status: 'info' },
+  system_error:            { label: 'Error Sistem',                       icon: '🚨', category: 'system', status: 'error' },
+  other:                   { label: 'Aktivitas Lainnya',                  icon: 'ℹ️', category: 'system', status: 'info' }
 };
+// Kompatibilitas mundur — kode lama masih referensi ACTIVITY_ICON.
+const ACTIVITY_ICON = Object.fromEntries(Object.entries(LOG_CATALOG).map(([k, v]) => [k, v.icon]));
 
-// Catat satu entri aktivitas ke koleksi `activityLogs` (dipakai buat panel
-// "Aktivitas Terbaru" DAN grafik "Login 7 Hari Terakhir" di Dashboard admin).
+// Ambil IP address dari request (support di belakang reverse proxy lewat X-Forwarded-For).
+function getReqIp(req) {
+  return (req.headers['x-forwarded-for']?.split(',')[0]?.trim()) || req.socket?.remoteAddress || null;
+}
+// Ambil nama device/PC dari request kalau tersedia (header custom dari app Electron,
+// fallback ke User-Agent buat request dari browser/Admin Web).
+function getReqDevice(req) {
+  return req.headers['x-device-name'] || req.headers['x-pc-name'] || req.headers['user-agent'] || null;
+}
+
+// Catat satu entri aktivitas ke koleksi `activityLogs` — dipakai buat panel
+// "Aktivitas Terbaru" + grafik "Login 7 Hari Terakhir" di Dashboard, DAN
+// sekarang jadi sumber data utama halaman Logs (audit trail lengkap).
 // Best-effort — kalau gagal simpan (mis. DB belum siap), jangan sampai
 // menghambat/gagalkan proses utama yang memanggilnya.
-async function logActivity({ type, username, discordId, description, meta = {} }) {
+async function logActivity({
+  type, username, discordId, role, admin, description, status, ip, device,
+  before, after, meta = {}
+}) {
+  const cat = LOG_CATALOG[type] || LOG_CATALOG.other;
   const doc = {
     type,
-    icon: ACTIVITY_ICON[type] || 'ℹ️',
+    icon: cat.icon,
+    label: cat.label,
+    category: cat.category,
+    status: status || cat.status || 'info',
     username: username || null,
     discordId: discordId || null,
+    role: role || null,
+    admin: admin || null,
     description: description || '',
+    ip: ip || null,
+    device: device || null,
+    changes: (before !== undefined || after !== undefined) ? { before: before ?? null, after: after ?? null } : null,
     meta,
     createdAt: new Date()
   };
@@ -471,9 +526,8 @@ async function logActivity({ type, username, discordId, description, meta = {} }
   } catch (e) {
     console.warn('[Activity] Gagal simpan activity log:', e.message);
   }
-  // Push realtime ke semua admin yang lagi buka Dashboard — dashboard tinggal
-  // prepend item ini ke Activity Feed & re-fetch angka statistik yang relevan,
-  // TANPA perlu refresh halaman/login ulang/restart server.
+  // Push realtime ke semua admin yang lagi buka Dashboard ATAU halaman Logs — kedua
+  // halaman tinggal prepend item ini ke daftar mereka, TANPA perlu refresh/restart.
   broadcastAdmin('activity', doc);
   return doc;
 }
@@ -659,6 +713,11 @@ async function connectDB() {
     await db.collection('notifications').createIndex({ discordId: 1, read: 1 });
     await db.collection('activityLogs').createIndex({ createdAt: -1 });
     await db.collection('activityLogs').createIndex({ type: 1, createdAt: -1 });
+    await db.collection('activityLogs').createIndex({ category: 1, createdAt: -1 });
+    await db.collection('activityLogs').createIndex({ status: 1, createdAt: -1 });
+    await db.collection('activityLogs').createIndex({ role: 1, createdAt: -1 });
+    await db.collection('activityLogs').createIndex({ discordId: 1, createdAt: -1 });
+    await db.collection('activityLogs').createIndex({ username: 'text', description: 'text', admin: 'text' });
     await db.collection('deviceLogs').createIndex({ discordId: 1, createdAt: -1 });
     await db.collection('deviceLogs').createIndex({ createdAt: -1 });
   } catch (e) {
@@ -943,6 +1002,9 @@ app.get('/auth/discord/callback', async (req, res) => {
       type: 'login',
       username: user.username,
       discordId: user.discordId,
+      role: user.role,
+      status: 'success',
+      ip: getReqIp(req),
       description: `${user.username} login${isNewAccount ? ' (akun baru)' : ''}.`
     }).catch(() => {});
 
@@ -1660,6 +1722,10 @@ app.post('/api/history', requireUser, async (req, res) => {
       type: 'install',
       username: req.user.username,
       discordId: req.user.discordId,
+      role: req.user.role,
+      status: 'success',
+      ip: getReqIp(req),
+      device: getReqDevice(req),
       description: `${req.user.username} meng-install ${itemType === 'game' ? 'game' : 'bypass'} "${itemNameResolved}".`,
       meta: { itemType, itemId }
     }).catch(() => {});
@@ -1688,6 +1754,22 @@ app.post('/api/history', requireUser, async (req, res) => {
   }
 });
 
+// Dipanggil client (main.js / app.js) sesaat sebelum logout, best-effort supaya
+// event Logout User ikut tercatat di audit trail (lihat halaman Logs Admin Web).
+app.post('/api/logout', requireUser, async (req, res) => {
+  logActivity({
+    type: 'logout',
+    username: req.user.username,
+    discordId: req.user.discordId,
+    role: req.user.role,
+    status: 'info',
+    ip: getReqIp(req),
+    device: getReqDevice(req),
+    description: `${req.user.username} logout.`
+  }).catch(() => {});
+  res.json({ success: true });
+});
+
 // Dipanggil client (main.js) kalau proses download/extract/inject GAGAL di tengah jalan,
 // supaya user tetap dapat notifikasi kegagalan walau tidak ada baris histori yang tercatat.
 app.post('/api/downloads/failed', requireUser, async (req, res) => {
@@ -1698,6 +1780,10 @@ app.post('/api/downloads/failed', requireUser, async (req, res) => {
       type: 'download_failed',
       username: req.user.username,
       discordId: req.user.discordId,
+      role: req.user.role,
+      status: 'error',
+      ip: getReqIp(req),
+      device: getReqDevice(req),
       description: `Download "${itemName || 'item'}" (${itemType === 'game' ? 'Game' : 'Bypass'}) gagal untuk ${req.user.username}.`,
       meta: { itemType, itemName, reason }
     }).catch(() => {});
@@ -1882,10 +1968,41 @@ app.put('/api/notifications/read-all', requireUser, async (req, res) => {
 app.post('/api/admin/login', (req, res) => {
   const { password } = req.body;
   if (!password || password !== process.env.ADMIN_PASSWORD) {
+    logActivity({
+      type: 'admin_login',
+      username: 'Administrator',
+      admin: 'Administrator',
+      status: 'error',
+      ip: getReqIp(req),
+      description: `Percobaan login admin (password) gagal.`
+    }).catch(() => {});
     return res.status(401).json({ error: 'Password admin salah.' });
   }
   const token = jwt.sign({ role: 'admin' }, JWT_SECRET, { expiresIn: '7d' });
+  logActivity({
+    type: 'admin_login',
+    username: 'Administrator',
+    admin: 'Administrator',
+    status: 'success',
+    ip: getReqIp(req),
+    description: `Admin login ke Admin Web (password).`
+  }).catch(() => {});
   res.json({ token });
+});
+
+// Dipanggil admin.js sesaat sebelum logout — best-effort, catat ke audit trail.
+app.post('/api/admin/logout', requireAdmin, (req, res) => {
+  const name = req.admin?.via === 'discord' ? (req.admin.username || 'Admin') : 'Administrator';
+  logActivity({
+    type: 'admin_logout',
+    username: name,
+    admin: name,
+    discordId: req.admin?.discordId || null,
+    status: 'info',
+    ip: getReqIp(req),
+    description: `${name} logout dari Admin Web.`
+  }).catch(() => {});
+  res.json({ success: true });
 });
 
 // ── Verifikasi token admin — dipanggil admin.js pas halaman di-refresh, supaya
@@ -1915,6 +2032,16 @@ app.get('/api/admin/verify-discord-token', async (req, res) => {
         role: user.role
       });
     }
+    logActivity({
+      type: 'admin_login',
+      username: user.username,
+      discordId: user.discordId,
+      role: user.role,
+      admin: user.username,
+      status: 'success',
+      ip: getReqIp(req),
+      description: `Admin login ke Admin Web (Discord) sebagai ${user.username}.`
+    }).catch(() => {});
     res.json({ success: true, admin: { via: 'discord', discordId: user.discordId, username: user.username, avatarUrl: user.avatarUrl } });
   } catch (e) {
     res.status(401).json({ error: 'Token tidak valid.' });
@@ -2086,6 +2213,9 @@ app.post('/api/admin/games', requireAdmin, async (req, res) => {
   logActivity({
     type: 'admin_add_game',
     username: req.admin?.username || 'Admin',
+    admin: req.admin?.username || 'Admin',
+    status: 'success',
+    ip: getReqIp(req),
     description: `Admin menambahkan game baru "${doc.name}".`,
     meta: { gameId: result.insertedId, name: doc.name }
   }).catch(() => {});
@@ -2115,6 +2245,9 @@ app.put('/api/admin/games/:id', requireAdmin, async (req, res) => {
   logActivity({
     type: 'admin_edit_game',
     username: req.admin?.username || 'Admin',
+    admin: req.admin?.username || 'Admin',
+    status: 'success',
+    ip: getReqIp(req),
     description: `Admin mengubah data game "${update.name || req.params.id}".`,
     meta: { gameId: req.params.id, update }
   }).catch(() => {});
@@ -2130,6 +2263,9 @@ app.delete('/api/admin/games/:id', requireAdmin, async (req, res) => {
   logActivity({
     type: 'admin_delete_game',
     username: req.admin?.username || 'Admin',
+    admin: req.admin?.username || 'Admin',
+    status: 'warning',
+    ip: getReqIp(req),
     description: `Admin menghapus game "${game?.name || req.params.id}".`,
     meta: { gameId: req.params.id, name: game?.name }
   }).catch(() => {});
@@ -2167,6 +2303,9 @@ app.post('/api/admin/bypasses', requireAdmin, async (req, res) => {
   logActivity({
     type: 'admin_add_bypass',
     username: req.admin?.username || 'Admin',
+    admin: req.admin?.username || 'Admin',
+    status: 'success',
+    ip: getReqIp(req),
     description: `Admin menambahkan bypass baru "${doc.name}".`,
     meta: { bypassId: result.insertedId, name: doc.name }
   }).catch(() => {});
@@ -2194,6 +2333,9 @@ app.put('/api/admin/bypasses/:id', requireAdmin, async (req, res) => {
   logActivity({
     type: 'admin_edit_bypass',
     username: req.admin?.username || 'Admin',
+    admin: req.admin?.username || 'Admin',
+    status: 'success',
+    ip: getReqIp(req),
     description: `Admin mengubah data bypass "${update.name || req.params.id}".`,
     meta: { bypassId: req.params.id, update }
   }).catch(() => {});
@@ -2209,6 +2351,9 @@ app.delete('/api/admin/bypasses/:id', requireAdmin, async (req, res) => {
   logActivity({
     type: 'admin_delete_bypass',
     username: req.admin?.username || 'Admin',
+    admin: req.admin?.username || 'Admin',
+    status: 'warning',
+    ip: getReqIp(req),
     description: `Admin menghapus bypass "${bypass?.name || req.params.id}".`,
     meta: { bypassId: req.params.id, name: bypass?.name }
   }).catch(() => {});
@@ -2267,6 +2412,90 @@ app.get('/api/admin/history', requireAdmin, async (req, res) => {
       rows, total, page, perPage, totalPages: Math.max(1, Math.ceil(total / perPage)),
       stats: { all: totalAll, game: totalGame, bypass: totalBypass, today: totalToday }
     });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// ADMIN — LOGS (Pusat Riwayat Aktivitas / Audit Log)
+// ══════════════════════════════════════════════════════════════════════════
+// Server-driven sepenuhnya: search/filter (jenis, status, role, tanggal)/sort/
+// pagination semuanya dieksekusi di MongoDB lewat index yang sudah disiapkan
+// (lihat connectDB) — jadi tetap cepat walau activityLogs sudah berisi
+// ratusan ribu sampai jutaan baris. Realtime lewat WebSocket admin (event
+// 'activity', lihat logActivity()) — TIDAK butuh endpoint terpisah.
+app.get('/api/admin/logs', requireAdmin, async (req, res) => {
+  try {
+    let {
+      page = '1', perPage = '25', search = '', type = 'all', status = 'all',
+      role = 'all', category = 'all', sort = 'newest', dateFrom = '', dateTo = ''
+    } = req.query;
+    page = Math.max(1, parseInt(page, 10) || 1);
+    perPage = Math.min(200, Math.max(1, parseInt(perPage, 10) || 25));
+
+    const query = {};
+    if (type && type !== 'all') query.type = type;
+    if (status && status !== 'all') query.status = status;
+    if (role && role !== 'all') query.role = role;
+    if (category && category !== 'all') query.category = category;
+    if (search && search.trim()) {
+      const q = search.trim();
+      const re = new RegExp(q.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      query.$or = [{ username: re }, { discordId: re }, { admin: re }, { description: re }];
+    }
+    if (dateFrom || dateTo) {
+      query.createdAt = {};
+      if (dateFrom) query.createdAt.$gte = new Date(dateFrom);
+      if (dateTo)   query.createdAt.$lte = new Date(dateTo);
+    }
+
+    const sortDir = sort === 'oldest' ? 1 : -1;
+    const [total, rows] = await Promise.all([
+      db.collection('activityLogs').countDocuments(query),
+      db.collection('activityLogs')
+        .find(query)
+        .sort({ createdAt: sortDir })
+        .skip((page - 1) * perPage)
+        .limit(perPage)
+        .toArray()
+    ]);
+
+    // Statistik ringkasan GLOBAL (tidak ikut kepengaruh filter aktif — representasi
+    // keseluruhan data, dipakai buat kartu ringkasan di atas tabel).
+    const todayStart = new Date(); todayStart.setHours(0, 0, 0, 0);
+    const [totalAll, totalToday, byStatusAgg, byTypeAgg] = await Promise.all([
+      db.collection('activityLogs').countDocuments({}),
+      db.collection('activityLogs').countDocuments({ createdAt: { $gte: todayStart } }),
+      db.collection('activityLogs').aggregate([{ $group: { _id: '$status', count: { $sum: 1 } } }]).toArray(),
+      db.collection('activityLogs').aggregate([{ $group: { _id: '$type', count: { $sum: 1 } } }]).toArray()
+    ]);
+    const byStatus = { success: 0, warning: 0, error: 0, info: 0 };
+    for (const s of byStatusAgg) { if (s._id && byStatus.hasOwnProperty(s._id)) byStatus[s._id] = s.count; }
+    const byType = {};
+    for (const t of byTypeAgg) { if (t._id) byType[t._id] = t.count; }
+
+    res.json({
+      rows, total, page, perPage, totalPages: Math.max(1, Math.ceil(total / perPage)),
+      stats: { all: totalAll, today: totalToday, ...byStatus },
+      byType,
+      catalog: LOG_CATALOG
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Detail satu log (dipakai modal "Detail Log") — data yang ditampilkan di tabel
+// sebenarnya sudah lengkap (activityLogs menyimpan seluruh field sekaligus),
+// endpoint ini disiapkan supaya detail tetap bisa diambil fresh dari DB (mis.
+// via link langsung /logs/:id) tanpa bergantung ke cache di browser.
+app.get('/api/admin/logs/:id', requireAdmin, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+    const doc = await db.collection('activityLogs').findOne({ _id: new ObjectId(req.params.id) });
+    if (!doc) return res.status(404).json({ error: 'Log tidak ditemukan.' });
+    res.json(doc);
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -2436,9 +2665,15 @@ app.put('/api/admin/users/:discordId/role', requireAdmin, async (req, res) => {
     // Catat aktivitas "Pembelian Paket" — dipakai Dashboard admin (stat Gold/Platinum
     // realtime & Activity Feed). Cuma dicatat kalau rolenya beneran berubah.
     logActivity({
-      type: 'purchase',
+      type: 'set_paket',
       username,
       discordId,
+      role,
+      admin: req.admin?.username || 'Admin',
+      status: 'success',
+      ip: getReqIp(req),
+      before: oldRole,
+      after: role,
       description: `Admin mengubah paket ${username} dari ${oldRole.toUpperCase()} ke ${role.toUpperCase()}.`,
       meta: { oldRole, newRole: role }
     }).catch(() => {});
@@ -2530,6 +2765,12 @@ app.put('/api/admin/users/:discordId/active-period', requireAdmin, async (req, r
       type: 'renewal',
       username: user.username || discordId,
       discordId,
+      role: user.role,
+      admin: req.admin?.username || 'Admin',
+      status: 'success',
+      ip: getReqIp(req),
+      before: user.activeUntil || null,
+      after: activeUntil,
       description: clear
         ? `Admin mereset masa aktif paket ${user.username || discordId}.`
         : `Admin memperpanjang masa aktif paket ${user.username || discordId} sampai ${fmtDateTimeWIB(activeUntil)}.`,
@@ -2577,7 +2818,12 @@ app.put('/api/admin/users/:discordId/reset-quota', requireAdmin, async (req, res
 
     logActivity({
       type: 'admin_reset_quota',
-      username: req.admin?.username || 'Admin',
+      username: user.username || discordId,
+      discordId,
+      role: user.role,
+      admin: req.admin?.username || 'Admin',
+      status: 'success',
+      ip: getReqIp(req),
       description: `Admin mereset limit download harian ${user.username || discordId}.`,
       meta: { discordId }
     }).catch(() => {});
@@ -2635,7 +2881,14 @@ app.put('/api/admin/users/:discordId/quota', requireAdmin, async (req, res) => {
     const actionLabel = action === 'reset' ? 'mereset' : action === 'add' ? 'menambah' : 'mengurangi';
     logActivity({
       type: 'admin_reset_quota',
-      username: req.admin?.username || 'Admin',
+      username: user.username || discordId,
+      discordId,
+      role: user.role,
+      admin: req.admin?.username || 'Admin',
+      status: 'success',
+      ip: getReqIp(req),
+      before: usedNow,
+      after: usedNext,
       description: `Admin ${actionLabel} limit download ${label} ${user.username || discordId} (sisa sekarang: ${Math.max(0, limit - usedNext)}/${limit}).`,
       meta: { discordId, type, action, amount: amount || null }
     }).catch(() => {});
@@ -2672,9 +2925,23 @@ app.put('/api/admin/users/:discordId/status', requireAdmin, async (req, res) => 
     const STATUS_LABEL = { active: 'Aktif', suspended: 'Suspend', banned: 'Banned' };
     const STATUS_ICON  = { active: '✅', suspended: '⏸️', banned: '⛔' };
 
+    // Jenis log lebih spesifik sesuai kombinasi status lama -> baru, biar bisa
+    // difilter terpisah di halaman Logs (Ban / Unban / Suspend / Unsuspend).
+    let logType = 'account_status';
+    if (status === 'banned') logType = 'user_ban';
+    else if (status === 'suspended') logType = 'user_suspend';
+    else if (status === 'active' && oldStatus === 'banned') logType = 'user_unban';
+    else if (status === 'active' && oldStatus === 'suspended') logType = 'user_unsuspend';
+
     logActivity({
-      type: 'account_status',
-      username: req.admin?.username || 'Admin',
+      type: logType,
+      username: user.username || discordId,
+      discordId,
+      role: user.role,
+      admin: req.admin?.username || 'Admin',
+      ip: getReqIp(req),
+      before: oldStatus,
+      after: status,
       description: `Admin mengubah status akun ${user.username || discordId} dari ${STATUS_LABEL[oldStatus]} ke ${STATUS_LABEL[status]}.${reason ? ` Alasan: ${reason}` : ''}`,
       meta: { discordId, oldStatus, newStatus: status, reason: reason || null }
     }).catch(() => {});
@@ -2766,8 +3033,12 @@ app.post('/api/admin/users/:discordId/device/reset', requireAdmin, async (req, r
     await deviceLock.resetDevice(discordId, { adminNote: req.body?.note, username: user.username });
 
     logActivity({
-      type: 'account_status',
-      username: req.admin?.username || 'Admin',
+      type: 'device_reset',
+      username: user.username || discordId,
+      admin: req.admin?.username || 'Admin',
+      status: 'success',
+      ip: getReqIp(req),
+      role: user.role,
       discordId,
       description: `Admin mereset perangkat (Device Lock) milik ${user.username || discordId}.`,
       meta: { discordId, action: 'device_reset' }
@@ -2817,8 +3088,12 @@ app.post('/api/admin/users/:discordId/device/allow-change', requireAdmin, async 
     await deviceLock.allowDeviceChange(discordId, { adminNote: req.body?.note, username: user.username });
 
     logActivity({
-      type: 'account_status',
-      username: req.admin?.username || 'Admin',
+      type: 'device_allow_change',
+      username: user.username || discordId,
+      admin: req.admin?.username || 'Admin',
+      status: 'success',
+      ip: getReqIp(req),
+      role: user.role,
       discordId,
       description: `Admin mengizinkan pergantian perangkat (Device Lock) untuk ${user.username || discordId}.`,
       meta: { discordId, action: 'device_change_allowed' }
@@ -2868,6 +3143,9 @@ app.post('/api/admin/notifications/send', requireAdmin, async (req, res) => {
       logActivity({
         type: 'announcement',
         username: req.admin?.username || 'Admin',
+        admin: req.admin?.username || 'Admin',
+        status: 'success',
+        ip: getReqIp(req),
         description: `Admin mengirim broadcast "${title}" ke ${count} user.`,
         meta: { target: 'all', title, sentTo: count }
       }).catch(() => {});
@@ -2886,10 +3164,28 @@ app.post('/api/admin/notifications/send', requireAdmin, async (req, res) => {
     });
     logActivity({
       type: 'announcement',
-      username: req.admin?.username || 'Admin',
+      username: user.username || target,
+      discordId: target,
+      role: user.role,
+      admin: req.admin?.username || 'Admin',
+      status: 'success',
+      ip: getReqIp(req),
       description: `Admin mengirim pesan "${title}" ke ${user.username || target}.`,
       meta: { target, title }
     }).catch(() => {});
+    if (dm) {
+      logActivity({
+        type: 'discord_dm',
+        username: user.username || target,
+        discordId: target,
+        role: user.role,
+        admin: req.admin?.username || 'Admin',
+        status: 'success',
+        ip: getReqIp(req),
+        description: `Admin mengirim Discord DM "${title}" ke ${user.username || target}.`,
+        meta: { target, title }
+      }).catch(() => {});
+    }
     res.json({ success: true, sentTo: 1 });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2927,6 +3223,15 @@ app.put('/api/admin/webhooks/:category', requireAdmin, async (req, res) => {
   try {
     const { url, enabled } = req.body;
     const updated = await webhookManager.upsert(req.params.category, { url, enabled });
+    logActivity({
+      type: 'settings_change',
+      username: req.admin?.username || 'Admin',
+      admin: req.admin?.username || 'Admin',
+      status: 'success',
+      ip: getReqIp(req),
+      description: `Admin mengubah pengaturan Webhook kategori "${updated.label || req.params.category}".`,
+      meta: { category: req.params.category, enabled: updated.enabled, hasUrl: !!updated.url }
+    }).catch(() => {});
     res.json(updated);
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -2938,6 +3243,15 @@ app.put('/api/admin/webhooks/:category', requireAdmin, async (req, res) => {
 app.post('/api/admin/webhooks/:category/test', requireAdmin, async (req, res) => {
   try {
     const result = await webhookManager.testWebhook(req.params.category, req.body?.url);
+    logActivity({
+      type: 'discord_webhook',
+      username: req.admin?.username || 'Admin',
+      admin: req.admin?.username || 'Admin',
+      status: result.sent ? 'success' : 'error',
+      ip: getReqIp(req),
+      description: `Admin mengirim test webhook kategori "${req.params.category}".${result.sent ? '' : ' Gagal: ' + (result.error || '')}`,
+      meta: { category: req.params.category, sent: result.sent }
+    }).catch(() => {});
     if (!result.sent) return res.status(400).json({ error: result.error || 'Gagal mengirim test webhook. Cek lagi URL-nya.' });
     res.json({ success: true });
   } catch (e) {
@@ -2964,6 +3278,15 @@ app.put('/api/admin/role-sync/settings', requireAdmin, async (req, res) => {
   try {
     const { discordRoleMap, webhookUrl, autoSyncFromDiscord, resetRoleOnLeave } = req.body;
     const updated = await roleSync.updateSettings({ discordRoleMap, webhookUrl, autoSyncFromDiscord, resetRoleOnLeave });
+    logActivity({
+      type: 'settings_change',
+      username: req.admin?.username || 'Admin',
+      admin: req.admin?.username || 'Admin',
+      status: 'success',
+      ip: getReqIp(req),
+      description: `Admin mengubah pengaturan Verify Role (mapping role Discord / webhook).`,
+      meta: { discordRoleMap, autoSyncFromDiscord, resetRoleOnLeave }
+    }).catch(() => {});
     res.json(updated);
   } catch (e) {
     res.status(500).json({ error: e.message });

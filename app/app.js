@@ -203,6 +203,9 @@ function wireNavigation() {
     els.logoutLink.addEventListener('click', (e) => {
       e.preventDefault();
       if (_autoRefreshTimer) clearInterval(_autoRefreshTimer);
+      // Best-effort — catat event Logout ke audit trail (halaman Logs Admin Web).
+      // Tidak menunggu response & tidak boleh menghambat proses logout kalau gagal.
+      api('/api/logout', { method: 'POST' }).catch(() => {});
       localStorage.removeItem('token');
       localStorage.removeItem('_savedUser');
       location.reload();
