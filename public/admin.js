@@ -1337,6 +1337,7 @@ function renderUsersRows(rows, isFilteredEmpty) {
           <button class="icon-btn" title="Reset limit download harian" onclick="doResetQuota('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}')">♻️</button>
           <button class="icon-btn" title="Kirim notifikasi ke user ini" onclick="openSendNotifModal('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}')">📢</button>
           <button class="icon-btn" title="Hapus manual game/bypass premium user ini" onclick="doManualPremiumCleanup('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}')">🧹</button>
+          ${u.role === 'public' ? `<button class="icon-btn icon-btn--danger" title="Force Remove: hapus semua game & bypass yang diinstal user Public ini" onclick="doPublicForceRemove('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}')" style="color:#f87171;border-color:rgba(248,113,113,0.3);background:rgba(248,113,113,0.08);">🗑️</button>` : ''}
         </div>
       </div>
     </div>
@@ -1379,6 +1380,78 @@ async function doManualPremiumCleanup(discordId, username) {
 }
 window.doManualPremiumCleanup = doManualPremiumCleanup;
 
+// ── Force Remove Installed Content (Public) ──
+// Hapus SEMUA game & bypass yang pernah diinstal user ini lewat launcher,
+// tanpa filter role — dipakai untuk user Public yang tidak punya installedViaRole premium.
+async function doPublicForceRemove(discordId, username) {
+  if (!confirm(
+    `⚠️ FORCE REMOVE INSTALLED CONTENT\n\n` +
+    `Ini akan menghapus SELURUH game & bypass yang pernah diinstal ${username} melalui launcher.\n\n` +
+    `File yang dihapus:\n` +
+    `• Game: file .lua & .manifest di folder Steam/depotcache\n` +
+    `• Bypass: file hasil extract di folder yang dipilih user\n\n` +
+    `Proses berjalan di background saat app user terbuka.\n` +
+    `Lanjutkan?`
+  )) return;
+
+  const btn = event?.target?.closest('button');
+  const origText = btn?.textContent;
+  if (btn) { btn.disabled = true; btn.textContent = 'Memproses...'; }
+
+  try {
+    const result = await api(`/api/admin/users/${encodeURIComponent(discordId)}/public-cleanup`, { method: 'POST' });
+    if (!result.scheduled) {
+      showToast(`ℹ️ ${username} tidak punya game/bypass yang terpasang.`, 'info');
+    } else {
+      const delivered = result.delivered ? ' (langsung dikirim ke app)' : ' (akan dieksekusi saat app dibuka)';
+      showToast(
+        `🧹 ${result.gameCount} game & ${result.bypassCount} bypass ${username} dijadwalkan untuk dihapus${delivered}.`,
+        'success',
+        6000
+      );
+    }
+  } catch (e) {
+    showToast('Gagal memicu force remove: ' + e.message, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = origText; }
+  }
+}
+window.doPublicForceRemove = doPublicForceRemove;
+
+// Dipanggil dari tombol dalam modal kelola user
+async function doPublicForceRemoveFromModal() {
+  if (!_setRoleTarget) { showToast('Tidak ada user yang dipilih.', 'error'); return; }
+  const { discordId, username } = _setRoleTarget;
+  if (!confirm(
+    `⚠️ FORCE REMOVE INSTALLED CONTENT\n\n` +
+    `Hapus SEMUA game & bypass yang diinstal ${username} melalui launcher.\n\n` +
+    `• File .lua & .manifest (game Steam)\n` +
+    `• File hasil extract bypass\n\n` +
+    `Proses berjalan saat app user dibuka. Lanjutkan?`
+  )) return;
+
+  const btn = document.getElementById('btnSrForceRemove');
+  const statusEl = document.getElementById('srForceRemoveStatus');
+  if (btn) { btn.disabled = true; btn.textContent = 'Memproses...'; }
+  if (statusEl) statusEl.textContent = 'Mengirim permintaan...';
+
+  try {
+    const result = await api(`/api/admin/users/${encodeURIComponent(discordId)}/public-cleanup`, { method: 'POST' });
+    const msg = result.scheduled
+      ? `✅ Dijadwalkan: ${result.gameCount} game & ${result.bypassCount} bypass akan dihapus${result.delivered ? ' (langsung dikirim)' : ' (saat app dibuka)'}.`
+      : `ℹ️ ${result.message || 'Tidak ada konten yang terpasang.'}`;
+    if (statusEl) statusEl.textContent = msg;
+    showToast(msg, result.scheduled ? 'success' : 'info', 6000);
+  } catch (e) {
+    const msg = '⚠️ Gagal: ' + e.message;
+    if (statusEl) statusEl.textContent = msg;
+    showToast(msg, 'error');
+  } finally {
+    if (btn) { btn.disabled = false; btn.textContent = '🗑️ Force Remove Installed Content'; }
+  }
+}
+window.doPublicForceRemoveFromModal = doPublicForceRemoveFromModal;
+
 // ─── Kirim notifikasi manual (In-App + opsional Discord DM/Webhook) ───
 let _sendNotifTarget = null; // discordId, atau null = broadcast ke semua
 function openSendNotifModal(discordId, username) {
@@ -1406,6 +1479,17 @@ function _srToggleActivePeriodGroup(role) {
   const group = document.getElementById('srActivePeriodGroup');
   if (!group) return;
   group.style.display = (role === 'gold' || role === 'platinum') ? 'block' : 'none';
+}
+
+// Tampilkan / sembunyikan section "Force Remove" hanya untuk user Public
+function _srToggleForceRemoveSection(role) {
+  const divider = document.getElementById('srForceRemoveDivider');
+  const section = document.getElementById('srForceRemoveSection');
+  const statusEl = document.getElementById('srForceRemoveStatus');
+  const show = role === 'public';
+  if (divider) divider.style.display = show ? '' : 'none';
+  if (section) section.style.display = show ? '' : 'none';
+  if (statusEl) statusEl.textContent = '';
 }
 
 function _formatActiveUntil(dateStr) {
@@ -1464,6 +1548,7 @@ function _fillSetRoleModal(u) {
     b.classList.toggle('active', b.dataset.role === currentRole);
   });
   _srToggleActivePeriodGroup(currentRole);
+  _srToggleForceRemoveSection(currentRole);
 
   const daysInput = document.getElementById('srActiveDays');
   if (daysInput) daysInput.value = '';
@@ -1673,6 +1758,7 @@ function _srSetRole(btn, role) {
   document.querySelectorAll('#srRoleSegment .segmented-opt').forEach(b => b.classList.remove('active'));
   btn.classList.add('active');
   _srToggleActivePeriodGroup(role);
+  _srToggleForceRemoveSection(role);
 }
 window._srSetRole = _srSetRole;
 

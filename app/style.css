@@ -1644,16 +1644,22 @@
   pointer-events:none;
 }
 .app-notif-toast{
+  /* FIXED: posisi selalu pojok kanan atas, tidak bergerak saat resize/fullscreen */
+  position:fixed;
+  top:48px;   /* tepat di bawah titlebar (38px) + gap 10px */
+  right:14px;
+  z-index:9999;
   width:300px;padding:12px 14px;border-radius:14px;
   background:var(--panel-solid);border:1px solid rgba(255,255,255,0.12);
   box-shadow:0 20px 40px rgba(10,5,25,0.5);
   display:flex;gap:10px;align-items:flex-start;
-  transform:translateX(120%);opacity:0;pointer-events:none;
-  transition:transform .35s ease, opacity .35s ease;
+  /* Slide-in dari kanan: transform hanya translateX, bukan bergerak ke posisi lain */
+  transform:translateX(calc(100% + 24px));opacity:0;pointer-events:none;
+  transition:transform .35s cubic-bezier(.32,.72,0,1), opacity .35s ease;
   cursor:pointer;
 }
 .app-notif-toast.show{transform:translateX(0);opacity:1;pointer-events:auto;}
-.app-notif-toast.hide{transform:translateX(120%);opacity:0;pointer-events:none;}
+.app-notif-toast.hide{transform:translateX(calc(100% + 24px));opacity:0;pointer-events:none;}
 .app-notif-toast .ant-icon{font-size:18px;}
 .app-notif-toast .ant-title{font-size:12.5px;font-weight:700;color:var(--text-main);}
 .app-notif-toast .ant-msg{font-size:11.5px;color:var(--text-dim);margin-top:2px;line-height:1.4;}

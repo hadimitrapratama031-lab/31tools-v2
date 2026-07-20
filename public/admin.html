@@ -1003,6 +1003,24 @@
       </div>
       <div style="font-size:11px;color:var(--text-faint);">Tambah = mengembalikan sisa jatah hari ini. Kurangi = memotong sisa jatah hari ini. Reset = kembalikan pemakaian ke 0.</div>
 
+      <!-- ── Force Remove Installed Content (Public) ── -->
+      <div class="modal-divider" id="srForceRemoveDivider" style="display:none;">🗑️ Force Remove Installed Content</div>
+      <div id="srForceRemoveSection" style="display:none;">
+        <div style="font-size:12px;color:var(--text-faint);margin-bottom:10px;line-height:1.6;">
+          Hapus <strong>semua</strong> game &amp; bypass yang diinstal user ini melalui launcher.
+          File yang dihapus: <code>.lua</code> &amp; <code>.manifest</code> (game) + file bypass hasil extract.
+          Proses berjalan segera saat app user terbuka.
+        </div>
+        <button
+          id="btnSrForceRemove"
+          class="btn btn-sm"
+          style="background:rgba(248,113,113,0.12);border:1px solid rgba(248,113,113,0.35);color:#f87171;font-weight:700;"
+          onclick="doPublicForceRemoveFromModal()">
+          🗑️ Force Remove Installed Content
+        </button>
+        <div id="srForceRemoveStatus" style="margin-top:8px;font-size:12px;min-height:18px;color:var(--text-dim);"></div>
+      </div>
+
       <!-- ── Status Akun ── -->
       <div class="modal-divider">🛡️ Status Akun</div>
       <div id="srStatusCurrent" style="font-size:12px;color:var(--text-dim);margin-bottom:8px;"></div>
