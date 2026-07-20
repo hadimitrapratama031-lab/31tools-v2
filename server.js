@@ -730,6 +730,8 @@ async function getAutoRemoveSettings() {
 
 // Ambil semua item (game & bypass) yang masih tercatat di histori user & diinstal
 // SELAGI dia berperan gold/platinum — inilah yang dianggap "konten premium".
+// Dipakai buat pembersihan OTOMATIS (reason 'expired') — sengaja HANYA yang
+// premium, karena user public tidak punya "paket" yang bisa berakhir.
 async function getPremiumInstalledItems(discordId) {
   return db.collection('history').find({
     userId: discordId,
@@ -737,9 +739,18 @@ async function getPremiumInstalledItems(discordId) {
   }).toArray();
 }
 
-// Bikin & (kalau memungkinkan) langsung kirim job pembersihan konten premium untuk
-// satu user. `reason`: 'expired' (otomatis, dipanggil applyExpiryIfNeeded) atau
-// 'manual' (admin pencet tombol "Hapus Manual" di Admin Web).
+// Ambil SEMUA item (game & bypass) yang tercatat di histori user, TANPA peduli
+// role apa yang dipakai saat install — dipakai KHUSUS buat tombol "Hapus Manual"
+// admin (reason 'manual'), supaya fiturnya juga bisa dipakai buat user Public
+// (yang mana tidak akan pernah punya installedViaRole gold/platinum sama sekali).
+async function getAllInstalledItems(discordId) {
+  return db.collection('history').find({ userId: discordId }).toArray();
+}
+
+// Bikin & (kalau memungkinkan) langsung kirim job pembersihan konten untuk
+// satu user. `reason`: 'expired' (otomatis, dipanggil applyExpiryIfNeeded, HANYA
+// konten premium) atau 'manual' (admin pencet tombol "Hapus Manual" di Admin Web,
+// SELURUH game & bypass milik user ini — berlaku utk role apapun termasuk Public).
 async function schedulePremiumCleanup(discordId, username, expiredRole, reason = 'expired') {
   try {
     const settings = reason === 'manual' ? { enabled: true, delay: 'immediate' } : await getAutoRemoveSettings();
@@ -749,7 +760,7 @@ async function schedulePremiumCleanup(discordId, username, expiredRole, reason =
       username, discordId, role: expiredRole,
       status: 'warning',
       description: reason === 'manual'
-        ? `Admin memicu penghapusan manual konten premium untuk ${username}.`
+        ? `Admin memicu penghapusan manual seluruh game & bypass untuk ${username}.`
         : `Masa aktif paket ${String(expiredRole).toUpperCase()} milik ${username} telah berakhir.`,
       meta: { reason }
     }).catch(() => {});
@@ -765,7 +776,10 @@ async function schedulePremiumCleanup(discordId, username, expiredRole, reason =
       return null;
     }
 
-    const items = await getPremiumInstalledItems(discordId);
+    // 'manual' (tombol Hapus Manual admin) -> SEMUA item milik user ini, apapun
+    // role-nya (termasuk Public) — bukan cuma yang ditandai gold/platinum.
+    // 'expired' (otomatis) -> TETAP hanya yang premium, sesuai spec awal.
+    const items = reason === 'manual' ? await getAllInstalledItems(discordId) : await getPremiumInstalledItems(discordId);
     if (!items.length) return null; // tidak ada apapun yang perlu dihapus
 
     const jobItems = items.map(h => ({
@@ -790,12 +804,18 @@ async function schedulePremiumCleanup(discordId, username, expiredRole, reason =
     jobDoc._id = inserted.insertedId;
 
     // Kasih tahu user SEBELUM penghapusan terjadi (spec: notifikasi dulu, baru hapus).
+    // Teks disesuaikan: kalau otomatis (paket expired) sebutkan paketnya; kalau manual
+    // (dipicu admin, bisa berlaku ke user role apapun termasuk Public) pakai kalimat umum.
+    const notifTitle = reason === 'manual' ? 'Admin Menghapus Seluruh Game & Bypass Kamu' : 'Paket Premium Berakhir — Konten Akan Dihapus';
+    const notifMessage = reason === 'manual'
+      ? `Admin telah memicu penghapusan manual. Seluruh game (${jobDoc.gameCount}) dan bypass (${jobDoc.bypassCount}) yang kamu install akan dihapus dari PC saat ini juga.`
+      : `Masa aktif paket ${String(expiredRole).toUpperCase()} kamu sudah berakhir. Seluruh game (${jobDoc.gameCount}) dan bypass (${jobDoc.bypassCount}) premium yang kamu install akan otomatis dihapus dari PC${delayMs > 0 ? ` dalam ${settings.delay === '1h' ? '1 jam' : '24 jam'}` : ' saat ini juga'}.`;
     notifyUser(discordId, {
       type: 'announcement',
-      title: 'Paket Premium Berakhir — Konten Akan Dihapus',
-      message: `Masa aktif paket ${String(expiredRole).toUpperCase()} kamu sudah berakhir. Seluruh game (${jobDoc.gameCount}) dan bypass (${jobDoc.bypassCount}) premium yang kamu install akan otomatis dihapus dari PC${delayMs > 0 ? ` dalam ${settings.delay === '1h' ? '1 jam' : '24 jam'}` : ' saat ini juga'}.`,
+      title: notifTitle,
+      message: notifMessage,
       fields: [
-        field('📦 Paket Berakhir', String(expiredRole).toUpperCase(), true),
+        field('📦 Paket Saat Ini', String(expiredRole).toUpperCase(), true),
         field('🎮 Game Terpasang', String(jobDoc.gameCount), true),
         field('🛡️ Bypass Terpasang', String(jobDoc.bypassCount), true)
       ],
@@ -820,6 +840,7 @@ async function tryDeliverCleanupJob(jobDoc) {
   const sent = wsSendToUser(jobDoc.discordId, 'premium:cleanup', {
     jobId: String(jobDoc._id),
     role: jobDoc.role,
+    reason: jobDoc.reason,
     items: jobDoc.items,
     gameCount: jobDoc.gameCount,
     bypassCount: jobDoc.bypassCount
@@ -865,7 +886,7 @@ app.get('/api/premium-cleanup/pending', requireUser, async (req, res) => {
       scheduledAt: { $lte: new Date() }
     }).toArray();
     res.json({ jobs: jobs.map(j => ({
-      jobId: String(j._id), role: j.role, items: j.items,
+      jobId: String(j._id), role: j.role, reason: j.reason, items: j.items,
       gameCount: j.gameCount, bypassCount: j.bypassCount
     })) });
   } catch (e) {
@@ -996,7 +1017,7 @@ app.post('/api/admin/users/:discordId/premium-cleanup', requireAdmin, async (req
     if (!user) return res.status(404).json({ error: 'User tidak ditemukan.' });
 
     const job = await schedulePremiumCleanup(discordId, user.username || discordId, user.role, 'manual');
-    if (!job) return res.json({ success: true, scheduled: false, message: 'Tidak ada game/bypass premium yang terpasang untuk user ini.' });
+    if (!job) return res.json({ success: true, scheduled: false, message: 'Tidak ada game/bypass yang terpasang untuk user ini.' });
 
     logActivity({
       type: 'premium_cleanup_manual', username: user.username || discordId, discordId,

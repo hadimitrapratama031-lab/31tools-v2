@@ -1975,6 +1975,46 @@ async function wireHistoriCardActions() {
   });
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// TOAST AUTO-HIDE — SEMUA toast di app ini (notif realtime, histori, role
+// diperbarui, dst) pakai helper YANG SAMA supaya konsisten: selalu hilang
+// otomatis TEPAT 4 detik setelah muncul terakhir kali.
+//
+// BUG FIX: sebelumnya tiap toast punya timer sendiri-sendiri dan cuma
+// diandalkan dari setTimeout biasa — begitu window app di-minimize/di-hidden
+// lama, browser (Electron/Chromium) suka nge-throttle setTimeout di
+// background, jadi toast yang harusnya sudah ilang malah nyangkut sampai
+// window aktif lagi ("notif suka ga ilang-ilang"). Sekarang tiap kali toast
+// ditampilkan, waktu seharusnya-hilang (hideAt) dicatat, DAN begitu window
+// balik jadi visible, semua toast yang harusnya udah lewat waktunya langsung
+// dipaksa ketutup — jadi dijamin tidak akan nyangkut lagi.
+// ══════════════════════════════════════════════════════════════════════════
+const TOAST_AUTO_HIDE_MS = 4000;
+const _activeToastTimers = new Map(); // el -> { timer, hideAt, showClass }
+
+function scheduleToastAutoHide(el, showClass = 'show', ms = TOAST_AUTO_HIDE_MS) {
+  const existing = _activeToastTimers.get(el);
+  if (existing) clearTimeout(existing.timer);
+  const hideAt = Date.now() + ms;
+  const timer = setTimeout(() => {
+    el.classList.remove(showClass);
+    _activeToastTimers.delete(el);
+  }, ms);
+  _activeToastTimers.set(el, { timer, hideAt, showClass });
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState !== 'visible') return;
+  const now = Date.now();
+  for (const [el, info] of _activeToastTimers) {
+    if (now >= info.hideAt) {
+      el.classList.remove(info.showClass);
+      clearTimeout(info.timer);
+      _activeToastTimers.delete(el);
+    }
+  }
+});
+
 // Toast khusus uninstall game — kasih tombol "Restart Steam Sekarang" langsung di toastnya,
 // karena tanpa restart, perubahan (game/DLC hilang dari Steam) belum akan kelihatan.
 function showHistoriRestartToast() {
@@ -1987,8 +2027,7 @@ function showHistoriRestartToast() {
   toastEl.innerHTML = `File berhasil dihapus. ⚠️ Restart Steam agar perubahan aktif —
     <a href="#" id="historiRestartSteamBtn" style="color:#a78bfa;text-decoration:underline;font-weight:700;">Restart Sekarang</a>`;
   toastEl.classList.add('show');
-  clearTimeout(_historiToastTimer);
-  _historiToastTimer = setTimeout(() => toastEl.classList.remove('show'), 8000); // lebih lama biar sempat diklik
+  scheduleToastAutoHide(toastEl, 'show');
   document.getElementById('historiRestartSteamBtn')?.addEventListener('click', async (e) => {
     e.preventDefault();
     toastEl.classList.remove('show');
@@ -1997,7 +2036,6 @@ function showHistoriRestartToast() {
   });
 }
 
-let _historiToastTimer = null;
 function showHistoriToast(msg) {
   let toastEl = document.querySelector('.histori-toast');
   if (!toastEl) {
@@ -2007,8 +2045,7 @@ function showHistoriToast(msg) {
   }
   toastEl.textContent = msg;
   toastEl.classList.add('show');
-  clearTimeout(_historiToastTimer);
-  _historiToastTimer = setTimeout(() => toastEl.classList.remove('show'), 2400);
+  scheduleToastAutoHide(toastEl, 'show');
 }
 
 // ── Toast khusus notif "role/paket kamu diperbarui" — dipanggil dari
@@ -2019,7 +2056,6 @@ const ROLE_TOAST_DESC  = {
   gold:     'Kamu sekarang bisa akses semua konten Gold! 🎉',
   platinum: 'Akses UNLIMITED ke semua konten aktif! 🚀',
 };
-let _roleToastTimer = null;
 // ══════════════════════════════════════════════════════════════════════════
 // REALTIME — WebSocket (download limit, masa aktif, status akun, notifikasi)
 // Semua perubahan dari admin (role, masa aktif, reset kuota) & event server (limit
@@ -2197,12 +2233,13 @@ function showPremiumCleanupModal(state, job, resultData) {
   const roleLabel = String(job.role || '').toUpperCase();
 
   if (state === 'start') {
+    const isManual = job.reason === 'manual';
     overlay.innerHTML = `
       <div class="pcm-modal">
-        <div class="pcm-icon pcm-icon--warn">⏰</div>
-        <div class="pcm-title">Paket ${escapeHtml(roleLabel)} Kamu Telah Berakhir</div>
+        <div class="pcm-icon pcm-icon--warn">${isManual ? '🧹' : '⏰'}</div>
+        <div class="pcm-title">${isManual ? 'Admin Menghapus Konten Kamu' : `Paket ${escapeHtml(roleLabel)} Kamu Telah Berakhir`}</div>
         <div class="pcm-desc">
-          Seluruh <b>${job.gameCount || 0} game</b> dan <b>${job.bypassCount || 0} bypass</b> premium yang kamu install
+          Seluruh <b>${job.gameCount || 0} game</b> dan <b>${job.bypassCount || 0} bypass</b>${isManual ? '' : ' premium'} yang kamu install
           akan otomatis dihapus dari PC ini sekarang. Proses ini tidak bisa dibatalkan.
         </div>
         <div class="pcm-progress"><div class="pcm-progress-bar"></div></div>
@@ -2216,13 +2253,14 @@ function showPremiumCleanupModal(state, job, resultData) {
   const removedBypass = resultData?.removedBypass || [];
   const failed        = resultData?.failed || [];
   const ok = failed.length === 0;
+  const isManualDone = job.reason === 'manual';
 
   overlay.innerHTML = `
     <div class="pcm-modal">
       <div class="pcm-icon ${ok ? 'pcm-icon--ok' : 'pcm-icon--partial'}">${ok ? '✅' : '⚠️'}</div>
-      <div class="pcm-title">${ok ? 'Konten Premium Berhasil Dihapus' : 'Penghapusan Selesai (Sebagian Gagal)'}</div>
+      <div class="pcm-title">${ok ? (isManualDone ? 'Konten Berhasil Dihapus' : 'Konten Premium Berhasil Dihapus') : 'Penghapusan Selesai (Sebagian Gagal)'}</div>
       <div class="pcm-desc">
-        <b>${removedGames.length}</b> game dan <b>${removedBypass.length}</b> bypass premium sudah dihapus dari PC ini.
+        <b>${removedGames.length}</b> game dan <b>${removedBypass.length}</b> bypass${isManualDone ? '' : ' premium'} sudah dihapus dari PC ini.
         ${failed.length ? `<br><span style="color:#ffb4b4;">${failed.length} item gagal dihapus otomatis — cek folder Steam/game secara manual kalau perlu.</span>` : ''}
       </div>
       <div class="pcm-actions">
@@ -2406,18 +2444,12 @@ function handleIncomingNotification(n) {
   }
 }
 
-let _notifToastTimer = null;
 function showAppNotifToast(n) {
   let el = document.querySelector('.app-notif-toast');
   if (!el) { el = document.createElement('div'); el.className = 'app-notif-toast'; document.body.appendChild(el); }
   const icon = NOTIF_ICON[n.type] || '🔔';
   el.innerHTML = `<span class="ant-icon">${icon}</span><div><div class="ant-title">${escapeHtml(n.title)}</div><div class="ant-msg">${escapeHtml(n.message)}</div></div>`;
 
-  // PENTING: kalau ada timer lama yang masih jalan (notif sebelumnya belum sempat
-  // hilang pas notif baru ini datang), timer lama itu HARUS dibatalkan dulu sebelum
-  // bikin timer baru — kalau tidak, timer lama bisa nutup toast ini prematur ATAU
-  // (kebalikannya) numpuk berkali-kali dan kesannya toast "tidak pernah hilang".
-  clearTimeout(_notifToastTimer);
   el.classList.remove('show');
   // Buang & paksa reflow dulu sebelum nambah 'show' lagi, supaya kalau toast
   // sebelumnya baru saja ditutup (atau masih kebuka), animasi slide-in-nya tetap
@@ -2425,8 +2457,8 @@ function showAppNotifToast(n) {
   void el.offsetWidth;
   requestAnimationFrame(() => el.classList.add('show'));
 
-  // Selalu hilang otomatis tepat 5 detik setelah muncul.
-  _notifToastTimer = setTimeout(() => { el.classList.remove('show'); }, 5000);
+  // Selalu hilang otomatis tepat 4 detik setelah muncul (lihat scheduleToastAutoHide).
+  scheduleToastAutoHide(el, 'show');
 }
 
 function showRoleUpdateToast(oldRole, newRole) {
@@ -2459,9 +2491,7 @@ function showRoleUpdateToast(oldRole, newRole) {
       <div class="rut-desc">${ROLE_TOAST_DESC[newRole] || ''}</div>
     </div>
   `;
-  clearTimeout(_roleToastTimer);
-  // Auto dismiss setelah 8 detik (lebih lama dari sebelumnya — ini notif penting)
-  _roleToastTimer = setTimeout(() => toastEl.classList.remove('show'), 8000);
+  scheduleToastAutoHide(toastEl, 'show');
 }
 
 // ── CONFIG ──

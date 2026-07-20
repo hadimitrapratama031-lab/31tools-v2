@@ -1336,7 +1336,7 @@ function renderUsersRows(rows, isFilteredEmpty) {
         <div class="user-card-actions-icons">
           <button class="icon-btn" title="Reset limit download harian" onclick="doResetQuota('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}')">♻️</button>
           <button class="icon-btn" title="Kirim notifikasi ke user ini" onclick="openSendNotifModal('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}')">📢</button>
-          <button class="icon-btn" title="Hapus manual game/bypass premium user ini" onclick="doManualPremiumCleanup('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}')">🧹</button>
+          <button class="icon-btn" title="Hapus manual seluruh game/bypass user ini (berlaku semua role, termasuk Public)" onclick="doManualPremiumCleanup('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}')">🧹</button>
         </div>
       </div>
     </div>
@@ -1365,13 +1365,13 @@ async function doResetQuota(discordId, username) {
 window.doResetQuota = doResetQuota;
 
 async function doManualPremiumCleanup(discordId, username) {
-  if (!confirm(`Hapus MANUAL seluruh game & bypass premium milik ${username} sekarang?\nProses ini langsung dijalankan begitu app user connect/dibuka.`)) return;
+  if (!confirm(`Hapus MANUAL seluruh game & bypass milik ${username} sekarang? Berlaku untuk role apapun (Public/Gold/Platinum).\nProses ini langsung dijalankan begitu app user connect/dibuka.`)) return;
   try {
     const result = await api(`/api/admin/users/${discordId}/premium-cleanup`, { method: 'POST' });
     if (!result.scheduled) {
-      showToast(`ℹ️ ${username} tidak punya game/bypass premium yang terpasang.`, 'info');
+      showToast(`ℹ️ ${username} tidak punya game/bypass yang terpasang.`, 'info');
     } else {
-      showToast(`🧹 Dijadwalkan: ${result.gameCount} game & ${result.bypassCount} bypass premium ${username} akan dihapus.`, 'success');
+      showToast(`🧹 Dijadwalkan: ${result.gameCount} game & ${result.bypassCount} bypass ${username} akan dihapus.`, 'success');
     }
   } catch (e) {
     showToast('Gagal memicu hapus manual: ' + e.message, 'error');
@@ -2645,7 +2645,7 @@ function wirePaketPageOnce() {
     const statusEl = document.getElementById('arManualStatus');
     const discordId = input.value.trim();
     if (!discordId) { statusEl.textContent = 'Isi Discord ID dulu.'; return; }
-    if (!confirm(`Hapus MANUAL seluruh game & bypass premium milik Discord ID ${discordId}?`)) return;
+    if (!confirm(`Hapus MANUAL seluruh game & bypass milik Discord ID ${discordId}? Berlaku untuk role apapun (Public/Gold/Platinum).`)) return;
     const btn = document.getElementById('btnManualCleanup');
     btn.disabled = true;
     statusEl.textContent = 'Memproses...';
@@ -2653,7 +2653,7 @@ function wirePaketPageOnce() {
       const result = await api(`/api/admin/users/${encodeURIComponent(discordId)}/premium-cleanup`, { method: 'POST' });
       statusEl.textContent = result.scheduled
         ? `✅ Dijadwalkan: ${result.gameCount} game & ${result.bypassCount} bypass akan dihapus.`
-        : `ℹ️ ${result.message || 'Tidak ada konten premium yang terpasang.'}`;
+        : `ℹ️ ${result.message || 'Tidak ada game/bypass yang terpasang untuk user ini.'}`;
       showToast(statusEl.textContent, result.scheduled ? 'success' : 'info');
     } catch (e) {
       statusEl.textContent = '⚠️ Gagal: ' + e.message;
