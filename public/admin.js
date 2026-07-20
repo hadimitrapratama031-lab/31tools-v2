@@ -1245,16 +1245,14 @@ function renderUsersRows(rows, isFilteredEmpty) {
         <div class="user-card-stat-box"><div class="v">${(u.stats && u.stats.downloads) || 0}</div><div class="l">🎮 Download</div></div>
         <div class="user-card-stat-box"><div class="v">${(u.stats && u.stats.installs) || 0}</div><div class="l">🛡️ Install</div></div>
       </div>
-      <div class="user-card-actions-grid">
-        <button class="btn btn-sm btn-primary user-card-action" onclick="openSetRoleModal('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}','${escapeHtml(u.role)}')">
+      <div class="user-card-actions">
+        <button class="btn btn-sm btn-primary user-card-action-main" onclick="openSetRoleModal('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}','${escapeHtml(u.role)}')">
           🔎 Lihat Detail
         </button>
-        <button class="btn btn-sm btn-outline user-card-action" title="Reset limit download harian" onclick="doResetQuota('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}')">
-          ♻️
-        </button>
-        <button class="btn btn-sm btn-outline user-card-action" title="Kirim notifikasi ke user ini" onclick="openSendNotifModal('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}')">
-          📢
-        </button>
+        <div class="user-card-actions-icons">
+          <button class="icon-btn" title="Reset limit download harian" onclick="doResetQuota('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}')">♻️</button>
+          <button class="icon-btn" title="Kirim notifikasi ke user ini" onclick="openSendNotifModal('${escapeHtml(u.discordId)}','${escapeHtml(u.username)}')">📢</button>
+        </div>
       </div>
     </div>
   `).join('');

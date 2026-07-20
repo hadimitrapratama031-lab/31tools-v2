@@ -27,6 +27,7 @@
   --grad-dark:     linear-gradient(135deg, #1d2540, #111527);
 
   --text:      #f3f1fa;
+  --text-main: #f3f1fa;
   --text-dim:  #8f8db0;
   --text-faint:#5a587a;
 
@@ -1457,44 +1458,90 @@ select.form-input option {
 }
 
 /* ═══════════════════════════════════════════════════════════
-   USERS PAGE — REDESIGN (status tag, kartu diperkaya, modal Kelola User)
+   USERS PAGE — REDESIGN (toolbar terpisah, kartu konsisten, aksi rapi)
    ═══════════════════════════════════════════════════════════ */
 
-/* Sub-toolbar (baris kedua) buat filter status, di bawah search+role chips */
-.table-toolbar--sub {
-  padding: 0 20px 14px; border-bottom: 1px solid var(--line);
-  justify-content: flex-start;
+/* ─── Toolbar: baris judul+search, lalu baris filter Role/Status terpisah ─── */
+.users-toolbar {
+  display: flex; flex-direction: column; gap: 14px;
+  padding: 18px 20px; border-bottom: 1px solid var(--line);
+}
+.users-toolbar-top {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; flex-wrap: wrap;
+}
+.users-filter-row {
+  display: flex; align-items: center; gap: 20px; flex-wrap: wrap;
+}
+.users-filter-group {
+  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
+}
+.users-filter-label {
+  font-size: 10.5px; font-weight: 800; color: var(--text-faint);
+  text-transform: uppercase; letter-spacing: .07em; flex-shrink: 0;
+}
+.users-filter-divider {
+  width: 1px; height: 20px; background: var(--line); flex-shrink: 0;
+}
+@media (max-width: 640px) {
+  .users-filter-divider { display: none; }
+  .users-filter-row { gap: 12px; }
+  .users-filter-group { width: 100%; }
 }
 
-/* Status badge — Aktif / Suspend / Banned */
-.status-tag {
-  display: inline-flex; align-items: center; gap: 4px;
-  font-size: 10px; font-weight: 800; text-transform: uppercase;
-  padding: 3px 9px; border-radius: 99px; letter-spacing: .04em;
-  border: 1px solid transparent;
+/* ─── Grid kartu: ukuran seragam, spacing konsisten ─── */
+.users-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+  padding: 20px;
+  align-items: stretch;
 }
-.status-tag.active    { background: rgba(74,222,128,.14);  color: var(--green); border-color: rgba(74,222,128,.3); }
-.status-tag.suspended { background: rgba(255,215,106,.14); color: #ffd76a;      border-color: rgba(255,215,106,.35); }
-.status-tag.banned    { background: rgba(248,113,113,.14); color: var(--red);   border-color: rgba(248,113,113,.3); }
-
-/* Kartu user — redesign: header lebih rapi + baris status + baris stats total */
+.user-card {
+  display: flex; flex-direction: column;
+  padding: 18px;
+}
 .user-card.status-suspended { border-color: rgba(255,215,106,.35); }
-.user-card.status-banned    { border-color: rgba(248,113,113,.4); opacity: .82; }
+.user-card.status-banned    { border-color: rgba(248,113,113,.4); opacity: .85; }
+
+.user-card-top { margin-bottom: 14px; gap: 12px; }
+.user-card-headtext { display: flex; flex-direction: column; gap: 4px; }
+.user-card-name { font-size: 14.5px; }
 .user-card-badges { display: flex; flex-direction: column; align-items: flex-end; gap: 6px; flex-shrink: 0; }
 
+.user-card-id { margin-bottom: 12px; }
+
+/* Blok Masa Aktif / Limit — sedikit lebih lega */
+.user-card-status { padding: 10px 12px; margin-bottom: 12px; gap: 6px; }
+
+/* Statistik download/install */
 .user-card-stats {
   display: grid; grid-template-columns: 1fr 1fr; gap: 8px;
-  margin-bottom: 12px;
+  margin-bottom: 14px;
 }
 .user-card-stat-box {
   background: rgba(255,255,255,.03); border: 1px solid var(--line);
-  border-radius: var(--radius-sm); padding: 8px 10px; text-align: center;
+  border-radius: var(--radius-sm); padding: 10px; text-align: center;
 }
-.user-card-stat-box .v { font-size: 15px; font-weight: 800; font-family: 'Sora', sans-serif; color: var(--text-main); }
-.user-card-stat-box .l { font-size: 10px; color: var(--text-faint); margin-top: 2px; text-transform: uppercase; letter-spacing: .03em; }
+.user-card-stat-box .v { font-size: 16px; font-weight: 800; font-family: 'Sora', sans-serif; color: var(--text-main); }
+.user-card-stat-box .l { font-size: 10px; color: var(--text-faint); margin-top: 3px; text-transform: uppercase; letter-spacing: .03em; }
 
-.user-card-actions-grid { display: flex; gap: 6px; flex-wrap: wrap; }
-.user-card-actions-grid .btn { flex: 1 1 auto; min-width: 0; }
+/* Aksi: tombol utama full-width di atas, tombol ikon seragam di bawah — dorong ke
+   dasar kartu (margin-top:auto) supaya sejajar antar kartu walau tinggi konten beda. */
+.user-card-actions {
+  display: flex; flex-direction: column; gap: 8px;
+  margin-top: auto; padding-top: 4px;
+}
+.user-card-action-main { width: 100%; }
+.user-card-actions-icons { display: flex; gap: 8px; }
+.user-card-actions-icons .icon-btn { flex: 1 1 0; width: auto; }
+
+@media (max-width: 560px) {
+  .users-grid { grid-template-columns: 1fr; padding: 16px; gap: 12px; }
+  .users-toolbar { padding: 16px; }
+  .table-search { width: 100%; }
+  .table-search input { width: 100%; }
+}
 
 /* ─── Modal Kelola User — ringkasan + section-section aksi ─── */
 .user-modal .modal-body { display: flex; flex-direction: column; gap: 4px; }
