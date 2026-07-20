@@ -803,24 +803,27 @@ async function schedulePremiumCleanup(discordId, username, expiredRole, reason =
     const inserted = await db.collection('premiumCleanups').insertOne(jobDoc);
     jobDoc._id = inserted.insertedId;
 
-    // Kasih tahu user SEBELUM penghapusan terjadi (spec: notifikasi dulu, baru hapus).
-    // Teks disesuaikan: kalau otomatis (paket expired) sebutkan paketnya; kalau manual
-    // (dipicu admin, bisa berlaku ke user role apapun termasuk Public) pakai kalimat umum.
-    const notifTitle = reason === 'manual' ? 'Admin Menghapus Seluruh Game & Bypass Kamu' : 'Paket Premium Berakhir — Konten Akan Dihapus';
-    const notifMessage = reason === 'manual'
-      ? `Admin telah memicu penghapusan manual. Seluruh game (${jobDoc.gameCount}) dan bypass (${jobDoc.bypassCount}) yang kamu install akan dihapus dari PC saat ini juga.`
-      : `Masa aktif paket ${String(expiredRole).toUpperCase()} kamu sudah berakhir. Seluruh game (${jobDoc.gameCount}) dan bypass (${jobDoc.bypassCount}) premium yang kamu install akan otomatis dihapus dari PC${delayMs > 0 ? ` dalam ${settings.delay === '1h' ? '1 jam' : '24 jam'}` : ' saat ini juga'}.`;
-    notifyUser(discordId, {
-      type: 'announcement',
-      title: notifTitle,
-      message: notifMessage,
-      fields: [
-        field('📦 Paket Saat Ini', String(expiredRole).toUpperCase(), true),
-        field('🎮 Game Terpasang', String(jobDoc.gameCount), true),
-        field('🛡️ Bypass Terpasang', String(jobDoc.bypassCount), true)
-      ],
-      dm: true, webhook: true
-    }).catch(() => {});
+    // Kasih tahu user SEBELUM penghapusan terjadi — TAPI HANYA untuk pembersihan
+    // OTOMATIS (paket Gold/Platinum expired, sesuai spec awal). Kalau admin yang
+    // memicu manual (reason 'manual'), proses harus SILENT — TIDAK ADA notifikasi
+    // apapun ke user (tidak ada in-app notif, toast, DM, maupun webhook, dan modal
+    // Auto Remove di client juga TIDAK ditampilkan — lihat handlePremiumCleanup()
+    // di app.js). Ini permintaan eksplisit: hapus manual admin harus tanpa jejak
+    // notifikasi ke user, beda dari auto-delete setelah paket habis yang tetap
+    // wajib kasih notif sebelum & sesudah.
+    if (reason !== 'manual') {
+      notifyUser(discordId, {
+        type: 'announcement',
+        title: 'Paket Premium Berakhir — Konten Akan Dihapus',
+        message: `Masa aktif paket ${String(expiredRole).toUpperCase()} kamu sudah berakhir. Seluruh game (${jobDoc.gameCount}) dan bypass (${jobDoc.bypassCount}) premium yang kamu install akan otomatis dihapus dari PC${delayMs > 0 ? ` dalam ${settings.delay === '1h' ? '1 jam' : '24 jam'}` : ' saat ini juga'}.`,
+        fields: [
+          field('📦 Paket Berakhir', String(expiredRole).toUpperCase(), true),
+          field('🎮 Game Terpasang', String(jobDoc.gameCount), true),
+          field('🛡️ Bypass Terpasang', String(jobDoc.bypassCount), true)
+        ],
+        dm: true, webhook: true
+      }).catch(() => {});
+    }
 
     await tryDeliverCleanupJob(jobDoc);
     return jobDoc;
@@ -908,11 +911,14 @@ app.post('/api/premium-cleanup/:id/start', requireUser, async (req, res) => {
 
     const games = job.items.filter(i => i.itemType === 'game').map(i => i.itemName);
     const bypasses = job.items.filter(i => i.itemType === 'bypass').map(i => i.itemName);
+    const isManualJob = job.reason === 'manual';
     if (games.length) {
       logActivity({
         type: 'premium_cleanup_start', username: req.user.username, discordId: req.user.discordId,
         role: job.role, status: 'info', ip: getReqIp(req), device: getReqDevice(req),
-        description: `Penghapusan ${games.length} game premium milik ${req.user.username} dimulai (paket ${String(job.role).toUpperCase()} berakhir).`,
+        description: isManualJob
+          ? `Penghapusan manual (dipicu admin) ${games.length} game milik ${req.user.username} dimulai.`
+          : `Penghapusan ${games.length} game premium milik ${req.user.username} dimulai (paket ${String(job.role).toUpperCase()} berakhir).`,
         meta: { jobId: String(job._id), itemType: 'game', games }
       }).catch(() => {});
     }
@@ -920,7 +926,9 @@ app.post('/api/premium-cleanup/:id/start', requireUser, async (req, res) => {
       logActivity({
         type: 'premium_cleanup_start', username: req.user.username, discordId: req.user.discordId,
         role: job.role, status: 'info', ip: getReqIp(req), device: getReqDevice(req),
-        description: `Penghapusan ${bypasses.length} bypass premium milik ${req.user.username} dimulai (paket ${String(job.role).toUpperCase()} berakhir).`,
+        description: isManualJob
+          ? `Penghapusan manual (dipicu admin) ${bypasses.length} bypass milik ${req.user.username} dimulai.`
+          : `Penghapusan ${bypasses.length} bypass premium milik ${req.user.username} dimulai (paket ${String(job.role).toUpperCase()} berakhir).`,
         meta: { jobId: String(job._id), itemType: 'bypass', bypasses }
       }).catch(() => {});
     }
@@ -961,21 +969,28 @@ app.post('/api/premium-cleanup/:id/complete', requireUser, async (req, res) => {
     logActivity({
       type: 'premium_cleanup_done', username: req.user.username, discordId: req.user.discordId,
       role: job.role, status, ip: getReqIp(req), device: getReqDevice(req),
-      description: `Penghapusan konten premium ${req.user.username} selesai — ${removedGames.length} game & ${removedBypass.length} bypass terhapus${failed.length ? `, ${failed.length} gagal` : ''}.`,
+      description: job.reason === 'manual'
+        ? `Penghapusan manual (dipicu admin) untuk ${req.user.username} selesai — ${removedGames.length} game & ${removedBypass.length} bypass terhapus${failed.length ? `, ${failed.length} gagal` : ''}.`
+        : `Penghapusan konten premium ${req.user.username} selesai — ${removedGames.length} game & ${removedBypass.length} bypass terhapus${failed.length ? `, ${failed.length} gagal` : ''}.`,
       meta: { jobId: String(job._id), removedGames, removedBypass, failed }
     }).catch(() => {});
 
-    notifyUser(req.user.discordId, {
-      type: 'announcement',
-      title: allOk || results.length === 0 ? 'Konten Premium Berhasil Dihapus' : 'Penghapusan Konten Premium Selesai (Sebagian Gagal)',
-      message: `${removedGames.length} game dan ${removedBypass.length} bypass premium sudah dihapus dari PC kamu karena paket ${String(job.role).toUpperCase()} sudah berakhir.${failed.length ? ` ${failed.length} item gagal dihapus otomatis, cek folder Steam/game secara manual kalau perlu.` : ''}`,
-      fields: [
-        field('🎮 Game Dihapus', String(removedGames.length), true),
-        field('🛡️ Bypass Dihapus', String(removedBypass.length), true),
-        ...(failed.length ? [field('⚠️ Gagal', String(failed.length), true)] : [])
-      ],
-      dm: true, webhook: true
-    }).catch(() => {});
+    // SILENT untuk manual (dipicu admin) — sesuai permintaan eksplisit, TIDAK ADA
+    // notifikasi apapun ke user (in-app/DM/webhook) kalau admin yang menghapus.
+    // Auto-delete setelah paket Gold/Platinum expired TETAP kasih notif seperti biasa.
+    if (job.reason !== 'manual') {
+      notifyUser(req.user.discordId, {
+        type: 'announcement',
+        title: allOk || results.length === 0 ? 'Konten Premium Berhasil Dihapus' : 'Penghapusan Konten Premium Selesai (Sebagian Gagal)',
+        message: `${removedGames.length} game dan ${removedBypass.length} bypass premium sudah dihapus dari PC kamu karena paket ${String(job.role).toUpperCase()} sudah berakhir.${failed.length ? ` ${failed.length} item gagal dihapus otomatis, cek folder Steam/game secara manual kalau perlu.` : ''}`,
+        fields: [
+          field('🎮 Game Dihapus', String(removedGames.length), true),
+          field('🛡️ Bypass Dihapus', String(removedBypass.length), true),
+          ...(failed.length ? [field('⚠️ Gagal', String(failed.length), true)] : [])
+        ],
+        dm: true, webhook: true
+      }).catch(() => {});
+    }
 
     pushAccountUpdate(req.user.discordId).catch(() => {});
     res.json({ success: true, removedGames, removedBypass, failed });

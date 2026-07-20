@@ -2163,7 +2163,12 @@ async function handlePremiumCleanup(job) {
   if (!job || !job.jobId || _processedCleanupJobs.has(job.jobId)) return;
   _processedCleanupJobs.add(job.jobId);
 
-  showPremiumCleanupModal('start', job);
+  // SILENT untuk manual (dipicu admin dari 🧹/Hapus Manual) — sesuai permintaan
+  // eksplisit, TIDAK ADA popup/notifikasi apapun yang ditampilkan ke user, file
+  // tetap dihapus di background seperti biasa. Auto-delete setelah paket Gold/
+  // Platinum expired TETAP tampilkan modal peringatan seperti biasa.
+  const silent = job.reason === 'manual';
+  if (!silent) showPremiumCleanupModal('start', job);
 
   try { await api(`/api/premium-cleanup/${job.jobId}/start`, { method: 'POST' }); } catch (e) {}
 
@@ -2214,7 +2219,7 @@ async function handlePremiumCleanup(job) {
     });
   } catch (e) {}
 
-  showPremiumCleanupModal('done', job, { ...serverResult, needRestartSteam });
+  if (!silent) showPremiumCleanupModal('done', job, { ...serverResult, needRestartSteam });
 
   // Refresh tampilan supaya konten yang barusan dihapus langsung hilang dari Histori/Games
   setTimeout(() => {
