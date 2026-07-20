@@ -1383,6 +1383,7 @@ function _fillSetRoleModal(u) {
 
   _renderUserSummary(u);
   _renderStatusCurrent(u);
+  _renderDeviceSection(discordId);
 }
 
 function openSetRoleModal(discordId, username, currentRole) {
@@ -2130,3 +2131,193 @@ function wireWebhookSettingsButtons() {
     }
   });
 }
+// ─── DEVICE MANAGEMENT (Device Lock) — bagian dari modal Kelola User ───
+let _dmCurrentDiscordId = null; // discordId yang lagi ditampilkan di section device
+let _dmCurrentDevice = null;    // cache device doc terakhir yang di-fetch (buat modal spesifikasi/copy ID)
+
+function fmtBytes(bytes) {
+  if (!bytes || !Number.isFinite(Number(bytes))) return '—';
+  const gb = Number(bytes) / (1024 ** 3);
+  return gb >= 1 ? `${gb.toFixed(1)} GB` : `${(Number(bytes) / (1024 ** 2)).toFixed(0)} MB`;
+}
+
+const DM_STATUS_LABEL = { bound: '🟢 Terikat', unbound: '⚪ Belum Terikat', pending_change: '🟡 Menunggu Ganti Device' };
+const DM_LOG_ICON = {
+  device_registered: '🆕', login_rejected: '⛔', minor_change_tolerated: '🔧',
+  device_reset: '♻️', device_change_allowed: '🔓', device_change_used: '🔄'
+};
+const DM_LOG_LABEL = {
+  device_registered: 'Perangkat baru didaftarkan', login_rejected: 'Login ditolak (perangkat berbeda)',
+  minor_change_tolerated: 'Perubahan kecil hardware ditoleransi', device_reset: 'Device direset oleh Admin',
+  device_change_allowed: 'Admin mengizinkan ganti device', device_change_used: 'Perangkat baru didaftarkan (ganti device)'
+};
+
+async function _renderDeviceSection(discordId) {
+  _dmCurrentDiscordId = discordId || null;
+  const el = document.getElementById('dmSection');
+  if (!el) return;
+
+  if (!discordId) {
+    el.innerHTML = `<div class="dm-empty">Cari user dulu untuk melihat status perangkatnya.</div>`;
+    return;
+  }
+
+  el.innerHTML = `<div class="empty-cell"><span class="empty-icon">⏳</span>Memuat info perangkat...</div>`;
+  try {
+    const res = await api(`/api/admin/users/${encodeURIComponent(discordId)}/device`);
+    _dmCurrentDevice = res.device;
+    el.innerHTML = _dmCardHtml(res.status, res.device);
+  } catch (e) {
+    el.innerHTML = `<div class="dm-empty">⚠️ Gagal memuat info perangkat: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function _dmCardHtml(status, device) {
+  const badge = `<span class="dm-status-badge ${status}">${DM_STATUS_LABEL[status] || status}</span>`;
+
+  if (status === 'unbound' || !device) {
+    return `
+      <div class="dm-card">
+        <div class="dm-card-head">
+          <div class="dm-pc-name">🔒 Belum ada perangkat terikat</div>
+          ${badge}
+        </div>
+        <div class="dm-empty">User ini belum pernah login, jadi belum ada perangkat yang terdaftar. Perangkat pertama yang dipakai login akan otomatis terikat ke akun ini.</div>
+      </div>`;
+  }
+
+  const info = device.info || {};
+  return `
+    <div class="dm-card">
+      <div class="dm-card-head">
+        <div class="dm-pc-name">🖥️ ${escapeHtml(info.pcName || 'Tidak diketahui')}</div>
+        ${badge}
+      </div>
+      <div class="dm-fingerprint-row">
+        <span class="dm-fingerprint">ID: ${escapeHtml((device.fingerprint || '').slice(0, 24))}...</span>
+        <button class="dm-copy-btn" onclick="doCopyDeviceId()">📋 Salin</button>
+      </div>
+      <div class="dm-spec-grid">
+        <div class="dm-spec-item"><span class="l">🧠 CPU</span><span class="v">${escapeHtml(info.cpuName || '—')}</span></div>
+        <div class="dm-spec-item"><span class="l">💾 RAM</span><span class="v">${fmtBytes(info.ramTotalBytes)}</span></div>
+        <div class="dm-spec-item"><span class="l">🎮 GPU</span><span class="v">${escapeHtml(info.gpuName || '—')}</span></div>
+        <div class="dm-spec-item"><span class="l">🪟 OS</span><span class="v">${escapeHtml(info.osName || '—')}</span></div>
+        <div class="dm-spec-item"><span class="l">📅 Didaftarkan</span><span class="v">${device.registeredAt ? fmtDateShort(device.registeredAt) : '—'}</span></div>
+        <div class="dm-spec-item"><span class="l">🔑 Login Terakhir</span><span class="v">${device.lastLoginAt ? timeAgo(device.lastLoginAt) : '—'}</span></div>
+      </div>
+      <div class="dm-actions">
+        <button class="btn btn-sm btn-outline" onclick="doShowDeviceSpecs()">🔍 Detail Spesifikasi</button>
+        <button class="btn btn-sm btn-outline" onclick="doShowDeviceHistory()">🕘 Riwayat</button>
+        <button class="btn btn-sm btn-outline" style="border-color:#ffd76a;color:#ffd76a;" onclick="openDmConfirmModal('change')">🔓 Ganti Device</button>
+        <button class="btn btn-sm btn-outline" style="border-color:var(--red);color:var(--red);" onclick="openDmConfirmModal('reset')">♻️ Reset Device</button>
+      </div>
+    </div>`;
+}
+
+function doCopyDeviceId() {
+  if (!_dmCurrentDevice?.fingerprint) return;
+  navigator.clipboard?.writeText(_dmCurrentDevice.fingerprint)
+    .then(() => showToast('Device ID disalin ke clipboard.', 'success'))
+    .catch(() => showToast('Gagal menyalin Device ID.', 'error'));
+}
+window.doCopyDeviceId = doCopyDeviceId;
+
+function doShowDeviceSpecs() {
+  const info = _dmCurrentDevice?.info || {};
+  const rows = [
+    ['🖥️ Nama PC', info.pcName], ['👤 Username Windows', info.windowsUsername],
+    ['🪟 Sistem Operasi', info.osName], ['🔢 Versi Windows', info.osVersion],
+    ['🏗️ Build Windows', info.osBuild], ['⚙️ Arsitektur', info.arch],
+    ['🧠 CPU', info.cpuName], ['🧵 Core / Thread', (info.cpuCores && info.cpuThreads) ? `${info.cpuCores} core / ${info.cpuThreads} thread` : null],
+    ['💾 RAM Total', fmtBytes(info.ramTotalBytes)], ['🎮 GPU', info.gpuName],
+    ['🔧 Motherboard', [info.boardVendor, info.boardModel].filter(Boolean).join(' ') || null],
+    ['💽 Disk Utama', info.diskModel], ['📦 Kapasitas Disk', fmtBytes(info.diskSizeBytes)],
+    ['🚀 Versi App', info.appVersion],
+  ].filter(([, v]) => v !== null && v !== undefined && v !== '');
+
+  const body = `
+    <div class="dm-spec-grid" style="grid-template-columns:1fr 1fr;">
+      ${rows.map(([label, value]) => `
+        <div class="dm-spec-item"><span class="l">${label}</span><span class="v">${escapeHtml(String(value))}</span></div>
+      `).join('')}
+    </div>`;
+  openDmSubModal('🔍 Detail Spesifikasi Perangkat', body || '<div class="dm-empty">Tidak ada data spesifikasi.</div>');
+}
+window.doShowDeviceSpecs = doShowDeviceSpecs;
+
+async function doShowDeviceHistory() {
+  openDmSubModal('🕘 Riwayat Perangkat', `<div class="empty-cell"><span class="empty-icon">⏳</span>Memuat riwayat...</div>`);
+  try {
+    const logs = await api(`/api/admin/users/${encodeURIComponent(_dmCurrentDiscordId)}/device/logs`);
+    const body = document.getElementById('dmSubModalBody');
+    if (!logs.length) { body.innerHTML = `<div class="dm-empty">Belum ada riwayat aktivitas perangkat.</div>`; return; }
+    body.innerHTML = logs.map(l => `
+      <div class="dm-log-row">
+        <div class="dm-log-icon">${DM_LOG_ICON[l.action] || 'ℹ️'}</div>
+        <div class="dm-log-body">
+          <div class="dm-log-action">${DM_LOG_LABEL[l.action] || l.action}${l.byAdmin ? ' <span style="color:var(--text-faint);">(oleh Admin)</span>' : ''}</div>
+          ${l.detail?.attemptedInfo?.pcName ? `<div class="dm-log-detail">Perangkat: ${escapeHtml(l.detail.attemptedInfo.pcName)}</div>` : ''}
+          ${l.detail?.changedComponents ? `<div class="dm-log-detail">Komponen berubah: ${escapeHtml(l.detail.changedComponents.join(', '))}</div>` : ''}
+          ${l.adminNote ? `<div class="dm-log-detail">📝 ${escapeHtml(l.adminNote)}</div>` : ''}
+          <div class="dm-log-time">${fmtDateShort(l.createdAt)}</div>
+        </div>
+      </div>
+    `).join('');
+  } catch (e) {
+    const body = document.getElementById('dmSubModalBody');
+    if (body) body.innerHTML = `<div class="dm-empty">⚠️ Gagal memuat riwayat: ${escapeHtml(e.message)}</div>`;
+  }
+}
+window.doShowDeviceHistory = doShowDeviceHistory;
+
+function openDmSubModal(title, bodyHtml) {
+  document.getElementById('dmSubModalTitle').textContent = title;
+  document.getElementById('dmSubModalBody').innerHTML = bodyHtml;
+  document.getElementById('dmSubModalBackdrop').style.display = 'flex';
+}
+function closeDmSubModal() {
+  document.getElementById('dmSubModalBackdrop').style.display = 'none';
+}
+window.closeDmSubModal = closeDmSubModal;
+
+// ── Konfirmasi Reset/Ganti Device ──
+let _dmConfirmAction = null; // 'reset' | 'change'
+function openDmConfirmModal(action) {
+  if (!_dmCurrentDiscordId) return;
+  _dmConfirmAction = action;
+  const isReset = action === 'reset';
+  document.getElementById('dmConfirmTitle').textContent = isReset ? '♻️ Reset Device' : '🔓 Ganti Device';
+  document.getElementById('dmConfirmText').textContent = isReset
+    ? 'Ikatan perangkat user ini akan LANGSUNG dilepas sekarang. Kalau app-nya sedang aktif, user akan otomatis ter-logout. Login berikutnya dari perangkat manapun akan didaftarkan sebagai perangkat baru. Yakin lanjutkan?'
+    : 'User TIDAK akan langsung ter-logout. Tapi login berikutnya (dari perangkat manapun) akan didaftarkan sebagai perangkat utama baru, menggantikan yang lama. Yakin lanjutkan?';
+  document.getElementById('dmConfirmNote').value = '';
+  document.getElementById('dmConfirmModalBackdrop').style.display = 'flex';
+}
+window.openDmConfirmModal = openDmConfirmModal;
+
+function closeDmConfirmModal() {
+  document.getElementById('dmConfirmModalBackdrop').style.display = 'none';
+  _dmConfirmAction = null;
+}
+window.closeDmConfirmModal = closeDmConfirmModal;
+
+document.getElementById('dmConfirmBtn')?.addEventListener('click', async () => {
+  if (!_dmConfirmAction || !_dmCurrentDiscordId) return;
+  const btn = document.getElementById('dmConfirmBtn');
+  const note = document.getElementById('dmConfirmNote').value.trim();
+  const endpoint = _dmConfirmAction === 'reset' ? 'reset' : 'allow-change';
+
+  btn.disabled = true; btn.textContent = 'Memproses...';
+  try {
+    await api(`/api/admin/users/${encodeURIComponent(_dmCurrentDiscordId)}/device/${endpoint}`, {
+      method: 'POST', body: JSON.stringify({ note: note || undefined })
+    });
+    showToast(_dmConfirmAction === 'reset' ? '✅ Device berhasil direset.' : '✅ Pergantian device diizinkan.', 'success');
+    closeDmConfirmModal();
+    _renderDeviceSection(_dmCurrentDiscordId);
+  } catch (e) {
+    showToast('Gagal: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Konfirmasi';
+  }
+});

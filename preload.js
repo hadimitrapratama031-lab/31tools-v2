@@ -21,4 +21,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Download progress events
   onDownloadProgress: (cb) => ipcRenderer.on('download-progress', (_, data) => cb(data)),
+
+  // Device Lock — kumpulkan info hardware buat fingerprint perangkat
+  getDeviceInfo: () => ipcRenderer.invoke('get-device-info'),
 });

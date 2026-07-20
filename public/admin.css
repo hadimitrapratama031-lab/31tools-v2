@@ -1598,3 +1598,53 @@ select.form-input option {
   .quota-adjust-row { align-items: stretch; }
   .quota-adjust-label { min-width: 0; }
 }
+/* ─── DEVICE MANAGEMENT (Device Lock) ─── */
+.dm-card {
+  background: rgba(255,255,255,.03); border: 1px solid var(--line);
+  border-radius: var(--radius-sm); padding: 14px; margin: 4px 0 10px;
+}
+.dm-card-head { display: flex; align-items: center; justify-content: space-between; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+.dm-status-badge {
+  font-size: 10.5px; font-weight: 800; text-transform: uppercase; letter-spacing: .04em;
+  padding: 4px 11px; border-radius: 99px; white-space: nowrap;
+}
+.dm-status-badge.bound          { background: rgba(74,222,128,.14); color: var(--green); }
+.dm-status-badge.unbound        { background: rgba(255,255,255,.08); color: var(--text-faint); }
+.dm-status-badge.pending_change { background: rgba(255,215,106,.14); color: var(--gold); }
+
+.dm-pc-name { font-size: 14px; font-weight: 700; color: var(--text-main); display: flex; align-items: center; gap: 8px; }
+.dm-fingerprint-row { display: flex; align-items: center; gap: 8px; margin-top: 4px; }
+.dm-fingerprint { font-family: 'Courier New', monospace; font-size: 11px; color: var(--text-faint); }
+.dm-copy-btn {
+  background: none; border: none; color: var(--violet); cursor: pointer; font-size: 11px;
+  padding: 2px 6px; border-radius: 6px; flex-shrink: 0;
+}
+.dm-copy-btn:hover { background: rgba(255,255,255,.06); }
+
+.dm-spec-grid {
+  display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 10px;
+}
+.dm-spec-item { display: flex; flex-direction: column; gap: 2px; }
+.dm-spec-item .l { font-size: 10.5px; color: var(--text-faint); text-transform: uppercase; letter-spacing: .03em; display: flex; align-items: center; gap: 4px; }
+.dm-spec-item .v { font-size: 12.5px; font-weight: 600; color: var(--text-main); }
+
+.dm-actions { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 12px; }
+.dm-actions .btn { padding: 8px 13px; font-size: 12px; }
+
+.dm-empty { font-size: 12.5px; color: var(--text-faint); padding: 14px 4px; text-align: center; }
+
+/* ─── Device Lock — riwayat log list (dipakai di modal sub-detail) ─── */
+.dm-log-row {
+  display: flex; align-items: flex-start; gap: 10px;
+  padding: 10px 0; border-bottom: 1px solid var(--line);
+}
+.dm-log-row:last-child { border-bottom: none; }
+.dm-log-icon { font-size: 16px; flex-shrink: 0; width: 22px; text-align: center; }
+.dm-log-body { flex: 1; min-width: 0; }
+.dm-log-action { font-size: 12.5px; font-weight: 700; color: var(--text-main); }
+.dm-log-detail { font-size: 11.5px; color: var(--text-dim); margin-top: 2px; line-height: 1.5; }
+.dm-log-time { font-size: 10.5px; color: var(--text-faint); margin-top: 3px; }
+
+@media (max-width: 720px) {
+  .dm-spec-grid { grid-template-columns: 1fr; }
+}

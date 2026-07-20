@@ -610,6 +610,11 @@ const roleSync = require('./discordRoleSync')({ getDb: () => db, ROLE_LEVEL });
 // Settings, disimpan di DB, berlaku realtime tanpa restart.
 const webhookManager = require('./webhookManager')({ getDb: () => db });
 
+// Device Lock — 1 akun cuma bisa dipakai di 1 perangkat (lihat deviceLock.js).
+// Fingerprint dihitung dari kombinasi beberapa komponen hardware, disimpan di
+// DB (collection `devices` + audit trail `deviceLogs`), berlaku realtime.
+const deviceLock = require('./deviceLock')({ getDb: () => db });
+
 // Pemetaan jenis notifikasi in-app (`type` di notifyUser) -> kategori webhook.
 // Dipakai supaya satu fungsi notifyUser tetap bisa dipanggil dari mana saja,
 // tapi webhook-nya otomatis nyampur ke channel Discord yang benar sesuai kategori.
@@ -654,6 +659,8 @@ async function connectDB() {
     await db.collection('notifications').createIndex({ discordId: 1, read: 1 });
     await db.collection('activityLogs').createIndex({ createdAt: -1 });
     await db.collection('activityLogs').createIndex({ type: 1, createdAt: -1 });
+    await db.collection('deviceLogs').createIndex({ discordId: 1, createdAt: -1 });
+    await db.collection('deviceLogs').createIndex({ createdAt: -1 });
   } catch (e) {
     console.error('❌ Gagal konek MongoDB:', e.message);
     // TIDAK process.exit() — server tetap jalan supaya endpoint /health dan interactions tetap bisa diakses
@@ -1765,6 +1772,68 @@ app.get('/api/me/role-check', requireUser, (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
+// DEVICE LOCK — dipanggil app SEKALI tiap sesi login (baik login Discord baru
+// MAUPUN "Masuk Sekarang" pakai token tersimpan), SEBELUM masuk ke dashboard.
+// App mengumpulkan info hardware lewat electronAPI.getDeviceInfo() (IPC ke main
+// process), lalu kirim ke sini. Server yang menghitung fingerprint & mencocokkan
+// dengan perangkat yang sudah terikat ke akun ini (lihat deviceLock.js).
+// ══════════════════════════════════════════════════════════════════════════
+app.post('/api/device/verify', requireUser, async (req, res) => {
+  try {
+    const deviceInfo = req.body || {};
+    const ip = (req.headers['x-forwarded-for']?.split(',')[0]?.trim()) || req.socket.remoteAddress || null;
+
+    const result = await deviceLock.verifyOrRegister(req.user.discordId, req.user.username, deviceInfo, { ip });
+
+    if (!result.allowed) {
+      // Notif ke channel admin (opsional, default OFF) — best-effort, tidak pernah
+      // menghambat proses tolak-login user.
+      webhookManager.sendCategoryWebhook('device_security', {
+        embed: buildEmbed({
+          status: 'error',
+          title: 'Login Ditolak — Perangkat Berbeda',
+          description: `**${req.user.username}** mencoba login dari perangkat yang TIDAK terikat ke akunnya.`,
+          fields: [
+            field('👤 Username', req.user.username, true),
+            field('🆔 Discord ID', req.user.discordId, true),
+            field('🖥️ Nama PC (percobaan)', deviceInfo.pcName, true),
+            field('🌐 IP', ip, true)
+          ],
+          appName: APP_NAME,
+          footerNote: 'Keamanan Perangkat'
+        })
+      }).catch(() => {});
+      return res.status(403).json({ error: result.reason, deviceLocked: true });
+    }
+
+    // Perangkat baru terdaftar pertama kali — kabari channel keamanan (opsional).
+    if (result.status === 'registered') {
+      webhookManager.sendCategoryWebhook('device_security', {
+        embed: buildEmbed({
+          status: 'success',
+          title: 'Perangkat Baru Terdaftar',
+          description: `Perangkat utama untuk **${req.user.username}** berhasil didaftarkan.`,
+          fields: [
+            field('👤 Username', req.user.username, true),
+            field('🆔 Discord ID', req.user.discordId, true),
+            field('🖥️ Nama PC', deviceInfo.pcName, true)
+          ],
+          appName: APP_NAME,
+          footerNote: 'Keamanan Perangkat'
+        })
+      }).catch(() => {});
+    }
+
+    res.json({ allowed: true, status: result.status });
+  } catch (e) {
+    // Best-effort: kalau device lock gagal karena error tak terduga, JANGAN sampai
+    // memblokir user yang sah masuk app — cukup log & izinkan lanjut.
+    console.warn('[DeviceLock] Error saat verifikasi, fail-open:', e.message);
+    res.json({ allowed: true, status: 'error_fail_open' });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
 // NOTIFIKASI — endpoint user (in-app)
 // ══════════════════════════════════════════════════════════════════════════
 app.get('/api/notifications', requireUser, async (req, res) => {
@@ -2649,6 +2718,141 @@ app.put('/api/admin/users/:discordId/status', requireAdmin, async (req, res) => 
     res.status(500).json({ error: e.message });
   }
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// ADMIN — DEVICE MANAGEMENT (Device Lock: 1 akun = 1 perangkat)
+// ══════════════════════════════════════════════════════════════════════════
+
+// Detail perangkat yang terikat ke satu user (dipakai section "Device Management"
+// di modal Kelola User). Return status 'unbound' kalau belum pernah login sama sekali.
+app.get('/api/admin/users/:discordId/device', requireAdmin, async (req, res) => {
+  try {
+    const device = await deviceLock.getDevice(req.params.discordId);
+    if (!device) return res.json({ status: 'unbound', device: null });
+    res.json({
+      status: device.pendingChange ? 'pending_change' : 'bound',
+      device: {
+        fingerprint: device.fingerprint,
+        info: device.info,
+        registeredAt: device.registeredAt,
+        lastLoginAt: device.lastLoginAt,
+        lastActiveAt: device.lastActiveAt,
+        pendingChange: !!device.pendingChange
+      }
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Riwayat aktivitas perangkat (registrasi, login sukses, ditolak, reset, dll).
+app.get('/api/admin/users/:discordId/device/logs', requireAdmin, async (req, res) => {
+  try {
+    const logs = await deviceLock.getLogs(req.params.discordId, Number(req.query.limit) || 50);
+    res.json(logs);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Reset Device — langsung lepas ikatan SEKARANG. Login berikutnya dari perangkat
+// manapun otomatis didaftarkan sebagai perangkat baru.
+app.post('/api/admin/users/:discordId/device/reset', requireAdmin, async (req, res) => {
+  try {
+    const discordId = req.params.discordId;
+    const user = await db.collection('users').findOne({ discordId });
+    if (!user) return res.status(404).json({ error: 'User tidak ditemukan.' });
+
+    await deviceLock.resetDevice(discordId, { adminNote: req.body?.note, username: user.username });
+
+    logActivity({
+      type: 'account_status',
+      username: req.admin?.username || 'Admin',
+      discordId,
+      description: `Admin mereset perangkat (Device Lock) milik ${user.username || discordId}.`,
+      meta: { discordId, action: 'device_reset' }
+    }).catch(() => {});
+
+    notifyUser(discordId, {
+      type: 'announcement',
+      title: 'Perangkat Kamu Direset',
+      message: 'Perangkat yang terikat ke akun kamu telah direset oleh Admin. Login berikutnya dari perangkat manapun akan otomatis didaftarkan sebagai perangkat baru.',
+      fields: [field('👤 Username', user.username || discordId, true), field('🆔 Discord ID', discordId, true)],
+      dm: true, webhook: false
+    }).catch(() => {});
+
+    webhookManager.sendCategoryWebhook('device_security', {
+      embed: buildEmbed({
+        status: 'warning',
+        title: 'Device Direset oleh Admin',
+        description: `Admin mereset ikatan perangkat untuk **${user.username || discordId}**.`,
+        fields: [
+          field('👤 Username', user.username || discordId, true),
+          field('🆔 Discord ID', discordId, true),
+          ...(req.body?.note ? [field('📝 Catatan Admin', req.body.note, false)] : [])
+        ],
+        appName: APP_NAME,
+        footerNote: 'Keamanan Perangkat'
+      })
+    }).catch(() => {});
+
+    // Kalau app-nya lagi kebuka aktif sekarang, langsung tendang keluar realtime
+    // (tanpa perlu restart app) — user tinggal login ulang, akan didaftar ulang.
+    wsSendToUser(discordId, 'device:reset', { reason: 'admin_reset' });
+
+    res.json({ success: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Ganti Device — TIDAK langsung menendang sesi yang sedang aktif. Login berikutnya
+// (dari perangkat apa pun) akan didaftar ulang sebagai perangkat utama baru, sekali pakai.
+app.post('/api/admin/users/:discordId/device/allow-change', requireAdmin, async (req, res) => {
+  try {
+    const discordId = req.params.discordId;
+    const user = await db.collection('users').findOne({ discordId });
+    if (!user) return res.status(404).json({ error: 'User tidak ditemukan.' });
+
+    await deviceLock.allowDeviceChange(discordId, { adminNote: req.body?.note, username: user.username });
+
+    logActivity({
+      type: 'account_status',
+      username: req.admin?.username || 'Admin',
+      discordId,
+      description: `Admin mengizinkan pergantian perangkat (Device Lock) untuk ${user.username || discordId}.`,
+      meta: { discordId, action: 'device_change_allowed' }
+    }).catch(() => {});
+
+    notifyUser(discordId, {
+      type: 'announcement',
+      title: 'Pergantian Perangkat Diizinkan',
+      message: 'Admin mengizinkan kamu login dari perangkat baru. Login berikutnya akan otomatis didaftarkan sebagai perangkat utama kamu yang baru.',
+      fields: [field('👤 Username', user.username || discordId, true), field('🆔 Discord ID', discordId, true)],
+      dm: true, webhook: false
+    }).catch(() => {});
+
+    webhookManager.sendCategoryWebhook('device_security', {
+      embed: buildEmbed({
+        status: 'info',
+        title: 'Pergantian Device Diizinkan Admin',
+        description: `Admin mengizinkan **${user.username || discordId}** login dari perangkat baru (berlaku sekali, login berikutnya).`,
+        fields: [
+          field('👤 Username', user.username || discordId, true),
+          field('🆔 Discord ID', discordId, true),
+          ...(req.body?.note ? [field('📝 Catatan Admin', req.body.note, false)] : [])
+        ],
+        appName: APP_NAME,
+        footerNote: 'Keamanan Perangkat'
+      })
+    }).catch(() => {});
+
+    res.json({ success: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 
 // ══════════════════════════════════════════════════════════════════════════
 // ADMIN — PENGUMUMAN / NOTIFIKASI

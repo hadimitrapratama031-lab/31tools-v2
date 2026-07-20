@@ -789,6 +789,12 @@
         <button class="btn btn-sm btn-outline" style="border-color:var(--red);color:var(--red);" onclick="doSetStatus('banned')">⛔ Ban</button>
       </div>
 
+      <!-- ── Device Management (Device Lock) ── -->
+      <div class="modal-divider">🔒 Device Management</div>
+      <div id="dmSection">
+        <div class="empty-cell"><span class="empty-icon">⏳</span>Memuat info perangkat...</div>
+      </div>
+
       <!-- ── Kirim Pesan ── -->
       <div class="modal-divider">📢 Kirim Pesan ke User</div>
       <input id="srMsgTitle" class="form-input" placeholder="Judul notifikasi" style="margin-bottom:10px;">
@@ -803,6 +809,38 @@
     </div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeSetRoleModal()">Tutup</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MODAL: DEVICE LOCK — sub-detail (Riwayat / Spesifikasi Lengkap) ═══ -->
+<div class="modal-backdrop" id="dmSubModalBackdrop" style="display:none;" onclick="if(event.target===this)closeDmSubModal()">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div class="modal-title" id="dmSubModalTitle">🔒 Device</div>
+      <button class="modal-close" onclick="closeDmSubModal()">×</button>
+    </div>
+    <div class="modal-body" id="dmSubModalBody"></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeDmSubModal()">Tutup</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MODAL: DEVICE LOCK — konfirmasi Reset/Ganti Device ═══ -->
+<div class="modal-backdrop" id="dmConfirmModalBackdrop" style="display:none;" onclick="if(event.target===this)closeDmConfirmModal()">
+  <div class="modal" style="max-width:440px;">
+    <div class="modal-header">
+      <div class="modal-title" id="dmConfirmTitle">⚠️ Konfirmasi</div>
+      <button class="modal-close" onclick="closeDmConfirmModal()">×</button>
+    </div>
+    <div class="modal-body">
+      <p id="dmConfirmText" style="font-size:13px;color:var(--text-dim);line-height:1.6;margin:0 0 14px;"></p>
+      <textarea id="dmConfirmNote" class="form-input" placeholder="Catatan admin (opsional)" style="min-height:52px;"></textarea>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeDmConfirmModal()">Batal</button>
+      <button class="btn btn-primary" id="dmConfirmBtn" style="background:var(--red);border-color:var(--red);">Konfirmasi</button>
     </div>
   </div>
 </div>

@@ -44,6 +44,7 @@ const CATEGORIES = [
   { key: 'period_expired',   label: 'Paket Berakhir',                 icon: '🚫', color: 0xff6b81, desc: 'Terkirim saat masa aktif Gold/Platinum user habis & otomatis turun ke Public.' },
   { key: 'announcement',     label: 'Pengumuman / Informasi Admin',  icon: '📢', color: 0x7c5cff, desc: 'Terkirim saat admin mengirim pengumuman ke satu user atau semua user.' },
   { key: 'login',            label: 'Login Akun',                    icon: '🔑', color: 0x3498db, desc: 'Opsional — terkirim tiap user berhasil login lewat Discord OAuth.', optional: true },
+  { key: 'device_security',  label: 'Keamanan Perangkat (Device Lock)', icon: '🔒', color: 0xff8fa3, desc: 'Opsional — perangkat baru terdaftar, login ditolak (perangkat beda), device direset/diizinkan ganti oleh admin.', optional: true },
   { key: 'system_error',     label: 'Error Sistem',                  icon: '🛠️', color: 0xff4d4d, desc: 'Opsional — error tak tertangani di server (crash, promise rejection, dll).', optional: true }
 ];
 const CATEGORY_KEYS = CATEGORIES.map(c => c.key);

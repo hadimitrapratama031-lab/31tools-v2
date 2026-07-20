@@ -291,6 +291,20 @@ function buildLoginOverlay() {
       if (loginStatusEl) { loginStatusEl.textContent = ''; }
       try {
         const user = await api('/api/me');
+
+        const deviceCheck = await verifyDeviceLock();
+        if (!deviceCheck.ok) {
+          btn.disabled = false;
+          btn.innerHTML = '⚡ Masuk Sekarang';
+          localStorage.removeItem('token');
+          localStorage.removeItem('_savedUser');
+          overlay.remove();
+          _installModalEl = null;
+          buildLoginOverlay();
+          showLogin(deviceCheck.message);
+          return;
+        }
+
         hideLogin();
         enterApp(user);
       } catch (e) {
@@ -367,6 +381,23 @@ function hideLogin() {
   if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
 }
 
+// ── DEVICE LOCK — dipanggil SEKALI tiap sesi login (baru atau "Masuk Sekarang"),
+// SEBELUM masuk dashboard. Kumpulkan info hardware lewat main process (IPC), lalu
+// minta server cocokkan dengan perangkat yang terikat ke akun ini. Kalau server
+// tidak bisa dihubungi sama sekali (jaringan), fail-open (jangan blokir user gara-gara
+// koneksi) — tapi kalau server BALIKIN penolakan eksplisit (403 device beda), blokir.
+async function verifyDeviceLock() {
+  try {
+    const info = (window.electronAPI?.getDeviceInfo) ? await window.electronAPI.getDeviceInfo() : {};
+    await api('/api/device/verify', { method: 'POST', body: JSON.stringify(info || {}) });
+    return { ok: true };
+  } catch (e) {
+    const isNetworkError = /fetch|network/i.test(e.message || '');
+    if (isNetworkError) return { ok: true };
+    return { ok: false, message: e.message || 'Perangkat ini tidak diizinkan mengakses akun ini.' };
+  }
+}
+
 function startLogin() {
   const deviceId = getOrCreateDeviceId();
   const openExternal = window.electronAPI?.openExternal || (url => window.open(url, '_blank'));
@@ -403,6 +434,15 @@ function startLogin() {
         clearInterval(pollTimer);
         pollTimer = null;
         localStorage.setItem('token', data.token);
+
+        const deviceCheck = await verifyDeviceLock();
+        if (!deviceCheck.ok) {
+          localStorage.removeItem('token');
+          localStorage.removeItem('_savedUser');
+          resetLoginButton(deviceCheck.message);
+          return;
+        }
+
         hideLogin();
         enterApp(data.user);
       }
@@ -1668,6 +1708,8 @@ function connectRealtime() {
       handleIncomingNotification(msg.data);
     } else if (msg.event === 'notification:unread-count') {
       setNotifUnreadCount(msg.data.unread);
+    } else if (msg.event === 'device:reset') {
+      handleDeviceReset();
     }
   };
 
@@ -1703,7 +1745,18 @@ function handleAccountUpdate(freshUser) {
   }
 }
 
-// ── PACKAGE CARD (sidebar) — Download Limit & Masa Aktif, realtime ──
+// Dipanggil kalau admin menekan "Reset Device" saat app ini sedang aktif — paksa
+// logout sekarang juga (tanpa perlu restart app), user tinggal login ulang dan
+// perangkat ini otomatis didaftarkan lagi sebagai perangkat baru.
+function handleDeviceReset() {
+  disconnectRealtime();
+  localStorage.removeItem('token');
+  localStorage.removeItem('_savedUser');
+  currentUser = null;
+  location.reload();
+}
+
+
 const PKG_UNIT_LABEL = { minutes: 'menit', hours: 'jam', days: 'hari' };
 function renderPackageCard(user) {
   const status = user?.accountStatus;

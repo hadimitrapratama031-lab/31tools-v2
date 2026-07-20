@@ -499,3 +499,72 @@ ipcMain.handle('restart-steam', (event, steamPath) => {
     return { success: true };
   } catch (e) { return { success: false, error: e.message }; }
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// DEVICE LOCK — kumpulkan info hardware buat dijadikan fingerprint perangkat.
+// ══════════════════════════════════════════════════════════════════════════
+// Dipanggil sekali tiap sesi login (bukan tiap request API) lewat electronAPI.getDeviceInfo().
+// Semua query lewat PowerShell (Get-CimInstance) — tidak butuh dependency npm baru.
+// Kombinasi 4 komponen dipakai sebagai fingerprint (bukan cuma 1 macam data):
+//   1. MachineGuid Windows (registry, HKLM\SOFTWARE\Microsoft\Cryptography)
+//   2. CPU (nama, jumlah core/thread)
+//   3. Motherboard (vendor + serial/model)
+//   4. Disk utama (model + serial)
+// Server yang menghitung hash & fingerprint akhir (lihat deviceLock.js) — di sini
+// cuma mengumpulkan raw value-nya, TERMASUK yang buat ditampilkan admin (CPU/RAM/GPU/OS).
+function runPS(cmd, timeout = 12000) {
+  try {
+    return execSync(`powershell -NoProfile -NonInteractive -Command "${cmd.replace(/"/g, '\\"')}"`, {
+      windowsHide: true, timeout, encoding: 'utf8'
+    }).trim();
+  } catch (e) {
+    return '';
+  }
+}
+
+ipcMain.handle('get-device-info', async () => {
+  try {
+    const os = require('os');
+
+    // Satu panggilan PowerShell buat semua CIM query sekaligus (lebih cepat daripada
+    // spawn proses terpisah tiap komponen).
+    const psScript = `
+      $ErrorActionPreference = 'SilentlyContinue'
+      $cpu   = Get-CimInstance Win32_Processor | Select-Object -First 1 Name, NumberOfCores, NumberOfLogicalProcessors
+      $cs    = Get-CimInstance Win32_ComputerSystem | Select-Object -First 1 Manufacturer, Model, Name, TotalPhysicalMemory
+      $gpu   = Get-CimInstance Win32_VideoController | Select-Object -First 1 Name
+      $bb    = Get-CimInstance Win32_BaseBoard | Select-Object -First 1 Manufacturer, Product, SerialNumber
+      $disk  = Get-CimInstance Win32_DiskDrive | Sort-Object Index | Select-Object -First 1 Model, Size, SerialNumber
+      $osi   = Get-CimInstance Win32_OperatingSystem | Select-Object -First 1 Caption, Version, BuildNumber, OSArchitecture
+      $guid  = (Get-ItemProperty 'HKLM:\\SOFTWARE\\Microsoft\\Cryptography' -Name MachineGuid -ErrorAction SilentlyContinue).MachineGuid
+      [PSCustomObject]@{ cpu=$cpu; cs=$cs; gpu=$gpu; bb=$bb; disk=$disk; osi=$osi; machineGuid=$guid } | ConvertTo-Json -Depth 4 -Compress
+    `;
+    const raw = runPS(psScript, 15000);
+    let wmi = {};
+    try { wmi = JSON.parse(raw || '{}'); } catch (e) { wmi = {}; }
+
+    return {
+      pcName:           wmi.cs?.Name || os.hostname() || '',
+      windowsUsername:  os.userInfo()?.username || '',
+      osName:            wmi.osi?.Caption || `${os.platform()} ${os.release()}`,
+      osVersion:        wmi.osi?.Version || os.release() || '',
+      osBuild:          wmi.osi?.BuildNumber ? String(wmi.osi.BuildNumber) : '',
+      arch:             wmi.osi?.OSArchitecture || os.arch() || '',
+      cpuName:          wmi.cpu?.Name || (os.cpus()[0]?.model || ''),
+      cpuCores:         wmi.cpu?.NumberOfCores || null,
+      cpuThreads:       wmi.cpu?.NumberOfLogicalProcessors || (os.cpus()?.length || null),
+      ramTotalBytes:    wmi.cs?.TotalPhysicalMemory ? Number(wmi.cs.TotalPhysicalMemory) : (os.totalmem() || null),
+      gpuName:          wmi.gpu?.Name || '',
+      boardVendor:      wmi.bb?.Manufacturer || '',
+      boardModel:       wmi.bb?.Product || '',
+      boardSerial:      wmi.bb?.SerialNumber || '',
+      diskModel:        wmi.disk?.Model || '',
+      diskSizeBytes:    wmi.disk?.Size ? Number(wmi.disk.Size) : null,
+      diskSerial:       wmi.disk?.SerialNumber || '',
+      machineGuid:      wmi.machineGuid || '',
+      appVersion:       app.getVersion() || '',
+    };
+  } catch (e) {
+    return { error: e.message };
+  }
+});
