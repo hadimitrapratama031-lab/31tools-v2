@@ -961,6 +961,7 @@ let bannerSlides = [];
 let bannerIndex = 0;
 let bannerAutoTimer = null;
 const BANNER_AUTO_MS = 6000; // auto-slide tiap 6 detik (dalam rentang 5-7 detik yang diminta)
+const BANNER_CODE_LOAD_TIMEOUT_MS = 5000; // kalau Code Banner ga kirim tanda "siap" dalam 5 detik -> fallback
 
 async function loadBanners() {
   try {
@@ -969,6 +970,69 @@ async function loadBanners() {
   } catch (e) {
     renderBannerCarousel([]); // gagal load → tampilkan empty state, bukan data palsu
   }
+}
+
+// Bikin dokumen HTML lengkap buat di-taruh di `srcdoc` iframe sandbox milik
+// Code Banner. SATU-SATUNYA tempat HTML/CSS/JS banner custom dijalankan —
+// iframe-nya pakai sandbox="allow-scripts" TANPA "allow-same-origin", jadi
+// origin iframe ini SELALU opaque/unik: dia tidak akan pernah bisa membaca
+// atau menyentuh window/localStorage/cookie/token app utama sama sekali,
+// walau JS di dalamnya mencoba. Itu proteksi utamanya — bukan sanitasi teks.
+//
+// PENTING kalau diubah: fungsi identik ada juga di public/admin.js (dipakai
+// buat Live Preview di editor) — keduanya sengaja disamakan persis supaya
+// preview di Admin Web = tampilan asli di App. Ubah dua-duanya sekaligus.
+function buildBannerSandboxDoc({ html, css, js }) {
+  // Cegah `</script` mentah di dalam kode JS custom motong tag <script> pembungkus
+  // lebih awal (trik XSS klasik) — aman diubah jadi `<\/script` karena di JS itu
+  // tetap berarti karakter yang sama persis saat dieksekusi.
+  const escJs = (js || '').replace(/<\/script/gi, '<\\/script');
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:transparent;
+font-family:'Poppins','Sora',sans-serif;color:#fff;box-sizing:border-box;}
+*{box-sizing:border-box;}
+${css || ''}
+</style></head><body>
+${html || ''}
+<script>
+(function(){
+  function reportError(){ try { parent.postMessage({ __banner: 'error' }, '*'); } catch(_) {} }
+  window.addEventListener('error', reportError);
+  window.addEventListener('unhandledrejection', reportError);
+  try {
+    ${escJs}
+  } catch (e) { reportError(); }
+  try { parent.postMessage({ __banner: 'ready' }, '*'); } catch(_) {}
+})();
+<\/script>
+</body></html>`;
+}
+
+// Dengar sinyal 'ready'/'error' dari iframe Code Banner manapun yang lagi
+// nampil, lalu terapkan fallback (gradient + judul/deskripsi biasa, TANPA
+// bikin app crash) kalau kode-nya error atau ga pernah kirim sinyal apa-apa.
+window.addEventListener('message', (e) => {
+  const data = e.data;
+  if (!data || typeof data !== 'object' || !('__banner' in data)) return;
+  const frame = [...document.querySelectorAll('#hcTrack .hc-code-frame')].find(f => f.contentWindow === e.source);
+  if (!frame) return;
+  const idx = Number(frame.dataset.idx);
+  if (data.__banner === 'error') applyBannerFallback(idx);
+  else if (data.__banner === 'ready') clearTimeout(frame._loadTimeout);
+});
+
+function applyBannerFallback(idx) {
+  const slide = document.querySelector(`#hcTrack .hc-slide[data-idx="${idx}"]`);
+  const b = bannerSlides[idx];
+  if (!slide || !b || slide.dataset.fallbackApplied) return;
+  slide.dataset.fallbackApplied = '1';
+  slide.style.background = `linear-gradient(135deg, ${escapeHtml(b.gradientFrom || '#7b5cff')}, ${escapeHtml(b.gradientTo || '#241a3d')})`;
+  slide.innerHTML = `
+    <div class="hc-body">
+      <span class="hc-icon">⚠️</span>
+      <h1 class="hc-title">${escapeHtml(b.title || 'Banner')}</h1>
+      ${b.description ? `<p class="hc-desc">${escapeHtml(b.description)}</p>` : ''}
+    </div>`;
 }
 
 function renderBannerCarousel(banners) {
@@ -992,9 +1056,21 @@ function renderBannerCarousel(banners) {
     return;
   }
 
-  track.innerHTML = bannerSlides.map((b, i) => `
-    <div class="hc-slide${i === 0 ? ' active' : ''}" data-idx="${i}"
-         style="background:linear-gradient(135deg, ${escapeHtml(b.gradientFrom || '#7b5cff')}, ${escapeHtml(b.gradientTo || '#241a3d')});">
+  track.innerHTML = bannerSlides.map((b, i) => {
+    if (b.bannerType === 'code' && b.codeHtml) {
+      // Placeholder dulu — srcdoc di-set lewat property JS di bawah (bukan
+      // ditulis sebagai atribut string) biar ga perlu mikirin escaping quote
+      // yang ribet & rawan salah dalam template string.
+      return `<div class="hc-slide${i === 0 ? ' active' : ''} hc-code-slide" data-idx="${i}">
+        <iframe class="hc-code-frame" data-idx="${i}" sandbox="allow-scripts" loading="lazy"></iframe>
+      </div>`;
+    }
+    const bgImage = b.imageData || b.imageUrl || null;
+    const bgStyle = bgImage
+      ? `background-image:linear-gradient(90deg, rgba(10,6,16,.82) 0%, rgba(10,6,16,.42) 55%, rgba(10,6,16,.15) 100%), url('${escapeHtml(bgImage).replace(/'/g, "%27")}'); background-size:cover; background-position:center;`
+      : `background:linear-gradient(135deg, ${escapeHtml(b.gradientFrom || '#7b5cff')}, ${escapeHtml(b.gradientTo || '#241a3d')});`;
+    return `
+    <div class="hc-slide${i === 0 ? ' active' : ''}" data-idx="${i}" style="${bgStyle}">
       <div class="hc-body">
         ${b.icon ? `<span class="hc-icon">${escapeHtml(b.icon)}</span>` : ''}
         <h1 class="hc-title">${escapeHtml(b.title)}</h1>
@@ -1003,7 +1079,25 @@ function renderBannerCarousel(banners) {
         ${b.ctaText ? `<button class="hc-cta" data-link="${escapeHtml(b.ctaLink || '')}">${escapeHtml(b.ctaText)}</button>` : ''}
       </div>
     </div>
-  `).join('');
+  `;
+  }).join('');
+
+  // Isi srcdoc tiap iframe Code Banner SETELAH elemen benar-benar ada di DOM,
+  // + pasang timeout fallback kalau iframe-nya ga pernah kirim sinyal 'ready'
+  // (mis. kena error parsing sebelum listener sempat kepasang).
+  bannerSlides.forEach((b, i) => {
+    if (b.bannerType !== 'code' || !b.codeHtml) return;
+    const frame = track.querySelector(`.hc-code-frame[data-idx="${i}"]`);
+    if (!frame) return;
+    try {
+      frame.srcdoc = buildBannerSandboxDoc({ html: b.codeHtml, css: b.codeCss, js: b.codeJs });
+    } catch (e) {
+      applyBannerFallback(i);
+      return;
+    }
+    frame._loadTimeout = setTimeout(() => applyBannerFallback(i), BANNER_CODE_LOAD_TIMEOUT_MS);
+    frame.addEventListener('error', () => applyBannerFallback(i));
+  });
 
   dotsWrap.innerHTML = bannerSlides.map((_, i) =>
     `<span class="hc-dot${i === 0 ? ' active' : ''}" data-idx="${i}"></span>`

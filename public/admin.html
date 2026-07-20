@@ -7,6 +7,15 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="admin.css">
+<!-- CodeMirror — dipakai khusus buat editor HTML/CSS/JS di modal "Code Banner"
+     (syntax highlighting). Cuma dipakai di Admin Web, tidak ikut ke dalam App. -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/dracula.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/xml/xml.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/css/css.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/htmlmixed/htmlmixed.min.js"></script>
 </head>
 <body>
 
@@ -344,8 +353,10 @@
       <div class="table-wrap">
         <div class="table-toolbar">
           <div class="table-toolbar-title">🖼️ Daftar Banner</div>
+          <input class="form-input" id="bannerSearchInput" type="text" placeholder="Cari judul banner..." style="max-width:220px;margin-left:14px;">
+          <div id="bannerTypeFilter" class="filter-chips" style="margin-left:10px;"></div>
           <div class="table-toolbar-filters" style="margin-left:auto;color:var(--text-faint);font-size:12px;">
-            Drag pakai tombol ↑ ↓ untuk ubah urutan tampil di carousel.
+            Geser (drag) baris untuk ubah urutan, atau pakai tombol ↑ ↓.
           </div>
         </div>
         <div id="bannerList" class="banner-admin-list"></div>
@@ -1009,15 +1020,23 @@
 
 <!-- ═══ MODAL: BANNER — Tambah/Edit ═══ -->
 <div class="modal-backdrop" id="bannerModalBackdrop" style="display:none;" onclick="if(event.target===this)closeBannerModal()">
-  <div class="modal modal-lg">
+  <div class="modal modal-lg banner-modal">
     <div class="modal-header">
       <div>
         <div class="modal-title" id="bannerModalTitle">Tambah Banner</div>
-        <div class="modal-subtitle">Dibuat 100% dengan kode (gradient + teks) — tanpa upload gambar.</div>
+        <div class="modal-subtitle">Image Banner (upload gambar) atau Code Banner (HTML/CSS/JS custom).</div>
       </div>
       <button class="modal-close" onclick="closeBannerModal()">✕</button>
     </div>
     <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Tipe Banner</label>
+        <div class="banner-type-tabs">
+          <button type="button" class="banner-type-tab active" data-type="image" onclick="setBannerType('image')">🖼️ Image Banner</button>
+          <button type="button" class="banner-type-tab" data-type="code" onclick="setBannerType('code')">💻 Code Banner</button>
+        </div>
+      </div>
+
       <div class="form-group">
         <label class="form-label">Judul</label>
         <input class="form-input" type="text" id="bannerTitle" placeholder="Contoh: Selamat Datang di ThreeOne Store">
@@ -1027,13 +1046,13 @@
         <input class="form-input" type="text" id="bannerSubtitle" placeholder="Contoh: Akses ribuan game & bypass premium">
       </div>
       <div class="form-group">
-        <label class="form-label">Deskripsi Singkat</label>
+        <label class="form-label">Deskripsi Singkat <span style="color:var(--text-faint);font-weight:400;">— juga dipakai sebagai fallback kalau Code Banner error</span></label>
         <textarea class="form-input" id="bannerDescription" placeholder="Deskripsi singkat banner ini..." style="min-height:64px;"></textarea>
       </div>
 
       <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
         <div class="form-group">
-          <label class="form-label">Teks Tombol CTA</label>
+          <label class="form-label">Teks Tombol CTA <span style="color:var(--text-faint);font-weight:400;">(opsional)</span></label>
           <input class="form-input" type="text" id="bannerCtaText" placeholder="Contoh: Mulai Download">
         </div>
         <div class="form-group">
@@ -1042,19 +1061,68 @@
         </div>
       </div>
 
-      <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;">
+      <!-- ── IMAGE BANNER FIELDS ── -->
+      <div id="bannerImageFields">
+        <div class="modal-divider"><span>Gambar Banner</span></div>
         <div class="form-group">
-          <label class="form-label">Warna Gradient (dari)</label>
-          <input class="form-input" type="color" id="bannerGradientFrom" value="#7b5cff" style="height:40px;padding:4px;">
+          <label class="form-label">Upload Gambar <span style="color:var(--text-faint);font-weight:400;">(PNG/JPG/GIF/WEBP, maks 2MB)</span></label>
+          <input class="form-input" type="file" id="bannerImageFile" accept="image/png,image/jpeg,image/gif,image/webp">
         </div>
         <div class="form-group">
-          <label class="form-label">Warna Gradient (ke)</label>
-          <input class="form-input" type="color" id="bannerGradientTo" value="#241a3d" style="height:40px;padding:4px;">
+          <label class="form-label">Atau URL Gambar <span style="color:var(--text-faint);font-weight:400;">(opsional, dipakai kalau tidak upload)</span></label>
+          <input class="form-input" type="text" id="bannerImageUrl" placeholder="https://...">
         </div>
-        <div class="form-group">
-          <label class="form-label">Emoji/Icon <span style="color:var(--text-faint);font-weight:400;">(opsional)</span></label>
-          <input class="form-input" type="text" id="bannerIcon" placeholder="🎮">
+        <div id="bannerImagePreviewWrap" style="display:none;margin-bottom:12px;position:relative;">
+          <img id="bannerImagePreviewImg" style="width:100%;max-height:160px;object-fit:cover;border-radius:12px;">
+          <button type="button" class="btn btn-danger btn-sm" style="position:absolute;top:8px;right:8px;" onclick="clearBannerImage()">🗑 Hapus Gambar</button>
         </div>
+        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;">
+          <div class="form-group">
+            <label class="form-label">Warna Gradient (dari) <span style="color:var(--text-faint);font-weight:400;">— fallback kalau tanpa gambar</span></label>
+            <input class="form-input" type="color" id="bannerGradientFrom" value="#7b5cff" style="height:40px;padding:4px;">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Warna Gradient (ke)</label>
+            <input class="form-input" type="color" id="bannerGradientTo" value="#241a3d" style="height:40px;padding:4px;">
+          </div>
+          <div class="form-group">
+            <label class="form-label">Emoji/Icon <span style="color:var(--text-faint);font-weight:400;">(opsional)</span></label>
+            <input class="form-input" type="text" id="bannerIcon" placeholder="🎮">
+          </div>
+        </div>
+      </div>
+
+      <!-- ── CODE BANNER FIELDS ── -->
+      <div id="bannerCodeFields" style="display:none;">
+        <div class="modal-divider"><span>Code Banner — HTML</span></div>
+        <div class="code-editor-toolbar">
+          <span class="code-editor-hint">Isi konten banner. Tanpa &lt;script&gt;/&lt;style&gt; — CSS &amp; JS ada kolom sendiri di bawah.</span>
+          <button type="button" class="btn-icon-sm" onclick="copyBannerCode('html')" title="Copy">📋</button>
+          <button type="button" class="btn-icon-sm" onclick="resetBannerCode('html')" title="Reset">↺</button>
+        </div>
+        <div class="code-editor-box" id="cmHtmlBox"></div>
+
+        <div class="modal-divider"><span>Code Banner — CSS</span></div>
+        <div class="code-editor-toolbar">
+          <span class="code-editor-hint">Hanya berlaku di dalam area banner (dirender terisolasi di iframe).</span>
+          <button type="button" class="btn-icon-sm" onclick="copyBannerCode('css')" title="Copy">📋</button>
+          <button type="button" class="btn-icon-sm" onclick="resetBannerCode('css')" title="Reset">↺</button>
+        </div>
+        <div class="code-editor-box" id="cmCssBox"></div>
+
+        <div class="modal-divider"><span>Code Banner — JavaScript <span style="color:var(--text-faint);font-weight:400;">(opsional)</span></span></div>
+        <div class="code-editor-toolbar">
+          <span class="code-editor-hint">Dijalankan sandbox — tidak bisa akses data/app di luar banner.</span>
+          <button type="button" class="btn-icon-sm" onclick="copyBannerCode('js')" title="Copy">📋</button>
+          <button type="button" class="btn-icon-sm" onclick="resetBannerCode('js')" title="Reset">↺</button>
+        </div>
+        <div class="code-editor-box" id="cmJsBox"></div>
+
+        <div class="modal-divider"><span>Live Preview</span></div>
+        <div class="code-banner-preview-wrap">
+          <iframe id="bannerCodePreviewFrame" class="code-banner-preview-frame" sandbox="allow-scripts"></iframe>
+        </div>
+        <div id="bannerCodePreviewError" class="code-banner-preview-error" style="display:none;">⚠️ Kode error / tidak merespons — di App akan otomatis fallback ke banner biasa (judul + deskripsi).</div>
       </div>
 
       <div class="modal-divider"><span>Masa Aktif (opsional)</span></div>
@@ -1074,10 +1142,12 @@
         <label class="form-label" style="margin:0;" for="bannerIsActive">Aktifkan banner ini sekarang</label>
       </div>
 
-      <div class="modal-divider"><span>Preview</span></div>
-      <div id="bannerPreviewBox" style="border-radius:14px;min-height:120px;padding:20px 26px;display:flex;flex-direction:column;justify-content:center;transition:background .2s;">
-        <div id="bannerPreviewTitle" style="font-family:'Sora',sans-serif;font-weight:800;font-size:22px;color:#fff;margin-bottom:4px;">Judul Banner</div>
-        <div id="bannerPreviewDesc" style="font-size:12.5px;color:rgba(255,255,255,0.7);"></div>
+      <div id="bannerImagePreviewSection">
+        <div class="modal-divider"><span>Preview</span></div>
+        <div id="bannerPreviewBox" style="border-radius:14px;min-height:120px;padding:20px 26px;display:flex;flex-direction:column;justify-content:center;transition:background .2s;background-size:cover;background-position:center;">
+          <div id="bannerPreviewTitle" style="font-family:'Sora',sans-serif;font-weight:800;font-size:22px;color:#fff;margin-bottom:4px;">Judul Banner</div>
+          <div id="bannerPreviewDesc" style="font-size:12.5px;color:rgba(255,255,255,0.7);"></div>
+        </div>
       </div>
     </div>
     <div class="modal-footer">

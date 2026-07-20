@@ -13,6 +13,7 @@ const { MongoClient, ObjectId } = require('mongodb');
 const path = require('path');
 const http = require('http');
 const WebSocket = require('ws');
+const sanitizeHtml = require('sanitize-html');
 
 const app = express();
 app.use(cors());
@@ -84,7 +85,11 @@ app.post('/api/discord/interactions', express.raw({ type: 'application/json' }),
   res.json({ type: 1 });
 });
 
-app.use(express.json());
+// Limit dinaikkan dari default 100kb -> 8mb SUPAYA banner bertipe "Image" bisa upload
+// gambar sebagai base64 (data URI) langsung lewat body JSON (lihat ADMIN — BANNER
+// CAROUSEL di bawah). Ukuran gambar aslinya sendiri tetap dibatasi lebih ketat
+// (BANNER_MAX_IMAGE_BYTES) di handler, ini cuma pagar atas di level parser.
+app.use(express.json({ limit: '8mb' }));
 app.use(express.static(path.join(__dirname, 'public'))); // admin.html, admin.js, dll
 
 const PORT = process.env.PORT || 3000;
@@ -2496,8 +2501,92 @@ app.delete('/api/admin/bypasses/:id', requireAdmin, async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// ADMIN — BANNER CAROUSEL (CRUD + reorder)
+// ADMIN — BANNER CAROUSEL (CRUD + reorder + Image/Code banner)
 // ══════════════════════════════════════════════════════════════════════════
+// Dua tipe banner didukung (field `bannerType`):
+//   - 'image' (default, backward-compatible dengan banner lama yang belum
+//     punya field ini sama sekali) — gambar (upload base64 ATAU url eksternal),
+//     fallback ke gradient+icon kalau tidak ada gambar sama sekali.
+//   - 'code'  — HTML+CSS (+JS opsional) custom, dirender App di dalam
+//     <iframe sandbox> (lihat app/app.js) supaya TIDAK bisa mengakses window
+//     utama app (token login, localStorage, dst) — App yang menentukan
+//     sandbox-nya, di sini tugas server cuma SANITASI & VALIDASI sebelum
+//     disimpan, supaya apa yang tersimpan di DB sudah bersih dari awal.
+const BANNER_MAX_IMAGE_BYTES = 2 * 1024 * 1024; // 2MB — cukup buat banner, jaga ukuran dokumen Mongo
+const BANNER_MAX_CODE_LEN = 60000; // ~60rb karakter per field (html/css/js) — banner, bukan aplikasi penuh
+
+// Allowlist tag/atribut buat HTML banner. Sengaja TIDAK mengizinkan <script>,
+// <iframe>, <object>/<embed>, <base>, <meta>, ataupun atribut event handler
+// (onclick dkk) — kalau admin butuh interaktivitas, itu tempatnya di kolom
+// JS terpisah (dijalankan di dalam sandbox yang sama, jadi tidak kehilangan
+// kemampuan apa-apa, cuma lebih rapi & gampang di-audit).
+const BANNER_HTML_SANITIZE_OPTIONS = {
+  allowedTags: [
+    'div','span','p','a','img','button','h1','h2','h3','h4','h5','h6',
+    'ul','ol','li','strong','em','b','i','u','br','small','sup','sub',
+    'svg','path','circle','rect','line','polygon','g','defs','linearGradient','stop'
+  ],
+  allowedAttributes: {
+    '*': ['class','id','style','title','viewBox','xmlns','width','height','fill','stroke','stroke-width','d','cx','cy','r','x','y','x1','y1','x2','y2','points','offset','stop-color'],
+    a: ['href','target','rel'],
+    img: ['src','alt','loading'],
+    button: ['type']
+  },
+  allowedSchemes: ['http', 'https', 'data'],
+  allowProtocolRelative: false,
+  disallowedTagsMode: 'discard',
+  // Buang semua inline <style> block di dalam HTML — CSS wajib lewat kolom CSS
+  // terpisah, supaya satu-satunya sumber style tetap jelas & mudah divalidasi.
+  exclusiveFilter: (frame) => frame.tag === 'style' || frame.tag === 'script'
+};
+
+function sanitizeBannerHtml(html) {
+  if (!html) return '';
+  const trimmed = String(html).slice(0, BANNER_MAX_CODE_LEN);
+  return sanitizeHtml(trimmed, BANNER_HTML_SANITIZE_OPTIONS);
+}
+
+// CSS & JS banner dijalankan/diterapkan di DALAM <iframe sandbox> milik App
+// (lihat buildBannerSandboxDoc di app/app.js), jadi TIDAK PERNAH bisa
+// menyentuh halaman utama App sama sekali — itu proteksi utamanya. Di sisi
+// server kita cuma batasi panjang & buang pola paling jelas berbahaya
+// (@import buat cegah CSS narik resource luar, `expression()` peninggalan
+// trik lawas IE) sebagai lapisan tambahan, bukan yang utama.
+function sanitizeBannerCss(css) {
+  if (!css) return '';
+  let out = String(css).slice(0, BANNER_MAX_CODE_LEN);
+  out = out.replace(/@import[^;]*;?/gi, '');
+  out = out.replace(/expression\s*\(/gi, 'blocked(');
+  return out;
+}
+function sanitizeBannerJs(js) {
+  if (!js) return '';
+  return String(js).slice(0, BANNER_MAX_CODE_LEN);
+}
+
+// Validasi field gambar banner. Menerima SALAH SATU dari:
+//   - imageData: data URI base64 hasil upload dari Admin Web (disimpan apa
+//     adanya di Mongo — tanpa ketergantungan disk/storage eksternal, jadi
+//     aman dipakai di hosting mana pun termasuk yang filesystem-nya ephemeral)
+//   - imageUrl: link gambar eksternal biasa
+// Keduanya opsional — kalau kosong dua-duanya, banner image otomatis fallback
+// ke gradient+icon (banner lama yang belum pernah diisi gambar tetap jalan normal).
+function validateBannerImageFields({ imageData, imageUrl }) {
+  const out = { imageData: null, imageUrl: null };
+  if (imageData) {
+    const m = /^data:image\/(png|jpe?g|gif|webp);base64,([a-zA-Z0-9+/=]+)$/.exec(String(imageData).trim());
+    if (!m) throw new Error('Format gambar tidak didukung. Gunakan PNG, JPG, GIF, atau WEBP.');
+    const approxBytes = Math.ceil((m[2].length * 3) / 4);
+    if (approxBytes > BANNER_MAX_IMAGE_BYTES) throw new Error(`Ukuran gambar maksimal ${(BANNER_MAX_IMAGE_BYTES / 1024 / 1024).toFixed(1)}MB.`);
+    out.imageData = imageData;
+  } else if (imageUrl) {
+    const url = String(imageUrl).trim();
+    if (!/^https?:\/\//i.test(url)) throw new Error('URL gambar harus diawali http:// atau https://');
+    out.imageUrl = url;
+  }
+  return out;
+}
+
 async function broadcastActiveBanners() {
   try {
     const now = new Date();
@@ -2518,42 +2607,66 @@ app.get('/api/admin/banners', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/admin/banners', requireAdmin, async (req, res) => {
-  const { title, subtitle, description, ctaText, ctaLink, gradientFrom, gradientTo, icon, isActive, startAt, endAt } = req.body;
-  if (!title) return res.status(400).json({ error: 'Judul banner wajib diisi.' });
+  try {
+    const {
+      title, subtitle, description, ctaText, ctaLink, gradientFrom, gradientTo, icon,
+      isActive, startAt, endAt, bannerType, imageUrl, imageData, codeHtml, codeCss, codeJs
+    } = req.body;
+    if (!title) return res.status(400).json({ error: 'Judul banner wajib diisi.' });
 
-  const lastBanner = await db.collection('banners').find({}).sort({ order: -1 }).limit(1).toArray();
-  const nextOrder = lastBanner.length ? (lastBanner[0].order || 0) + 1 : 0;
+    const type = bannerType === 'code' ? 'code' : 'image';
+    if (type === 'code' && !codeHtml?.trim()) {
+      return res.status(400).json({ error: 'HTML wajib diisi untuk Code Banner.' });
+    }
 
-  const doc = {
-    title,
-    subtitle: subtitle || '',
-    description: description || '',
-    ctaText: ctaText || 'Selengkapnya',
-    ctaLink: ctaLink || '',
-    gradientFrom: gradientFrom || '#7b5cff',
-    gradientTo: gradientTo || '#241a3d',
-    icon: icon || '',
-    order: nextOrder,
-    isActive: isActive === false ? false : true,
-    startAt: startAt ? new Date(startAt) : null,
-    endAt: endAt ? new Date(endAt) : null,
-    createdAt: new Date(),
-    updatedAt: new Date()
-  };
-  const result = await db.collection('banners').insertOne(doc);
+    const lastBanner = await db.collection('banners').find({}).sort({ order: -1 }).limit(1).toArray();
+    const nextOrder = lastBanner.length ? (lastBanner[0].order || 0) + 1 : 0;
 
-  logActivity({
-    type: 'admin_add_banner',
-    username: req.admin?.username || 'Admin',
-    admin: req.admin?.username || 'Admin',
-    status: 'success',
-    ip: getReqIp(req),
-    description: `Admin menambahkan banner baru "${doc.title}".`,
-    meta: { bannerId: result.insertedId, title: doc.title }
-  }).catch(() => {});
+    const doc = {
+      bannerType: type,
+      title,
+      subtitle: subtitle || '',
+      description: description || '',
+      ctaText: ctaText || 'Selengkapnya',
+      ctaLink: ctaLink || '',
+      gradientFrom: gradientFrom || '#7b5cff',
+      gradientTo: gradientTo || '#241a3d',
+      icon: icon || '',
+      imageUrl: null, imageData: null,
+      codeHtml: null, codeCss: null, codeJs: null,
+      order: nextOrder,
+      isActive: isActive === false ? false : true,
+      startAt: startAt ? new Date(startAt) : null,
+      endAt: endAt ? new Date(endAt) : null,
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
 
-  broadcastActiveBanners();
-  res.json({ ...doc, _id: result.insertedId });
+    if (type === 'image') {
+      Object.assign(doc, validateBannerImageFields({ imageData, imageUrl }));
+    } else {
+      doc.codeHtml = sanitizeBannerHtml(codeHtml);
+      doc.codeCss = sanitizeBannerCss(codeCss);
+      doc.codeJs = sanitizeBannerJs(codeJs);
+    }
+
+    const result = await db.collection('banners').insertOne(doc);
+
+    logActivity({
+      type: 'admin_add_banner',
+      username: req.admin?.username || 'Admin',
+      admin: req.admin?.username || 'Admin',
+      status: 'success',
+      ip: getReqIp(req),
+      description: `Admin menambahkan banner ${type === 'code' ? 'Code' : 'Image'} baru "${doc.title}".`,
+      meta: { bannerId: result.insertedId, title: doc.title, bannerType: type }
+    }).catch(() => {});
+
+    broadcastActiveBanners();
+    res.json({ ...doc, _id: result.insertedId });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 app.put('/api/admin/banners/reorder', requireAdmin, async (req, res) => {
@@ -2581,35 +2694,69 @@ app.put('/api/admin/banners/reorder', requireAdmin, async (req, res) => {
 });
 
 app.put('/api/admin/banners/:id', requireAdmin, async (req, res) => {
-  if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
-  const { title, subtitle, description, ctaText, ctaLink, gradientFrom, gradientTo, icon, isActive, startAt, endAt } = req.body;
-  const update = { updatedAt: new Date() };
-  if (title !== undefined) update.title = title;
-  if (subtitle !== undefined) update.subtitle = subtitle;
-  if (description !== undefined) update.description = description;
-  if (ctaText !== undefined) update.ctaText = ctaText;
-  if (ctaLink !== undefined) update.ctaLink = ctaLink;
-  if (gradientFrom !== undefined) update.gradientFrom = gradientFrom;
-  if (gradientTo !== undefined) update.gradientTo = gradientTo;
-  if (icon !== undefined) update.icon = icon;
-  if (isActive !== undefined) update.isActive = isActive === false ? false : true;
-  if (startAt !== undefined) update.startAt = startAt ? new Date(startAt) : null;
-  if (endAt !== undefined) update.endAt = endAt ? new Date(endAt) : null;
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+    const {
+      title, subtitle, description, ctaText, ctaLink, gradientFrom, gradientTo, icon,
+      isActive, startAt, endAt, bannerType, imageUrl, imageData, codeHtml, codeCss, codeJs
+    } = req.body;
+    const update = { updatedAt: new Date() };
+    if (title !== undefined) update.title = title;
+    if (subtitle !== undefined) update.subtitle = subtitle;
+    if (description !== undefined) update.description = description;
+    if (ctaText !== undefined) update.ctaText = ctaText;
+    if (ctaLink !== undefined) update.ctaLink = ctaLink;
+    if (gradientFrom !== undefined) update.gradientFrom = gradientFrom;
+    if (gradientTo !== undefined) update.gradientTo = gradientTo;
+    if (icon !== undefined) update.icon = icon;
+    if (isActive !== undefined) update.isActive = isActive === false ? false : true;
+    if (startAt !== undefined) update.startAt = startAt ? new Date(startAt) : null;
+    if (endAt !== undefined) update.endAt = endAt ? new Date(endAt) : null;
 
-  await db.collection('banners').updateOne({ _id: new ObjectId(req.params.id) }, { $set: update });
+    if (bannerType !== undefined) {
+      const type = bannerType === 'code' ? 'code' : 'image';
+      update.bannerType = type;
+      if (type === 'code') {
+        if (codeHtml !== undefined && !codeHtml?.trim()) {
+          return res.status(400).json({ error: 'HTML wajib diisi untuk Code Banner.' });
+        }
+        if (codeHtml !== undefined) update.codeHtml = sanitizeBannerHtml(codeHtml);
+        if (codeCss !== undefined) update.codeCss = sanitizeBannerCss(codeCss);
+        if (codeJs  !== undefined) update.codeJs  = sanitizeBannerJs(codeJs);
+        // Ganti tipe ke code -> bersihkan sisa data gambar tipe lama
+        update.imageUrl = null; update.imageData = null;
+      } else {
+        Object.assign(update, validateBannerImageFields({ imageData, imageUrl }));
+        // Ganti tipe ke image -> bersihkan sisa kode tipe lama
+        update.codeHtml = null; update.codeCss = null; update.codeJs = null;
+      }
+    } else {
+      // Tipe tidak diubah — tetap perbolehkan update field masing-masing secara parsial
+      if (imageUrl !== undefined || imageData !== undefined) {
+        Object.assign(update, validateBannerImageFields({ imageData, imageUrl }));
+      }
+      if (codeHtml !== undefined) update.codeHtml = sanitizeBannerHtml(codeHtml);
+      if (codeCss  !== undefined) update.codeCss  = sanitizeBannerCss(codeCss);
+      if (codeJs   !== undefined) update.codeJs   = sanitizeBannerJs(codeJs);
+    }
 
-  logActivity({
-    type: 'admin_edit_banner',
-    username: req.admin?.username || 'Admin',
-    admin: req.admin?.username || 'Admin',
-    status: 'success',
-    ip: getReqIp(req),
-    description: `Admin mengubah banner "${update.title || req.params.id}".`,
-    meta: { bannerId: req.params.id, update }
-  }).catch(() => {});
+    await db.collection('banners').updateOne({ _id: new ObjectId(req.params.id) }, { $set: update });
 
-  broadcastActiveBanners();
-  res.json({ success: true });
+    logActivity({
+      type: 'admin_edit_banner',
+      username: req.admin?.username || 'Admin',
+      admin: req.admin?.username || 'Admin',
+      status: 'success',
+      ip: getReqIp(req),
+      description: `Admin mengubah banner "${update.title || req.params.id}".`,
+      meta: { bannerId: req.params.id, update: { ...update, imageData: update.imageData ? '(base64 disimpan)' : update.imageData } }
+    }).catch(() => {});
+
+    broadcastActiveBanners();
+    res.json({ success: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 app.delete('/api/admin/banners/:id', requireAdmin, async (req, res) => {

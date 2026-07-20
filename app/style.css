@@ -764,6 +764,12 @@
   }
   .hc-dot.active{ width:20px; border-radius:5px; background:#fff; }
 
+  .hc-code-slide{ padding:0; }
+  .hc-code-frame{
+    position:absolute; inset:0; width:100%; height:100%;
+    border:none; border-radius:var(--radius-lg);
+    background:linear-gradient(160deg,#241521 0%, #170f22 60%, #0d0a18 100%);
+  }
   .hc-skeleton{
     position:relative; opacity:1; visibility:visible; transform:none;
     background:linear-gradient(160deg,#241521 0%, #170f22 60%, #0d0a18 100%);

@@ -2785,20 +2785,97 @@ document.getElementById('dmConfirmBtn')?.addEventListener('click', async () => {
 // ══════════════════════════════════════════════════════════════════════════
 let _bannerList = [];
 let _bannerEditId = null;
+let _bannerType = 'image'; // tipe yang lagi aktif di modal ('image' | 'code')
+let _bannerImagePayload = { imageUrl: '', imageData: '' }; // state gambar di modal
+let _bannerFilter = { search: '', type: 'all' };
+let _bannerCM = { html: null, css: null, js: null }; // instance CodeMirror (dibuat sekali, dipakai ulang)
+let _bannerCodePreviewTimer = null;
+let _bannerDragFromId = null;
+
+// SATU-SATUNYA fungsi pembangun srcdoc iframe sandbox, disamakan PERSIS dengan
+// buildBannerSandboxDoc() di app/app.js supaya Live Preview di sini = tampilan
+// asli di App. Kalau ubah salah satu, ubah juga yang satunya.
+function buildBannerSandboxDocPreview({ html, css, js }) {
+  const escJs = (js || '').replace(/<\/script/gi, '<\\/script');
+  return `<!DOCTYPE html><html><head><meta charset="utf-8"><style>
+html,body{margin:0;padding:0;width:100%;height:100%;overflow:hidden;background:transparent;
+font-family:'Poppins','Sora',sans-serif;color:#fff;box-sizing:border-box;}
+*{box-sizing:border-box;}
+${css || ''}
+</style></head><body>
+${html || ''}
+<script>
+(function(){
+  function reportError(){ try { parent.postMessage({ __banner: 'error' }, '*'); } catch(_) {} }
+  window.addEventListener('error', reportError);
+  window.addEventListener('unhandledrejection', reportError);
+  try {
+    ${escJs}
+  } catch (e) { reportError(); }
+  try { parent.postMessage({ __banner: 'ready' }, '*'); } catch(_) {}
+})();
+<\/script>
+</body></html>`;
+}
+
+window.addEventListener('message', (e) => {
+  if (!e.data || e.data.__banner !== 'error') return;
+  const errBox = document.getElementById('bannerCodePreviewError');
+  const frame = document.getElementById('bannerCodePreviewFrame');
+  if (frame && e.source === frame.contentWindow && errBox) errBox.style.display = 'block';
+});
 
 async function renderBannerAdmin() {
   const wrap = document.getElementById('bannerList');
   wrap.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-faint);font-size:12.5px;">Memuat banner...</div>`;
   try {
     _bannerList = await api('/api/admin/banners');
+    renderBannerTypeFilter();
     drawBannerAdminList();
   } catch (e) {
     wrap.innerHTML = `<div style="padding:24px;text-align:center;color:var(--red);font-size:12.5px;">Gagal memuat banner: ${escapeHtml(e.message)}</div>`;
   }
 }
 
+function renderBannerTypeFilter() {
+  const el = document.getElementById('bannerTypeFilter');
+  if (!el) return;
+  const counts = {
+    all: _bannerList.length,
+    image: _bannerList.filter(b => (b.bannerType || 'image') === 'image').length,
+    code: _bannerList.filter(b => b.bannerType === 'code').length
+  };
+  const chips = [
+    { key: 'all', label: 'Semua', count: counts.all },
+    { key: 'image', label: '🖼️ Image', count: counts.image },
+    { key: 'code', label: '💻 Code', count: counts.code }
+  ];
+  el.innerHTML = chips.map(c => `
+    <button class="filter-chip ${_bannerFilter.type === c.key ? 'active' : ''}" data-type="${c.key}">
+      ${c.label} <span class="count">${c.count}</span>
+    </button>`).join('');
+  el.querySelectorAll('.filter-chip').forEach(btn => {
+    btn.addEventListener('click', () => { _bannerFilter.type = btn.dataset.type; drawBannerAdminList(); });
+  });
+}
+
+document.getElementById('bannerSearchInput')?.addEventListener('input', (e) => {
+  _bannerFilter.search = e.target.value;
+  drawBannerAdminList();
+});
+
+function getFilteredBanners() {
+  let rows = _bannerList;
+  if (_bannerFilter.type !== 'all') rows = rows.filter(b => (b.bannerType || 'image') === _bannerFilter.type);
+  const q = _bannerFilter.search.trim().toLowerCase();
+  if (q) rows = rows.filter(b => (b.title || '').toLowerCase().includes(q) || (b.subtitle || '').toLowerCase().includes(q));
+  return rows;
+}
+
 function drawBannerAdminList() {
   const wrap = document.getElementById('bannerList');
+  const rows = getFilteredBanners();
+
   if (!_bannerList.length) {
     wrap.innerHTML = `
       <div style="padding:40px 20px;text-align:center;color:var(--text-faint);">
@@ -2807,28 +2884,44 @@ function drawBannerAdminList() {
       </div>`;
     return;
   }
+  if (!rows.length) {
+    wrap.innerHTML = `
+      <div style="padding:40px 20px;text-align:center;color:var(--text-faint);">
+        <div style="font-size:32px;margin-bottom:8px;">🔍</div>
+        <div style="font-size:13px;">Tidak ada banner yang cocok dengan pencarian/filter.</div>
+      </div>`;
+    return;
+  }
 
-  wrap.innerHTML = _bannerList.map((b, idx) => {
+  wrap.innerHTML = rows.map((b) => {
+    const idx = _bannerList.findIndex(x => x._id === b._id);
     const now = new Date();
     const startAt = b.startAt ? new Date(b.startAt) : null;
     const endAt = b.endAt ? new Date(b.endAt) : null;
     const withinPeriod = (!startAt || startAt <= now) && (!endAt || endAt >= now);
     const liveNow = b.isActive && withinPeriod;
+    const type = b.bannerType || 'image';
+    const img = b.imageData || b.imageUrl;
+
+    const thumb = type === 'code'
+      ? `<div class="banner-thumb" style="background:linear-gradient(135deg,#241a3d,#0d0a18);"><span style="font-size:22px;">💻</span></div>`
+      : img
+        ? `<div class="banner-thumb" style="background-image:url('${escapeHtml(img)}');"></div>`
+        : `<div class="banner-thumb" style="background:linear-gradient(135deg, ${escapeHtml(b.gradientFrom || '#7b5cff')}, ${escapeHtml(b.gradientTo || '#241a3d')});"><span style="font-size:20px;">${escapeHtml(b.icon || '🖼️')}</span></div>`;
 
     return `
-    <div class="banner-admin-item" style="display:flex;align-items:center;gap:14px;padding:14px 16px;border-bottom:1px solid var(--border);">
+    <div class="banner-admin-item" draggable="true" data-id="${b._id}" style="display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border);">
+      <span class="banner-drag-handle" title="Geser untuk ubah urutan">⠿</span>
       <div style="display:flex;flex-direction:column;gap:2px;">
         <button class="btn-icon-sm" title="Naikkan urutan" onclick="moveBanner('${b._id}', -1)" ${idx === 0 ? 'disabled style="opacity:.3;"' : ''}>▲</button>
         <button class="btn-icon-sm" title="Turunkan urutan" onclick="moveBanner('${b._id}', 1)" ${idx === _bannerList.length - 1 ? 'disabled style="opacity:.3;"' : ''}>▼</button>
       </div>
-      <div style="width:120px;height:64px;border-radius:10px;flex-shrink:0;display:flex;align-items:center;justify-content:center;padding:8px;
-                  background:linear-gradient(135deg, ${escapeHtml(b.gradientFrom || '#7b5cff')}, ${escapeHtml(b.gradientTo || '#241a3d')});">
-        <span style="font-size:20px;">${escapeHtml(b.icon || '🖼️')}</span>
-      </div>
+      ${thumb}
       <div style="flex:1;min-width:0;">
         <div style="font-weight:700;font-size:13.5px;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(b.title)}</div>
         <div style="font-size:11.5px;color:var(--text-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(b.subtitle || b.description || '—')}</div>
         <div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap;">
+          <span class="banner-badge ${type}">${type === 'code' ? '💻 Code' : '🖼️ Image'}</span>
           <span class="tag ${liveNow ? 'gold' : 'public'}" style="font-size:10px;">${liveNow ? '● Tayang' : (b.isActive ? '○ Di luar jadwal' : '○ Nonaktif')}</span>
           ${b.ctaText ? `<span class="tag public" style="font-size:10px;">🔘 ${escapeHtml(b.ctaText)}</span>` : ''}
         </div>
@@ -2843,6 +2936,48 @@ function drawBannerAdminList() {
       </div>
     </div>`;
   }).join('');
+
+  wireBannerDragAndDrop();
+}
+
+// Drag & drop urutan banner (native HTML5 DnD) — tetap dilengkapi tombol ▲▼
+// buat yang lebih nyaman pakai keyboard/klik biasa.
+function wireBannerDragAndDrop() {
+  const items = document.querySelectorAll('#bannerList .banner-admin-item');
+  items.forEach(el => {
+    el.addEventListener('dragstart', () => {
+      _bannerDragFromId = el.dataset.id;
+      el.classList.add('dragging');
+    });
+    el.addEventListener('dragend', () => {
+      el.classList.remove('dragging');
+      items.forEach(x => x.classList.remove('drag-over'));
+    });
+    el.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      if (el.dataset.id !== _bannerDragFromId) el.classList.add('drag-over');
+    });
+    el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
+    el.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      el.classList.remove('drag-over');
+      const toId = el.dataset.id;
+      if (!_bannerDragFromId || _bannerDragFromId === toId) return;
+      const fromIdx = _bannerList.findIndex(b => b._id === _bannerDragFromId);
+      const toIdx = _bannerList.findIndex(b => b._id === toId);
+      if (fromIdx < 0 || toIdx < 0) return;
+      const [moved] = _bannerList.splice(fromIdx, 1);
+      _bannerList.splice(toIdx, 0, moved);
+      drawBannerAdminList(); // optimistic UI
+      try {
+        await api('/api/admin/banners/reorder', { method: 'PUT', body: JSON.stringify({ order: _bannerList.map(b => b._id) }) });
+        showToast('✅ Urutan banner diperbarui.', 'success');
+      } catch (err) {
+        showToast('Gagal ubah urutan: ' + err.message, 'error');
+        renderBannerAdmin();
+      }
+    });
+  });
 }
 
 async function moveBanner(id, dir) {
@@ -2892,6 +3027,110 @@ function toLocalDatetimeInput(dateVal) {
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
 }
 
+// ── CodeMirror: dibuat SEKALI (lazy), dipakai ulang tiap buka modal supaya
+// ga bikin instance baru berkali-kali (yang bisa bikin leak & rebinding aneh).
+function ensureBannerCodeMirrors() {
+  if (_bannerCM.html) return;
+  if (typeof CodeMirror === 'undefined') return; // CDN gagal load (mis. offline) — modal tetap jalan tanpa syntax highlight
+  const common = { theme: 'dracula', lineNumbers: true, lineWrapping: true, viewportMargin: Infinity };
+  _bannerCM.html = CodeMirror(document.getElementById('cmHtmlBox'), { ...common, mode: 'htmlmixed', value: '' });
+  _bannerCM.css  = CodeMirror(document.getElementById('cmCssBox'),  { ...common, mode: 'css',       value: '' });
+  _bannerCM.js   = CodeMirror(document.getElementById('cmJsBox'),   { ...common, mode: 'javascript', value: '' });
+  [_bannerCM.html, _bannerCM.css, _bannerCM.js].forEach(cm => cm.on('change', scheduleBannerCodePreview));
+}
+
+function getBannerCodeValue(which) {
+  if (_bannerCM[which]) return _bannerCM[which].getValue();
+  // Fallback kalau CodeMirror gagal load dari CDN — pakai <textarea> polos di baliknya (dibuat oleh CodeMirror() saat init, jadi kalau CDN gagal, box-nya kosong; user tetap bisa isi lewat elemen aslinya kalau ada)
+  return '';
+}
+function setBannerCodeValue(which, val) {
+  if (_bannerCM[which]) _bannerCM[which].setValue(val || '');
+}
+
+function copyBannerCode(which) {
+  const val = getBannerCodeValue(which);
+  navigator.clipboard?.writeText(val).then(
+    () => showToast('✅ Kode disalin.', 'success'),
+    () => showToast('Gagal menyalin kode.', 'error')
+  );
+}
+function resetBannerCode(which) {
+  if (!confirm('Kosongkan isi editor ini?')) return;
+  setBannerCodeValue(which, '');
+  scheduleBannerCodePreview();
+}
+
+function scheduleBannerCodePreview() {
+  clearTimeout(_bannerCodePreviewTimer);
+  _bannerCodePreviewTimer = setTimeout(updateBannerCodePreview, 400);
+}
+function updateBannerCodePreview() {
+  const frame = document.getElementById('bannerCodePreviewFrame');
+  const errBox = document.getElementById('bannerCodePreviewError');
+  if (!frame) return;
+  errBox.style.display = 'none';
+  frame.srcdoc = buildBannerSandboxDocPreview({
+    html: getBannerCodeValue('html'),
+    css: getBannerCodeValue('css'),
+    js: getBannerCodeValue('js')
+  });
+}
+
+function setBannerType(type) {
+  _bannerType = type;
+  document.querySelectorAll('.banner-type-tab').forEach(t => t.classList.toggle('active', t.dataset.type === type));
+  document.getElementById('bannerImageFields').style.display = type === 'image' ? '' : 'none';
+  document.getElementById('bannerCodeFields').style.display = type === 'code' ? '' : 'none';
+  document.getElementById('bannerImagePreviewSection').style.display = type === 'image' ? '' : 'none';
+  if (type === 'code') {
+    ensureBannerCodeMirrors();
+    // CodeMirror butuh refresh() setelah container-nya baru saja ditampilkan
+    // (waktu masih display:none, dia ga bisa ngukur lebar dgn benar).
+    setTimeout(() => { [_bannerCM.html, _bannerCM.css, _bannerCM.js].forEach(cm => cm?.refresh()); updateBannerCodePreview(); }, 30);
+  }
+}
+
+function clearBannerImage() {
+  _bannerImagePayload = { imageUrl: '', imageData: '' };
+  document.getElementById('bannerImageUrl').value = '';
+  document.getElementById('bannerImageFile').value = '';
+  document.getElementById('bannerImagePreviewWrap').style.display = 'none';
+  updateBannerPreview();
+}
+
+document.getElementById('bannerImageFile')?.addEventListener('change', (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  if (file.size > 2 * 1024 * 1024) {
+    showToast('Ukuran gambar maksimal 2MB.', 'error');
+    e.target.value = '';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    _bannerImagePayload = { imageUrl: '', imageData: reader.result };
+    document.getElementById('bannerImageUrl').value = '';
+    showBannerImagePreview(reader.result);
+  };
+  reader.readAsDataURL(file);
+});
+document.getElementById('bannerImageUrl')?.addEventListener('input', (e) => {
+  const url = e.target.value.trim();
+  if (url) {
+    _bannerImagePayload = { imageUrl: url, imageData: '' };
+    document.getElementById('bannerImageFile').value = '';
+    showBannerImagePreview(url);
+  } else if (!document.getElementById('bannerImageFile').files?.length) {
+    clearBannerImage();
+  }
+});
+function showBannerImagePreview(src) {
+  document.getElementById('bannerImagePreviewImg').src = src;
+  document.getElementById('bannerImagePreviewWrap').style.display = 'block';
+  updateBannerPreview();
+}
+
 function openBannerModal(id) {
   _bannerEditId = id || null;
   const b = id ? _bannerList.find(x => x._id === id) : null;
@@ -2909,6 +3148,20 @@ function openBannerModal(id) {
   document.getElementById('bannerEndAt').value = toLocalDatetimeInput(b?.endAt);
   document.getElementById('bannerIsActive').checked = b ? !!b.isActive : true;
 
+  // Gambar
+  _bannerImagePayload = { imageUrl: b?.imageUrl || '', imageData: b?.imageData || '' };
+  document.getElementById('bannerImageUrl').value = b?.imageUrl || '';
+  document.getElementById('bannerImageFile').value = '';
+  if (b?.imageData || b?.imageUrl) showBannerImagePreview(b.imageData || b.imageUrl);
+  else document.getElementById('bannerImagePreviewWrap').style.display = 'none';
+
+  // Kode
+  ensureBannerCodeMirrors();
+  setBannerCodeValue('html', b?.codeHtml || '');
+  setBannerCodeValue('css', b?.codeCss || '');
+  setBannerCodeValue('js', b?.codeJs || '');
+
+  setBannerType(b?.bannerType === 'code' ? 'code' : 'image');
   updateBannerPreview();
   document.getElementById('bannerModalBackdrop').style.display = 'flex';
 }
@@ -2923,8 +3176,14 @@ function updateBannerPreview() {
   const to = document.getElementById('bannerGradientTo').value;
   const title = document.getElementById('bannerTitle').value || 'Judul Banner';
   const desc = document.getElementById('bannerDescription').value || '';
+  const img = _bannerImagePayload.imageData || _bannerImagePayload.imageUrl;
   const box = document.getElementById('bannerPreviewBox');
-  if (box) box.style.background = `linear-gradient(135deg, ${from}, ${to})`;
+  if (box) {
+    box.style.backgroundImage = img
+      ? `linear-gradient(90deg, rgba(10,6,16,.82), rgba(10,6,16,.35)), url('${img}')`
+      : 'none';
+    box.style.background = img ? '' : `linear-gradient(135deg, ${from}, ${to})`;
+  }
   document.getElementById('bannerPreviewTitle').textContent = title;
   document.getElementById('bannerPreviewDesc').textContent = desc;
 }
@@ -2937,19 +3196,31 @@ document.getElementById('btnAddBanner')?.addEventListener('click', () => openBan
 document.getElementById('btnSaveBanner')?.addEventListener('click', async () => {
   const btn = document.getElementById('btnSaveBanner');
   const payload = {
+    bannerType: _bannerType,
     title: document.getElementById('bannerTitle').value.trim(),
     subtitle: document.getElementById('bannerSubtitle').value.trim(),
     description: document.getElementById('bannerDescription').value.trim(),
     ctaText: document.getElementById('bannerCtaText').value.trim(),
     ctaLink: document.getElementById('bannerCtaLink').value.trim(),
-    gradientFrom: document.getElementById('bannerGradientFrom').value,
-    gradientTo: document.getElementById('bannerGradientTo').value,
-    icon: document.getElementById('bannerIcon').value.trim(),
     isActive: document.getElementById('bannerIsActive').checked,
     startAt: document.getElementById('bannerStartAt').value ? new Date(document.getElementById('bannerStartAt').value).toISOString() : null,
     endAt: document.getElementById('bannerEndAt').value ? new Date(document.getElementById('bannerEndAt').value).toISOString() : null,
   };
   if (!payload.title) { showToast('Judul banner wajib diisi.', 'error'); return; }
+
+  if (_bannerType === 'image') {
+    payload.gradientFrom = document.getElementById('bannerGradientFrom').value;
+    payload.gradientTo = document.getElementById('bannerGradientTo').value;
+    payload.icon = document.getElementById('bannerIcon').value.trim();
+    payload.imageUrl = _bannerImagePayload.imageUrl || '';
+    payload.imageData = _bannerImagePayload.imageData || '';
+  } else {
+    const html = getBannerCodeValue('html').trim();
+    if (!html) { showToast('HTML wajib diisi untuk Code Banner.', 'error'); return; }
+    payload.codeHtml = html;
+    payload.codeCss = getBannerCodeValue('css');
+    payload.codeJs = getBannerCodeValue('js');
+  }
 
   btn.disabled = true; btn.textContent = 'Menyimpan...';
   try {
