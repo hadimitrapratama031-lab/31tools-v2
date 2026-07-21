@@ -88,7 +88,13 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false
+      nodeIntegration: false,
+      // Video tutorial (YouTube/TikTok) di-embed pakai <webview>, bukan <iframe>.
+      // App di-load lewat file:// (loadFile di bawah), dan YouTube menolak embed
+      // <iframe> dari origin file:// (persis Error 153 "Video player configuration
+      // error"). <webview> membuka halaman embed sebagai konteks navigasi sendiri
+      // (origin youtube.com/tiktok.com yang sebenarnya), jadi lolos pengecekan itu.
+      webviewTag: true
     }
   });
 

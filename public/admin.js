@@ -3533,7 +3533,8 @@ function drawTutorialAdminList() {
         <div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap;">
           <span class="tag public" style="font-size:10px;">🏷️ ${escapeHtml(t.category || 'Umum')}</span>
           <span class="tag ${t.status}" style="font-size:10px;">${t.status === 'published' ? '✅ Published' : '📝 Draft'}</span>
-          ${t.youtubeId ? `<span class="tag public" style="font-size:10px;">▶️ YouTube</span>` : ''}
+          ${t.videoPlatform === 'tiktok' ? `<span class="tag public" style="font-size:10px;">🎵 TikTok</span>` : ''}
+          ${(t.videoPlatform === 'youtube' || (!t.videoPlatform && t.youtubeId)) ? `<span class="tag public" style="font-size:10px;">▶️ YouTube</span>` : ''}
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
@@ -3678,7 +3679,12 @@ function openTutorialModal(id) {
   document.getElementById('tutorialTitle').value = t?.title || '';
   document.getElementById('tutorialCategory').value = t?.category || '';
   document.getElementById('tutorialDescription').value = t?.description || '';
-  document.getElementById('tutorialYoutubeUrl').value = t?.youtubeId ? `https://youtu.be/${t.youtubeId}` : '';
+  const _tPlatform = t?.videoPlatform || (t?.youtubeId ? 'youtube' : '');
+  const _tVideoId = t?.videoId || t?.youtubeId || '';
+  let _tVideoUrlPrefill = '';
+  if (_tPlatform === 'youtube' && _tVideoId) _tVideoUrlPrefill = `https://youtu.be/${_tVideoId}`;
+  else if (_tPlatform === 'tiktok' && _tVideoId) _tVideoUrlPrefill = `https://www.tiktok.com/embed/v2/${_tVideoId}`;
+  document.getElementById('tutorialVideoUrl').value = _tVideoUrlPrefill;
 
   const status = t?.status === 'draft' ? 'draft' : 'published';
   document.getElementById('tutorialStatus').value = status;
@@ -3716,7 +3722,7 @@ document.getElementById('btnSaveTutorial')?.addEventListener('click', async () =
     title: document.getElementById('tutorialTitle').value.trim(),
     category: document.getElementById('tutorialCategory').value.trim(),
     description: document.getElementById('tutorialDescription').value.trim(),
-    youtubeUrl: document.getElementById('tutorialYoutubeUrl').value.trim(),
+    videoUrl: document.getElementById('tutorialVideoUrl').value.trim(),
     status: document.getElementById('tutorialStatus').value,
     content: getTutorialContentValue(),
     thumbnailUrl: _tutorialThumbPayload.url || '',

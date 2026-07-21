@@ -3683,6 +3683,51 @@ function extractYoutubeId(url) {
   return m ? m[1] : '';
 }
 
+// Terima link TikTok dalam format penuh (tiktok.com/@user/video/ID) langsung dari
+// regex tanpa request tambahan. Untuk short-link (vt.tiktok.com/xxx, vm.tiktok.com/xxx)
+// TikTok tidak menaruh ID di URL-nya — harus ikuti redirect dulu ke URL penuh baru
+// ID-nya kelihatan, makanya fungsi ini async.
+async function extractTiktokId(url) {
+  if (!url) return '';
+  const s = String(url).trim();
+
+  const direct = s.match(/tiktok\.com\/@[^/]+\/video\/(\d+)/i);
+  if (direct) return direct[1];
+
+  // short-link → resolve redirect-nya dulu (vt.tiktok.com / vm.tiktok.com / m.tiktok.com)
+  if (/tiktok\.com\//i.test(s)) {
+    try {
+      const resp = await axios.get(s, {
+        maxRedirects: 5,
+        timeout: 8000,
+        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
+      });
+      const finalUrl = resp.request?.res?.responseUrl || resp.request?.responseURL || '';
+      const m = finalUrl.match(/tiktok\.com\/@[^/]+\/video\/(\d+)/i);
+      if (m) return m[1];
+    } catch (e) { /* gagal resolve short-link, biarkan kosong */ }
+  }
+  return '';
+}
+
+// Deteksi platform dari satu input link (dipakai admin, cukup 1 kolom untuk YouTube/TikTok)
+// dan kembalikan { platform, id }. Mengembalikan platform:'' kalau linknya gak dikenali
+// atau videoId gagal diekstrak (termasuk short-link TikTok yang gagal di-resolve).
+async function resolveVideoInfo(url) {
+  if (!url) return { platform: '', id: '' };
+  const s = String(url).trim();
+
+  if (/(?:youtube\.com|youtu\.be)/i.test(s)) {
+    const id = extractYoutubeId(s);
+    return id ? { platform: 'youtube', id } : { platform: '', id: '' };
+  }
+  if (/tiktok\.com/i.test(s)) {
+    const id = await extractTiktokId(s);
+    return id ? { platform: 'tiktok', id } : { platform: '', id: '' };
+  }
+  return { platform: '', id: '' };
+}
+
 async function broadcastPublishedTutorials() {
   try {
     const tutorials = await db.collection('tutorials')
@@ -3713,7 +3758,7 @@ app.get('/api/admin/tutorials', requireAdmin, async (req, res) => {
 app.post('/api/admin/tutorials', requireAdmin, async (req, res) => {
   try {
     const {
-      title, description, content, category, youtubeUrl,
+      title, description, content, category, videoUrl, youtubeUrl,
       thumbnailData, thumbnailUrl, imageData, imageUrl, status
     } = req.body;
 
@@ -3722,13 +3767,17 @@ app.post('/api/admin/tutorials', requireAdmin, async (req, res) => {
 
     const thumb = validateTutorialImage(thumbnailData, thumbnailUrl, TUTORIAL_MAX_THUMB_BYTES, 'thumbnail');
     const img   = validateTutorialImage(imageData, imageUrl, TUTORIAL_MAX_IMAGE_BYTES, 'gambar');
+    // videoUrl = nama field baru (YouTube atau TikTok, 1 kolom); youtubeUrl tetap
+    // diterima untuk kompatibilitas kalau ada request lama yang masih kirim field itu.
+    const { platform: videoPlatform, id: videoId } = await resolveVideoInfo(videoUrl || youtubeUrl);
 
     const doc = {
       title: title.trim(),
       description: (description || '').trim(),
       content: sanitizeTutorialContent(content),
       category: (category || 'Umum').trim() || 'Umum',
-      youtubeId: extractYoutubeId(youtubeUrl),
+      videoPlatform, videoId,
+      youtubeId: videoPlatform === 'youtube' ? videoId : '', // kompat untuk build app lama
       thumbnailData: thumb.data, thumbnailUrl: thumb.url,
       imageData: img.data, imageUrl: img.url,
       status: status === 'draft' ? 'draft' : 'published',
@@ -3759,7 +3808,7 @@ app.put('/api/admin/tutorials/:id', requireAdmin, async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
     const {
-      title, description, content, category, youtubeUrl,
+      title, description, content, category, videoUrl, youtubeUrl,
       thumbnailData, thumbnailUrl, imageData, imageUrl, status
     } = req.body;
 
@@ -3774,7 +3823,12 @@ app.put('/api/admin/tutorials/:id', requireAdmin, async (req, res) => {
       update.content = sanitizeTutorialContent(content);
     }
     if (category !== undefined) update.category = (category || 'Umum').trim() || 'Umum';
-    if (youtubeUrl !== undefined) update.youtubeId = extractYoutubeId(youtubeUrl);
+    if (videoUrl !== undefined || youtubeUrl !== undefined) {
+      const { platform: videoPlatform, id: videoId } = await resolveVideoInfo(videoUrl !== undefined ? videoUrl : youtubeUrl);
+      update.videoPlatform = videoPlatform;
+      update.videoId = videoId;
+      update.youtubeId = videoPlatform === 'youtube' ? videoId : ''; // kompat untuk build app lama
+    }
     if (status !== undefined) update.status = status === 'draft' ? 'draft' : 'published';
 
     if (thumbnailData !== undefined || thumbnailUrl !== undefined) {

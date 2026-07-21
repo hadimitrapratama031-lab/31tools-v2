@@ -1395,8 +1395,20 @@ function renderTutorialDetail(tutorial) {
   if (els.tutorialDetailContent) els.tutorialDetailContent.innerHTML = tutorial.content || '';
 
   if (els.tutorialDetailVideoWrap && els.tutorialDetailVideo) {
-    if (tutorial.youtubeId) {
-      els.tutorialDetailVideo.src = `https://www.youtube-nocookie.com/embed/${tutorial.youtubeId}`;
+    // videoPlatform/videoId = field baru (support YouTube & TikTok). Fallback ke
+    // youtubeId lama supaya tutorial yang disimpan sebelum update ini tetap tampil.
+    const platform = tutorial.videoPlatform || (tutorial.youtubeId ? 'youtube' : '');
+    const videoId = tutorial.videoId || tutorial.youtubeId || '';
+
+    let embedSrc = '';
+    if (platform === 'youtube' && videoId) {
+      embedSrc = `https://www.youtube-nocookie.com/embed/${videoId}`;
+    } else if (platform === 'tiktok' && videoId) {
+      embedSrc = `https://www.tiktok.com/embed/v2/${videoId}`;
+    }
+
+    if (embedSrc) {
+      els.tutorialDetailVideo.src = embedSrc;
       els.tutorialDetailVideoWrap.style.display = '';
     } else {
       els.tutorialDetailVideo.src = '';
