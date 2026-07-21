@@ -340,7 +340,14 @@ async function applyExpiryIfNeeded(user) {
 
   await db.collection('users').updateOne(
     { discordId },
-    { $set: { role: 'public', roleUpdatedAt: new Date(), activeUntil: null } }
+    {
+      $set: {
+        role: 'public', roleUpdatedAt: new Date(), activeUntil: null,
+        // Reset limit download harian juga — biar user gak kebawa sisa/habis kuota
+        // dari paket lama begitu turun ke Public (limit Public beda dari Gold/Platinum).
+        downloadUsage: { date: todayDateStrJakarta(), game: 0, bypass: 0 }
+      }
+    }
   );
 
   // Best-effort: sinkron Discord + log. Jangan sampai gagalnya nge-block request user.
@@ -788,7 +795,21 @@ async function notifyAllUsers({ title, message, dm = false, webhook = true }) {
   return results.length;
 }
 
-const roleSync = require('./discordRoleSync')({ getDb: () => db, ROLE_LEVEL });
+const roleSync = require('./discordRoleSync')({
+  getDb: () => db, ROLE_LEVEL,
+  // BUG FIX: sebelumnya perubahan role yang dipicu dari SISI DISCORD (admin
+  // add/remove role manual di server Discord, user keluar guild, atau full resync
+  // Discord->App) TIDAK push update realtime ke app maupun Admin Web sama sekali —
+  // user/admin baru lihat perubahannya setelah reload/refresh manual. Sekarang
+  // disamakan dengan jalur app (Set Paket/klaim voucher): begitu role (& limit
+  // download yang direset bareng) berubah, langsung didorong lewat WebSocket.
+  onRoleChanged: (discordId) => {
+    pushAccountUpdate(discordId).catch(() => {});
+    db.collection('users').findOne({ discordId })
+      .then(fresh => fresh && computeUserStats(discordId).then(stats => broadcastAdmin('user:update', publicUser(fresh, stats))))
+      .catch(() => {});
+  }
+});
 
 // Webhook Discord PER KATEGORI notifikasi (lihat webhookManager.js) — menggantikan
 // webhook tunggal DISCORD_NOTIF_WEBHOOK_URL lama. Diatur dari Admin Web > Webhook
@@ -2581,7 +2602,17 @@ app.post('/api/voucher/claim', requireUser, async (req, res) => {
 
     await db.collection('users').updateOne(
       { discordId },
-      { $set: { role: voucher.role, activeUntil, roleUpdatedAt: now } }
+      {
+        $set: {
+          role: voucher.role, activeUntil, roleUpdatedAt: now,
+          // BUG FIX: kalau paket berubah (mis. Public -> Gold), limit download harian
+          // (Game & Bypass) WAJIB direset ke 0/dipakai — biar user langsung dapat kuota
+          // penuh sesuai paket barunya, bukan kebawa sisa/habis dari paket lama.
+          // Kalau cuma perpanjang paket yang SAMA (oldRole === voucher.role), limit
+          // TIDAK direset — user yang masih ada sisa kuota hari ini gak dirugikan.
+          ...(oldRole !== voucher.role ? { downloadUsage: { date: todayDateStrJakarta(), game: 0, bypass: 0 } } : {})
+        }
+      }
     );
 
     // Sinkron ke Discord + DM cuma kalau rolenya beneran berubah (sama seperti alur
@@ -4319,6 +4350,13 @@ app.put('/api/admin/users/:discordId/role', requireAdmin, async (req, res) => {
   // Masa aktif (activeUntil) cuma relevan buat Gold & Platinum — Public & Admin selalu
   // unlimited waktu jadi field-nya dikosongkan lagi kalau paketnya diubah ke salah satunya.
   const update = { role, roleUpdatedAt: new Date() };
+  // BUG FIX: limit download harian (Game & Bypass) WAJIB direset begitu paket beneran
+  // berubah (mis. Public -> Gold) — kalau tidak, sisa/habis kuota dari paket lama masih
+  // kebawa padahal limit paket barunya beda. Reset TIDAK dilakukan kalau role-nya SAMA
+  // (admin cuma ubah masa aktif doang), biar user tidak dirugikan kehilangan sisa kuota.
+  if (oldRole !== role) {
+    update.downloadUsage = { date: todayDateStrJakarta(), game: 0, bypass: 0 };
+  }
   if (role === 'gold' || role === 'platinum') {
     const period = computeActiveUntil(req.body);
     if (!period.ok) return res.status(400).json({ error: period.error });

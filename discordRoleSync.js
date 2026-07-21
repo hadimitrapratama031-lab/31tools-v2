@@ -34,10 +34,20 @@ const axios = require('axios');
 const DISCORD_API = 'https://discord.com/api/v10';
 const SETTINGS_ID = 'roleSync';
 
-module.exports = function createRoleSync({ getDb, ROLE_LEVEL }) {
+// Tanggal hari ini di zona WIB — dipakai buat reset counter limit download (lihat
+// DOWNLOAD_LIMITS & todayDateStrJakarta yang sama persis di server.js) tiap kali
+// role user berubah lewat jalur Discord (manual add/remove role, keluar guild, resync).
+function todayDateStrJakarta() {
+  return new Date().toLocaleDateString('en-CA', { timeZone: 'Asia/Jakarta' });
+}
+
+module.exports = function createRoleSync({ getDb, ROLE_LEVEL, onRoleChanged }) {
   const BOT_TOKEN = process.env.DISCORD_BOT_TOKEN || '';
   const GUILD_ID = process.env.DISCORD_GUILD_ID || '';
   const APP_NAME = process.env.APP_NAME || 'Nova Launcher';
+  // Best-effort, opsional — kalau tidak di-pass (mis. dipanggil dari script/test lain),
+  // jangan sampai modul ini error cuma gara-gara realtime callback-nya tidak ada.
+  const notifyRealtime = typeof onRoleChanged === 'function' ? onRoleChanged : () => {};
 
   // Semua tier yang bisa disinkron — termasuk 'public' kalau roleId-nya di-set
   const ALL_TIERS = Object.keys(ROLE_LEVEL); // ['public','gold','platinum']
@@ -380,13 +390,21 @@ module.exports = function createRoleSync({ getDb, ROLE_LEVEL }) {
         const oldRole = user.role;
         await db.collection('users').updateOne(
           { discordId: newMember.id },
-          { $set: { role: targetTier, roleUpdatedAt: new Date() } }
+          {
+            $set: {
+              role: targetTier, roleUpdatedAt: new Date(),
+              // Reset limit download harian juga — konsisten dengan perubahan role
+              // lewat app (Set Paket/klaim voucher), biar limit paket baru langsung penuh.
+              downloadUsage: { date: todayDateStrJakarta(), game: 0, bypass: 0 }
+            }
+          }
         );
 
         // Rapikan Discord kalau ternyata user sempat pegang 2 role tier sekaligus
         // (misal admin nambahin role Platinum padahal masih pegang role Gold) —
         // dipaksa balik jadi cuma 1 role tier aktif, konsisten kayak dari app.
         const discordSync = await syncAppRoleToDiscord(newMember.id, targetTier);
+        notifyRealtime(newMember.id); // push realtime ke app & Admin Web TANPA nunggu refresh
 
         await logRoleChange({
           discordId: newMember.id,
@@ -417,8 +435,14 @@ module.exports = function createRoleSync({ getDb, ROLE_LEVEL }) {
         const oldRole = user.role;
         await db.collection('users').updateOne(
           { discordId: member.id },
-          { $set: { role: 'public', roleUpdatedAt: new Date() } }
+          {
+            $set: {
+              role: 'public', roleUpdatedAt: new Date(),
+              downloadUsage: { date: todayDateStrJakarta(), game: 0, bypass: 0 }
+            }
+          }
         );
+        notifyRealtime(member.id);
 
         await logRoleChange({
           discordId: member.id,
@@ -473,8 +497,17 @@ module.exports = function createRoleSync({ getDb, ROLE_LEVEL }) {
         const targetTier = tierFromRoleIds(m.roles, roleMap);
         if (user.role === targetTier) { summary.skipped++; continue; }
         const oldRole = user.role;
-        await db.collection('users').updateOne({ discordId: m.user.id }, { $set: { role: targetTier, roleUpdatedAt: new Date() } });
+        await db.collection('users').updateOne(
+          { discordId: m.user.id },
+          {
+            $set: {
+              role: targetTier, roleUpdatedAt: new Date(),
+              downloadUsage: { date: todayDateStrJakarta(), game: 0, bypass: 0 }
+            }
+          }
+        );
         const discordSync = await syncAppRoleToDiscord(m.user.id, targetTier); // rapikan kalau ada role tier dobel
+        notifyRealtime(m.user.id);
         await db.collection('roleSyncLogs').insertOne({
           discordId: m.user.id, username: user.username, oldRole, newRole: targetTier,
           source: 'resync', discordSynced: discordSync.ok, discordSyncReason: discordSync.reason || null,
