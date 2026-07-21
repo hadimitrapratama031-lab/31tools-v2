@@ -121,21 +121,6 @@ function grabElements() {
   els.gamesRoleFilter = document.getElementById('gamesRoleFilter');
   els.bypassesRoleFilter = document.getElementById('bypassesRoleFilter');
   els.dashCategoryFilters = document.getElementById('dashCategoryFilters');
-
-  els.tutorialLatestGrid  = document.getElementById('tutorialLatestGrid');
-  els.tutorialGrid        = document.getElementById('tutorialGrid');
-  els.tutorialCategoryFilter = document.getElementById('tutorialCategoryFilter');
-  els.tutorialSearchInput = document.getElementById('tutorialSearchInput');
-  els.tutorialDetailCategory = document.getElementById('tutorialDetailCategory');
-  els.tutorialDetailTitle   = document.getElementById('tutorialDetailTitle');
-  els.tutorialDetailImageWrap = document.getElementById('tutorialDetailImageWrap');
-  els.tutorialDetailImage   = document.getElementById('tutorialDetailImage');
-  els.tutorialDetailContent = document.getElementById('tutorialDetailContent');
-  els.tutorialDetailVideoWrap = document.getElementById('tutorialDetailVideoWrap');
-  els.tutorialDetailVideo   = document.getElementById('tutorialDetailVideo');
-  els.tutorialPrevBtn = document.getElementById('tutorialPrevBtn');
-  els.tutorialNextBtn = document.getElementById('tutorialNextBtn');
-  els.tutorialDetailBackBtn = document.getElementById('tutorialDetailBackBtn');
 }
 
 // ── FILTER KATEGORI DI DASHBOARD ("New Games") ──
@@ -262,11 +247,10 @@ const PAGE_IDS = {
   bypasses: 'pageBypasses',
   store: 'pageStore',
   histori: 'pageHistori',
-  voucher: 'pageVoucher',
-  setting: 'pageSetting',
-  gameDetail: 'pageGameDetail',
   tutorial: 'pageTutorial',
-  tutorialDetail: 'pageTutorialDetail'
+  tutorialDetail: 'pageTutorialDetail',
+  setting: 'pageSetting',
+  gameDetail: 'pageGameDetail'
 };
 
 function showPage(pageName) {
@@ -282,7 +266,7 @@ function showPage(pageName) {
   if (pageName === 'games') applyGamesRoleFilter();
   if (pageName === 'bypasses') applyBypassesRoleFilter();
   if (pageName === 'histori') { loadHistori(); }
-  if (pageName === 'tutorial') applyTutorialFilter();
+  if (pageName === 'tutorial') { loadTutorialsPage(); }
 }
 
 function wireNavigation() {
@@ -593,7 +577,7 @@ function enterApp(user) {
   loadBypasses();
   loadBanners();
   loadLeaderboard();
-  loadTutorials();
+  loadTutorialCategories();
   flushPendingHistory().catch(() => {}); // coba kirim ulang histori yang sempat gagal tersimpan sesi sebelumnya
   startAutoRefresh(); // ← polling berkala supaya game/bypass baru dari admin langsung muncul
   checkPendingPremiumCleanups(); // ← "kalau app tidak dibuka, pengecekan dilakukan saat app dibuka kembali"
@@ -927,6 +911,249 @@ function wireDetailPage() {
   if (backBtn) backBtn.addEventListener('click', () => showPage(_prevPageBeforeDetail));
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// TUTORIAL (Help Center) — daftar, search, filter kategori, Terbaru/Populer,
+// dan halaman baca tutorial (cover, isi, gambar, video YouTube, file download,
+// Next/Previous). Data 100% dari /api/tutorials (dikelola dari Admin Web) dan
+// auto-update lewat WebSocket ('tutorials:update') TANPA perlu update launcher.
+// ══════════════════════════════════════════════════════════════════════════
+let allTutorialCategories = [];
+let activeTutTab = 'all';        // all | latest | popular
+let activeTutCategory = 'all';
+let tutSearchQuery = '';
+let _tutFetchToken = 0;
+let _tutSearchDebounce = null;
+let _currentTutorialId = null;   // id tutorial yang lagi dibuka di halaman detail
+
+async function loadTutorialCategories() {
+  try {
+    allTutorialCategories = await api('/api/tutorial-categories');
+    renderTutorialCategoryFilters();
+  } catch (e) { /* diam-diam gagal — chip kategori lain cuma gak nongol */ }
+}
+
+function tutCategoryName(slug) {
+  const c = allTutorialCategories.find(c => c.slug === slug);
+  return c ? c.name : 'Umum';
+}
+
+function renderTutorialCategoryFilters() {
+  const wrap = document.getElementById('tutCategoryFilters');
+  if (!wrap) return;
+  const chips = [{ slug: 'all', name: 'Semua Kategori' }, ...allTutorialCategories];
+  wrap.innerHTML = chips.map(c => `
+    <span data-cat="${escapeHtml(c.slug)}" class="${c.slug === activeTutCategory ? 'active' : ''}">${escapeHtml(c.name)}</span>
+  `).join('');
+}
+
+function tutFormatDate(dateStr) {
+  if (!dateStr) return '—';
+  try {
+    return new Date(dateStr).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+  } catch (e) { return '—'; }
+}
+
+// ── FETCH & RENDER LIST (search/kategori/sort semuanya diproses di server) ──
+async function fetchAndRenderTutorials() {
+  const grid = document.getElementById('tutGrid');
+  if (!grid) return;
+  const myToken = ++_tutFetchToken;
+
+  try {
+    const params = new URLSearchParams();
+    if (activeTutCategory !== 'all') params.set('category', activeTutCategory);
+    if (tutSearchQuery.trim()) params.set('search', tutSearchQuery.trim());
+    if (activeTutTab === 'latest') params.set('sort', 'latest');
+    else if (activeTutTab === 'popular') params.set('sort', 'popular');
+
+    const list = await api(`/api/tutorials?${params.toString()}`);
+    if (myToken !== _tutFetchToken) return; // sudah kebalap request/filter berikutnya
+    renderTutorialGrid(list);
+  } catch (e) {
+    if (myToken !== _tutFetchToken) return;
+    grid.innerHTML = `<div class="tut-empty"><div class="tut-empty-icon">⚠️</div><div class="tut-empty-title">Gagal memuat tutorial</div><div class="tut-empty-text">${escapeHtml(e.message)}</div></div>`;
+  }
+}
+
+function loadTutorialsPage() {
+  if (!allTutorialCategories.length) loadTutorialCategories();
+  fetchAndRenderTutorials();
+}
+
+function renderTutorialThumbHtml(item) {
+  const img = item.thumbnailData || item.thumbnailUrl;
+  if (img) return `<div class="tut-card-thumb" style="background-image:url('${img}');"></div>`;
+  return `<div class="tut-card-thumb tut-thumb-fallback ${artClassForId(item._id || item.title)}"><span>📘</span></div>`;
+}
+
+function renderTutorialCard(item) {
+  return `
+    <div class="tut-card" data-id="${item._id}">
+      ${item.isPinned ? '<div class="tut-pin-badge">📌 Pinned</div>' : ''}
+      ${renderTutorialThumbHtml(item)}
+      <div class="tut-card-body">
+        <div class="tut-card-cat">${escapeHtml(tutCategoryName(item.categorySlug))}</div>
+        <h4 class="tut-card-title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</h4>
+        <p class="tut-card-desc">${escapeHtml(item.excerpt || item.subtitle || '')}</p>
+        <div class="tut-card-meta">
+          <span>🗓️ ${tutFormatDate(item.createdAt)}</span>
+          <span>⏱️ ${item.readingTimeMin} menit</span>
+          <span>👁️ ${item.views}</span>
+        </div>
+        <button class="tut-read-btn">Baca Tutorial <span>›</span></button>
+      </div>
+    </div>`;
+}
+
+function renderTutorialGrid(list) {
+  const grid = document.getElementById('tutGrid');
+  if (!grid) return;
+
+  if (!list.length) {
+    grid.innerHTML = `
+      <div class="tut-empty">
+        <div class="tut-empty-icon">📘</div>
+        <div class="tut-empty-title">Belum ada tutorial.</div>
+        <div class="tut-empty-text">Coba ubah kata kunci pencarian atau kategori lain, atau cek lagi nanti.</div>
+      </div>`;
+    return;
+  }
+
+  grid.innerHTML = list.map(renderTutorialCard).join('');
+  grid.querySelectorAll('.tut-card').forEach(card => {
+    card.addEventListener('click', () => openTutorialDetail(card.dataset.id));
+  });
+}
+
+function wireTutorialPage() {
+  const tabsWrap = document.getElementById('tutTabs');
+  if (tabsWrap) {
+    tabsWrap.addEventListener('click', (e) => {
+      const btn = e.target.closest('.tut-tab');
+      if (!btn) return;
+      tabsWrap.querySelectorAll('.tut-tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      activeTutTab = btn.dataset.tab;
+      fetchAndRenderTutorials();
+    });
+  }
+
+  const catWrap = document.getElementById('tutCategoryFilters');
+  if (catWrap) {
+    catWrap.addEventListener('click', (e) => {
+      const chip = e.target.closest('[data-cat]');
+      if (!chip) return;
+      catWrap.querySelectorAll('[data-cat]').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      activeTutCategory = chip.dataset.cat;
+      fetchAndRenderTutorials();
+    });
+  }
+
+  const searchInput = document.getElementById('tutSearchInput');
+  if (searchInput) {
+    searchInput.addEventListener('input', () => {
+      tutSearchQuery = searchInput.value;
+      clearTimeout(_tutSearchDebounce);
+      _tutSearchDebounce = setTimeout(fetchAndRenderTutorials, 300);
+    });
+  }
+
+  const backBtn = document.getElementById('tutDetailBackBtn');
+  if (backBtn) backBtn.addEventListener('click', () => showPage('tutorial'));
+
+  const navButtons = document.getElementById('tutNavButtons');
+  if (navButtons) {
+    navButtons.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-nav-id]');
+      if (!btn) return;
+      openTutorialDetail(btn.dataset.navId);
+    });
+  }
+}
+
+// ── HALAMAN BACA TUTORIAL ──
+async function openTutorialDetail(id) {
+  _currentTutorialId = id;
+  showPage('tutorialDetail');
+  const mainEl = document.querySelector('.main');
+  if (mainEl) mainEl.scrollTop = 0;
+
+  const titleEl = document.getElementById('tutReaderTitle');
+  const contentEl = document.getElementById('tutReaderContent');
+  if (titleEl) titleEl.textContent = 'Memuat...';
+  if (contentEl) contentEl.innerHTML = '<div class="tut-reader-skel"></div><div class="tut-reader-skel"></div><div class="tut-reader-skel short"></div>';
+
+  try {
+    const data = await api(`/api/tutorials/${id}`);
+    if (_currentTutorialId !== id) return; // user udah pindah tutorial lain sebelum response ini datang
+    renderTutorialDetail(data);
+  } catch (e) {
+    if (_currentTutorialId !== id) return;
+    if (titleEl) titleEl.textContent = 'Gagal memuat tutorial';
+    if (contentEl) contentEl.innerHTML = `<p style="color:var(--danger);">${escapeHtml(e.message)}</p>`;
+  }
+}
+
+function renderTutorialDetail(data) {
+  const coverEl = document.getElementById('tutReaderCover');
+  const img = data.thumbnailData || data.thumbnailUrl;
+  if (img) {
+    coverEl.style.backgroundImage = `url('${img}')`;
+    coverEl.className = 'tut-reader-cover';
+    coverEl.style.display = '';
+  } else {
+    coverEl.style.display = 'none';
+  }
+
+  document.getElementById('tutReaderTitle').textContent = data.title || '—';
+  const subtitleEl = document.getElementById('tutReaderSubtitle');
+  subtitleEl.textContent = data.subtitle || '';
+  subtitleEl.style.display = data.subtitle ? '' : 'none';
+
+  document.getElementById('tutReaderMeta').innerHTML = `
+    <span class="tut-meta-chip">${escapeHtml(tutCategoryName(data.categorySlug) || data.categoryName || 'Umum')}</span>
+    <span>🗓️ ${tutFormatDate(data.createdAt)}</span>
+    <span>⏱️ ${data.readingTimeMin} menit baca</span>
+    <span>👁️ ${data.views} dilihat</span>
+  `;
+
+  document.getElementById('tutReaderContent').innerHTML = data.content || '<p>Belum ada isi.</p>';
+
+  // Video YouTube (opsional)
+  const videoEl = document.getElementById('tutReaderVideo');
+  if (data.youtubeEmbedUrl) {
+    videoEl.style.display = '';
+    videoEl.innerHTML = `<iframe src="${data.youtubeEmbedUrl}" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>`;
+  } else {
+    videoEl.style.display = 'none';
+    videoEl.innerHTML = '';
+  }
+
+  // File download (opsional)
+  const dlEl = document.getElementById('tutReaderDownload');
+  if (data.hasFile) {
+    dlEl.style.display = '';
+    dlEl.innerHTML = `<button class="tut-download-btn" id="tutDownloadBtn">⬇️ Download ${data.fileName ? escapeHtml(data.fileName) : 'File'}</button>`;
+    document.getElementById('tutDownloadBtn').addEventListener('click', () => {
+      const token = localStorage.getItem('token');
+      const url = `${SERVER_URL}/api/tutorials/${data._id}/download?token=${encodeURIComponent(token || '')}`;
+      if (window.electronAPI?.openExternal) window.electronAPI.openExternal(url);
+      else window.open(url, '_blank');
+    });
+  } else {
+    dlEl.style.display = 'none';
+    dlEl.innerHTML = '';
+  }
+
+  // Next / Previous
+  const navWrap = document.getElementById('tutNavButtons');
+  navWrap.innerHTML = `
+    ${data.prevId ? `<button class="tut-nav-btn tut-nav-prev" data-nav-id="${data.prevId}"><span>‹</span> Tutorial Sebelumnya</button>` : '<span></span>'}
+    ${data.nextId ? `<button class="tut-nav-btn tut-nav-next" data-nav-id="${data.nextId}">Tutorial Berikutnya <span>›</span></button>` : ''}
+  `;
+}
+
 // ── RENDER KARTU GAME ──
 function renderGameCard(item, idx) {
   const art = item.imageUrl
@@ -1251,215 +1478,6 @@ document.getElementById('hcTrack')?.addEventListener('click', (e) => {
     window.open(link, '_blank');
   }
 });
-
-// ══════════════════════════════════════════════════════════════════════════
-// TUTORIAL — daftar tutorial 100% dari /api/tutorials (dikelola dari Admin Web
-// di halaman "Kelola Tutorial"), update realtime lewat WebSocket
-// ('tutorials:update') tanpa perlu update launcher ataupun restart app sama sekali.
-// Search & filter kategori dikerjakan di client terhadap data yang sudah ada di
-// memori (sama seperti Games/Bypass) — instan walau jumlah tutorial banyak.
-// ══════════════════════════════════════════════════════════════════════════
-let allTutorials = [];
-let activeTutorialCategory = 'all';
-let currentTutorialNavList = []; // daftar tutorial yang sedang tampil (ikut filter aktif) — dipakai Next/Previous
-let currentTutorialIndex = -1;
-let _prevPageBeforeTutorialDetail = 'tutorial';
-
-async function loadTutorials() {
-  try {
-    allTutorials = await api('/api/tutorials');
-    renderTutorialCategoryFilters();
-    renderTutorialLatest();
-    applyTutorialFilter();
-  } catch (e) {
-    if (els.tutorialGrid) {
-      els.tutorialGrid.innerHTML = `<div style="color:#8577a3;font-size:13px;padding:10px 4px;">Gagal memuat tutorial: ${escapeHtml(e.message)}</div>`;
-    }
-  }
-}
-
-// Chip kategori dibangun dari kategori yang benar-benar ada di data tutorial saat
-// ini (bukan dari koleksi terpisah) — otomatis update begitu admin menambah
-// kategori baru lewat tutorial pertamanya di kategori itu.
-function renderTutorialCategoryFilters() {
-  if (!els.tutorialCategoryFilter) return;
-  const categories = Array.from(new Set(allTutorials.map(t => t.category || 'Umum'))).sort();
-  const chips = [{ slug: 'all', name: 'Semua Kategori' }, ...categories.map(c => ({ slug: c, name: c }))];
-
-  if (!categories.includes(activeTutorialCategory) && activeTutorialCategory !== 'all') {
-    activeTutorialCategory = 'all';
-  }
-
-  els.tutorialCategoryFilter.innerHTML = chips.map(c => `
-    <button class="role-filter-tab${c.slug === activeTutorialCategory ? ' active' : ''}" data-category="${escapeHtml(c.slug)}">${escapeHtml(c.name)}</button>
-  `).join('');
-}
-
-function wireTutorialCategoryFilter() {
-  if (!els.tutorialCategoryFilter) return;
-  els.tutorialCategoryFilter.addEventListener('click', (e) => {
-    const btn = e.target.closest('.role-filter-tab');
-    if (!btn) return;
-    els.tutorialCategoryFilter.querySelectorAll('.role-filter-tab').forEach(b => b.classList.remove('active'));
-    btn.classList.add('active');
-    activeTutorialCategory = btn.dataset.category;
-    applyTutorialFilter();
-  });
-}
-
-function wireTutorialSearch() {
-  if (!els.tutorialSearchInput) return;
-  els.tutorialSearchInput.addEventListener('input', () => applyTutorialFilter());
-}
-
-function applyTutorialFilter() {
-  if (!els.tutorialGrid) return;
-  const q = els.tutorialSearchInput ? els.tutorialSearchInput.value.trim().toLowerCase() : '';
-  let filtered = allTutorials;
-  if (activeTutorialCategory !== 'all') {
-    filtered = filtered.filter(t => (t.category || 'Umum') === activeTutorialCategory);
-  }
-  if (q) {
-    filtered = filtered.filter(t =>
-      t.title.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q)
-    );
-  }
-  renderTutorialGrid(els.tutorialGrid, filtered);
-}
-
-// "Tutorial Terbaru" — 6 tutorial paling baru (data sudah terurut createdAt desc dari server)
-function renderTutorialLatest() {
-  if (!els.tutorialLatestGrid) return;
-  renderTutorialGrid(els.tutorialLatestGrid, allTutorials.slice(0, 6));
-}
-
-function tutorialThumbStyle(item) {
-  const src = item.thumbnailData || item.thumbnailUrl;
-  return src ? `background-image:url('${src}');background-size:cover;background-position:center;` : '';
-}
-
-function renderTutorialCard(item) {
-  return `
-    <div class="tutorial-card" data-id="${item._id}">
-      <div class="tutorial-card__thumb" style="${tutorialThumbStyle(item)}">
-        <span class="tutorial-card__category">${escapeHtml(item.category || 'Umum')}</span>
-      </div>
-      <div class="tutorial-card__body">
-        <h4 class="tutorial-card__title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</h4>
-        <p class="tutorial-card__desc">${escapeHtml(item.description || '')}</p>
-        <span class="tutorial-card__btn">📖 Baca Tutorial</span>
-      </div>
-    </div>`;
-}
-
-function renderTutorialGrid(container, tutorials) {
-  if (!container) return;
-  container.innerHTML = tutorials.length
-    ? tutorials.map(t => renderTutorialCard(t)).join('')
-    : `<div style="color:#8577a3;font-size:13px;padding:10px 4px;">Belum ada tutorial.</div>`;
-  container.querySelectorAll('.tutorial-card').forEach(card => {
-    card.addEventListener('click', () => {
-      const tutorial = tutorials.find(t => t._id === card.dataset.id);
-      if (tutorial) openTutorialDetail(tutorial, tutorials);
-    });
-  });
-}
-
-// Buka halaman baca tutorial. `navList` = daftar tutorial yang sedang tampil di
-// kartu yang diklik (Terbaru ATAU hasil filter/search) — jadi Next/Previous
-// jalan sesuai konteks tempat user meng-klik, bukan selalu urutan semua data.
-function openTutorialDetail(tutorial, navList) {
-  currentTutorialNavList = navList || allTutorials;
-  currentTutorialIndex = currentTutorialNavList.findIndex(t => t._id === tutorial._id);
-  _prevPageBeforeTutorialDetail = els.navLinks.find(a => a.classList.contains('active'))?.dataset.page || 'tutorial';
-  renderTutorialDetail(tutorial);
-  showPage('tutorialDetail');
-}
-
-function renderTutorialDetail(tutorial) {
-  if (els.tutorialDetailCategory) els.tutorialDetailCategory.textContent = tutorial.category || 'Umum';
-  if (els.tutorialDetailTitle) els.tutorialDetailTitle.textContent = tutorial.title;
-
-  const imgSrc = tutorial.imageData || tutorial.imageUrl;
-  if (els.tutorialDetailImageWrap && els.tutorialDetailImage) {
-    if (imgSrc) {
-      els.tutorialDetailImage.src = imgSrc;
-      els.tutorialDetailImageWrap.style.display = '';
-    } else {
-      els.tutorialDetailImageWrap.style.display = 'none';
-    }
-  }
-
-  // `content` sudah disanitasi ketat di server (lihat sanitizeTutorialContent di
-  // server.js — tag berbahaya seperti <script>/<iframe>/<img> sudah dibuang di
-  // sana) sebelum pernah disimpan ke DB, jadi aman dirender sebagai HTML di sini.
-  if (els.tutorialDetailContent) els.tutorialDetailContent.innerHTML = tutorial.content || '';
-
-  if (els.tutorialDetailVideoWrap && els.tutorialDetailVideo) {
-    // videoPlatform/videoId = field baru (support YouTube & TikTok). Fallback ke
-    // youtubeId lama supaya tutorial yang disimpan sebelum update ini tetap tampil.
-    const platform = tutorial.videoPlatform || (tutorial.youtubeId ? 'youtube' : '');
-    const videoId = tutorial.videoId || tutorial.youtubeId || '';
-
-    // Histori debug Error 153/152 (lihat catatan lengkap di main.js):
-    // file:// = gak ada Referer sama sekali -> 153. Referer="youtube.com"
-    // -> kontradiktif, jadi 152. Load app lewat local HTTP server -> video
-    // jalan TAPI bikin fetch ke backend sendiri gagal (ERR_NETWORK_ACCESS_DENIED),
-    // jadi di-revert. Fix final: kasih Referer/origin = domain produksi kita
-    // sendiri (SERVER_URL) — origin pihak ketiga yang valid & masuk akal buat
-    // YouTube, tanpa perlu ubah cara app di-load sama sekali.
-    const EMBED_REFERER = SERVER_URL + '/';
-
-    let embedSrc = '';
-    let referer = '';
-    if (platform === 'youtube' && videoId) {
-      referer = EMBED_REFERER;
-      embedSrc = `https://www.youtube-nocookie.com/embed/${videoId}?origin=${encodeURIComponent(SERVER_URL)}`;
-    } else if (platform === 'tiktok' && videoId) {
-      referer = EMBED_REFERER;
-      embedSrc = `https://www.tiktok.com/embed/v2/${videoId}`;
-    }
-
-    if (embedSrc) {
-      // httpreferrer WAJIB di-set sebelum src diubah supaya navigasi pertama
-      // ke YouTube/TikTok langsung bawa Referer yang benar.
-      els.tutorialDetailVideo.setAttribute('httpreferrer', referer);
-      els.tutorialDetailVideo.src = embedSrc;
-      els.tutorialDetailVideoWrap.style.display = '';
-    } else {
-      els.tutorialDetailVideo.src = '';
-      els.tutorialDetailVideoWrap.style.display = 'none';
-    }
-  }
-
-  if (els.tutorialPrevBtn) els.tutorialPrevBtn.disabled = currentTutorialIndex <= 0;
-  if (els.tutorialNextBtn) els.tutorialNextBtn.disabled = currentTutorialIndex < 0 || currentTutorialIndex >= currentTutorialNavList.length - 1;
-
-  const scrollEl = document.querySelector('#pageTutorialDetail .detail-scroll');
-  if (scrollEl) scrollEl.scrollTop = 0;
-}
-
-function wireTutorialDetailNav() {
-  if (els.tutorialDetailBackBtn) {
-    els.tutorialDetailBackBtn.addEventListener('click', () => showPage(_prevPageBeforeTutorialDetail));
-  }
-  if (els.tutorialPrevBtn) {
-    els.tutorialPrevBtn.addEventListener('click', () => {
-      if (currentTutorialIndex > 0) {
-        currentTutorialIndex--;
-        renderTutorialDetail(currentTutorialNavList[currentTutorialIndex]);
-      }
-    });
-  }
-  if (els.tutorialNextBtn) {
-    els.tutorialNextBtn.addEventListener('click', () => {
-      if (currentTutorialIndex >= 0 && currentTutorialIndex < currentTutorialNavList.length - 1) {
-        currentTutorialIndex++;
-        renderTutorialDetail(currentTutorialNavList[currentTutorialIndex]);
-      }
-    });
-  }
-}
 
 // ══════════════════════════════════════════════════════════════════════════
 // TOP INSTALLER MINGGUAN — leaderboard realtime dari /api/leaderboard, dihitung
@@ -2320,15 +2338,22 @@ function connectRealtime() {
       handleDeviceReset();
     } else if (msg.event === 'banners:update') {
       renderBannerCarousel(msg.data);
-    } else if (msg.event === 'tutorials:update') {
-      allTutorials = msg.data;
-      renderTutorialCategoryFilters();
-      renderTutorialLatest();
-      applyTutorialFilter();
     } else if (msg.event === 'leaderboard:update') {
       renderLeaderboard(msg.data);
     } else if (msg.event === 'premium:cleanup') {
       handlePremiumCleanup(msg.data);
+    } else if (msg.event === 'tutorials:update') {
+      // Admin nambah/edit/hapus/publish/pin/reorder tutorial — kalau lagi buka halaman
+      // Tutorial atau baca salah satu tutorial, refresh langsung TANPA restart app.
+      const activeLink = els.navLinks.find(a => a.classList.contains('active'));
+      if (activeLink?.dataset.page === 'tutorial') fetchAndRenderTutorials();
+      const detailPageEl = document.getElementById('pageTutorialDetail');
+      if (detailPageEl && detailPageEl.style.display !== 'none' && _currentTutorialId) {
+        api(`/api/tutorials/${_currentTutorialId}`).then(renderTutorialDetail).catch(() => {});
+      }
+    } else if (msg.event === 'app_version:update') {
+      // Admin merilis/ubah versi launcher — cek ulang SEKARANG, tanpa perlu restart app.
+      checkAppVersionOnce();
     }
   };
 
@@ -2590,50 +2615,6 @@ function wirePackageCard() {
   });
 }
 
-// ── CLAIM VOUCHER ──
-// Server (POST /api/voucher/claim) yang melakukan seluruh validasi (kode valid,
-// expired, kuota, sudah pernah diklaim) + update role/masa aktif user. Di sini
-// cuma kirim kode & tampilkan hasilnya — update role/limit/paket di sidebar
-// otomatis realtime lewat WS 'account:update' yang sudah ditangani handleAccountUpdate().
-function wireVoucherClaim() {
-  const input = document.getElementById('voucherCodeInput');
-  const btn = document.getElementById('btnClaimVoucher');
-  const resultEl = document.getElementById('voucherClaimResult');
-  if (!input || !btn) return;
-
-  const doClaim = async () => {
-    const code = input.value.trim();
-    if (!code) {
-      resultEl.style.display = 'block';
-      resultEl.className = 'voucher-claim-result error';
-      resultEl.textContent = 'Masukkan kode voucher dulu.';
-      return;
-    }
-    btn.disabled = true;
-    const originalText = btn.textContent;
-    btn.textContent = 'Memproses...';
-    resultEl.style.display = 'none';
-    try {
-      const data = await api('/api/voucher/claim', { method: 'POST', body: JSON.stringify({ code }) });
-      resultEl.style.display = 'block';
-      resultEl.className = 'voucher-claim-result success';
-      resultEl.textContent = `🎉 Voucher berhasil diklaim! Paket ${data.role.toUpperCase()} kamu ${data.extended ? 'diperpanjang' : 'aktif'} ${data.durationLabel}.`;
-      input.value = '';
-    } catch (e) {
-      resultEl.style.display = 'block';
-      resultEl.className = 'voucher-claim-result error';
-      resultEl.textContent = '⚠️ ' + (e.message || 'Gagal claim voucher, coba lagi.');
-    } finally {
-      btn.disabled = false;
-      btn.textContent = originalText;
-    }
-  };
-
-  btn.addEventListener('click', doClaim);
-  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); doClaim(); } });
-  input.addEventListener('input', () => { input.value = input.value.toUpperCase(); });
-}
-
 // ── NOTIFICATION BELL ──
 let _notifUnread = 0;
 function setNotifUnreadCount(n) {
@@ -2790,6 +2771,202 @@ async function loadConfig() {
   } catch (e) {}
 }
 
+// ══════════════════════════════════════════════════════════════════════════
+// AUTO UPDATE LAUNCHER
+// Dicek SETIAP kali app dijalankan + polling berkala + realtime lewat WS
+// ('app_version:update', lihat handler di atas). Proses download/verifikasi/
+// install/relaunch dikerjakan Electron main process (main.js) — di sini cuma
+// urus UI (modal), pemicu, dan progress.
+// ══════════════════════════════════════════════════════════════════════════
+let _appCurrentVersion = null;
+let _updateCheckTimer = null;
+let _updateListenersWired = false;
+let _updateDownloadActive = false;
+
+function compareVersionsClient(a, b) {
+  const pa = String(a || '0').replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b || '0').replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const x = pa[i] || 0, y = pb[i] || 0;
+    if (x !== y) return x - y;
+  }
+  return 0;
+}
+
+function fmtBytes(bytes) {
+  if (!bytes || bytes <= 0) return '—';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let i = 0, val = bytes;
+  while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
+  return `${val.toFixed(val >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+async function initAutoUpdateCheck() {
+  try { _appCurrentVersion = (await window.electronAPI?.getAppVersion?.()) || null; } catch (e) { _appCurrentVersion = null; }
+  if (!_appCurrentVersion) return; // bukan di dalam Electron (mis. dibuka di browser biasa) — skip
+
+  await checkPendingUpdateOutcome(); // cek hasil update dari sesi sebelumnya (sukses/gagal)
+
+  wireUpdateIpcListeners();
+  checkAppVersionOnce();
+  clearInterval(_updateCheckTimer);
+  _updateCheckTimer = setInterval(checkAppVersionOnce, 5 * 60 * 1000); // cek berkala tiap 5 menit
+}
+
+// Kalau sebelumnya user memicu update (tersimpan di localStorage sebelum app ditutup buat
+// dipasangi versi baru), cek sekarang setelah app kembali terbuka: berhasil atau tidak.
+async function checkPendingUpdateOutcome() {
+  try {
+    const pendingVersion = localStorage.getItem('pendingUpdateVersion');
+    const pendingAt = Number(localStorage.getItem('pendingUpdateSetAt') || 0);
+    if (!pendingVersion) return;
+
+    if (_appCurrentVersion === pendingVersion || compareVersionsClient(_appCurrentVersion, pendingVersion) >= 0) {
+      await fetch(`${SERVER_URL}/api/app-version/log`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'update_success', description: `Launcher berhasil diperbarui ke versi ${_appCurrentVersion}.`, appVersion: _appCurrentVersion })
+      }).catch(() => {});
+      localStorage.removeItem('pendingUpdateVersion');
+      localStorage.removeItem('pendingUpdateSetAt');
+    } else if (pendingAt && Date.now() - pendingAt > 10 * 60 * 1000) {
+      // Sudah lebih dari 10 menit sejak update dimulai tapi versi masih sama seperti sebelumnya — anggap gagal.
+      await fetch(`${SERVER_URL}/api/app-version/log`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ type: 'update_failed', description: `Launcher gagal diperbarui ke versi ${pendingVersion} (masih di versi ${_appCurrentVersion}).`, appVersion: _appCurrentVersion })
+      }).catch(() => {});
+      localStorage.removeItem('pendingUpdateVersion');
+      localStorage.removeItem('pendingUpdateSetAt');
+    }
+  } catch (e) { /* diam-diam gagal — tidak kritis */ }
+}
+
+async function checkAppVersionOnce() {
+  try {
+    const data = await api('/api/app-version');
+    if (!data?.available || !_appCurrentVersion) return;
+    if (compareVersionsClient(data.version, _appCurrentVersion) <= 0) return; // sudah versi terbaru
+
+    if (!data.isRequired) {
+      const dismissed = localStorage.getItem('dismissedUpdateVersion');
+      if (dismissed === data.version) return; // user sudah pilih "Nanti" untuk versi ini
+    }
+    showUpdateModal(data);
+  } catch (e) { /* server/koneksi bermasalah — diam-diam, coba lagi di polling berikutnya */ }
+}
+
+function wireUpdateIpcListeners() {
+  if (_updateListenersWired || !window.electronAPI) return;
+  _updateListenersWired = true;
+
+  window.electronAPI.onUpdateProgress((data) => {
+    const bar = document.getElementById('updProgressBar');
+    const status = document.getElementById('updStatusText');
+    if (bar) bar.style.width = `${data.percent || 0}%`;
+    if (status) status.textContent = `Mengunduh update... ${data.percent || 0}% (${fmtBytes(data.downloaded)} / ${fmtBytes(data.total)})`;
+  });
+
+  window.electronAPI.onUpdateStatus((data) => {
+    const status = document.getElementById('updStatusText');
+    if (data.stage === 'error') {
+      renderUpdateErrorState(data.message);
+      return;
+    }
+    if (status) status.textContent = data.message || '';
+    if (data.stage === 'installing') {
+      const bar = document.getElementById('updProgressBar');
+      if (bar) bar.style.width = '100%';
+    }
+  });
+}
+
+function showUpdateModal(data) {
+  const overlay = document.getElementById('updateOverlay');
+  if (!overlay) return;
+  overlay.style.display = 'flex';
+
+  const changelogHtml = (data.changelog && data.changelog.length)
+    ? `<div class="upd-changelog"><ul>${data.changelog.map(c => `<li>${escapeHtml(c)}</li>`).join('')}</ul></div>`
+    : '';
+
+  overlay.innerHTML = `
+    <div class="pcm-modal">
+      <div class="pcm-icon pcm-icon--warn">🚀</div>
+      <div class="pcm-title">${data.isRequired ? 'Update Wajib Tersedia' : 'Update Tersedia'}</div>
+      <div class="upd-version-row">
+        <span class="upd-version-chip current">v${escapeHtml(_appCurrentVersion)}</span>
+        <span class="upd-arrow">→</span>
+        <span class="upd-version-chip latest">v${escapeHtml(data.version)}</span>
+      </div>
+      <div class="upd-meta-row">
+        <span>🗓️ ${data.releaseDate ? new Date(data.releaseDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</span>
+        <span>💾 ${fmtBytes(data.fileSize)}</span>
+      </div>
+      ${changelogHtml}
+      <div class="pcm-progress" style="display:none;" id="updProgressWrap"><div class="pcm-progress-bar upd-determinate" id="updProgressBar"></div></div>
+      <div class="pcm-status" id="updStatusText"></div>
+      ${data.isRequired ? `<div class="upd-force-note">⚠️ Update ini wajib dipasang sebelum kamu bisa melanjutkan menggunakan aplikasi.</div>` : ''}
+      <div class="pcm-actions" id="updActions" style="margin-top:16px;">
+        <button class="pcm-btn pcm-btn--primary" id="updStartBtn">⬇️ Update Sekarang</button>
+      </div>
+      ${data.isRequired ? '' : '<button class="pcm-close" id="updLaterBtn">Nanti saja</button>'}
+    </div>`;
+
+  document.getElementById('updStartBtn')?.addEventListener('click', () => startUpdateProcess(data));
+  document.getElementById('updLaterBtn')?.addEventListener('click', () => {
+    localStorage.setItem('dismissedUpdateVersion', data.version);
+    overlay.style.display = 'none';
+    overlay.innerHTML = '';
+  });
+}
+
+async function startUpdateProcess(data) {
+  if (_updateDownloadActive) return;
+  _updateDownloadActive = true;
+
+  const actionsEl = document.getElementById('updActions');
+  const laterBtn = document.getElementById('updLaterBtn');
+  const progressWrap = document.getElementById('updProgressWrap');
+  const statusEl = document.getElementById('updStatusText');
+  if (actionsEl) actionsEl.innerHTML = '';
+  if (laterBtn) laterBtn.style.display = 'none';
+  if (progressWrap) progressWrap.style.display = 'block';
+  if (statusEl) statusEl.textContent = 'Menyiapkan download...';
+
+  localStorage.setItem('pendingUpdateVersion', data.version);
+  localStorage.setItem('pendingUpdateSetAt', String(Date.now()));
+
+  try {
+    const result = await window.electronAPI.startUpdate({
+      downloadUrl: data.downloadUrl,
+      expectedSize: data.fileSize,
+      checksum: data.checksum,
+      version: data.version
+    });
+    if (!result?.success) {
+      renderUpdateErrorState(result?.error || 'Gagal memulai proses update.');
+    }
+    // Kalau sukses: main process akan menutup app sendiri sesaat lagi untuk memasang
+    // update — tidak ada lagi yang perlu dilakukan renderer di sini.
+  } catch (e) {
+    renderUpdateErrorState(e.message);
+  }
+}
+
+function renderUpdateErrorState(message) {
+  _updateDownloadActive = false;
+  localStorage.removeItem('pendingUpdateVersion');
+  localStorage.removeItem('pendingUpdateSetAt');
+
+  const statusEl = document.getElementById('updStatusText');
+  if (statusEl) { statusEl.textContent = `❌ ${message}`; statusEl.style.color = '#ffb4b4'; }
+  const actionsEl = document.getElementById('updActions');
+  if (actionsEl) {
+    actionsEl.innerHTML = `<button class="pcm-btn pcm-btn--primary" id="updRetryBtn">🔄 Coba Lagi</button>`;
+    document.getElementById('updRetryBtn')?.addEventListener('click', () => checkAppVersionOnce());
+  }
+}
+
 // ── START ──
 document.addEventListener('DOMContentLoaded', () => {
   grabElements();
@@ -2800,13 +2977,11 @@ document.addEventListener('DOMContentLoaded', () => {
   wireBypassesRoleFilter();
   wireDashCategoryFilter();
   wireDetailPage();
-  wireTutorialCategoryFilter();
-  wireTutorialSearch();
-  wireTutorialDetailNav();
   wireHistoriTabs();
+  wireTutorialPage();
   wirePackageCard();
   wireNotifBell();
-  wireVoucherClaim();
   loadConfig();
   tryAutoLogin();
+  initAutoUpdateCheck(); // cek update SETIAP kali app dijalankan — tidak perlu login dulu
 });

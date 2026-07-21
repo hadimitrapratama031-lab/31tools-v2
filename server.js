@@ -89,7 +89,7 @@ app.post('/api/discord/interactions', express.raw({ type: 'application/json' }),
 // gambar sebagai base64 (data URI) langsung lewat body JSON (lihat ADMIN — BANNER
 // CAROUSEL di bawah). Ukuran gambar aslinya sendiri tetap dibatasi lebih ketat
 // (BANNER_MAX_IMAGE_BYTES) di handler, ini cuma pagar atas di level parser.
-app.use(express.json({ limit: '8mb' }));
+app.use(express.json({ limit: '20mb' })); // dinaikkan dari 8mb — halaman Tutorial menyimpan gambar (base64) & file download langsung di dalam dokumen Mongo
 app.use(express.static(path.join(__dirname, 'public'))); // admin.html, admin.js, dll
 
 const PORT = process.env.PORT || 3000;
@@ -141,11 +141,6 @@ const ryuKeyManager = require('./ryuKeyManager')({
   broadcastAdmin: (...args) => broadcastAdmin(...args),
   logActivity: (...args) => logActivity(...args)
 });
-
-// Voucher Paket Gold/Platinum — lihat voucherManager.js. Modul ini cuma ngurus
-// data voucher + logika klaim yang aman dari race condition; efek ke akun user
-// (ubah role/masa aktif/notifikasi) tetap di server.js (lihat POST /api/voucher/claim).
-const voucherManager = require('./voucherManager')({ getDb: () => db });
 
 // ── PROXY STREAM dari HubCap → client ──
 // PENTING: server yang men-download dari HubCap (pakai axios + Bearer key), lalu
@@ -340,14 +335,7 @@ async function applyExpiryIfNeeded(user) {
 
   await db.collection('users').updateOne(
     { discordId },
-    {
-      $set: {
-        role: 'public', roleUpdatedAt: new Date(), activeUntil: null,
-        // Reset limit download harian juga — biar user gak kebawa sisa/habis kuota
-        // dari paket lama begitu turun ke Public (limit Public beda dari Gold/Platinum).
-        downloadUsage: { date: todayDateStrJakarta(), game: 0, bypass: 0 }
-      }
-    }
+    { $set: { role: 'public', roleUpdatedAt: new Date(), activeUntil: null } }
   );
 
   // Best-effort: sinkron Discord + log. Jangan sampai gagalnya nge-block request user.
@@ -561,12 +549,6 @@ const LOG_CATALOG = {
   set_paket:             { label: 'Set Paket User',                icon: '📦', category: 'billing',    status: 'success' },
   purchase:              { label: 'Pembelian Paket',                icon: '💳', category: 'billing',    status: 'success' },
   renewal:                { label: 'Perpanjangan Paket',             icon: '🔄', category: 'billing',    status: 'success' },
-  voucher_create:          { label: 'Buat Voucher',                     icon: '🎟️', category: 'billing',    status: 'success' },
-  voucher_edit:            { label: 'Edit Voucher',                     icon: '✏️', category: 'billing',    status: 'success' },
-  voucher_delete:          { label: 'Hapus Voucher',                    icon: '🗑️', category: 'billing',    status: 'warning' },
-  voucher_toggle:          { label: 'Aktif/Nonaktifkan Voucher',        icon: '🔁', category: 'billing',    status: 'success' },
-  voucher_claim_success:   { label: 'Claim Voucher Berhasil',           icon: '🎟️', category: 'billing',    status: 'success' },
-  voucher_claim_failed:    { label: 'Claim Voucher Gagal',              icon: '⚠️', category: 'billing',    status: 'warning' },
   admin_reset_quota:      { label: 'Reset Download/Bypass Limit',     icon: '♻️', category: 'moderation', status: 'success' },
   device_reset:           { label: 'Reset Device',                    icon: '🖥️', category: 'moderation', status: 'success' },
   device_allow_change:    { label: 'Izinkan Ganti Device',             icon: '🔓', category: 'moderation', status: 'success' },
@@ -585,12 +567,23 @@ const LOG_CATALOG = {
   admin_add_bypass:        { label: 'Tambah Bypass',                       icon: '➕', category: 'catalog', status: 'success' },
   admin_edit_bypass:       { label: 'Edit Bypass',                         icon: '✏️', category: 'catalog', status: 'success' },
   admin_delete_bypass:     { label: 'Hapus Bypass',                        icon: '🗑️', category: 'catalog', status: 'warning' },
-  admin_add_tutorial:      { label: 'Tambah Tutorial',                     icon: '➕', category: 'catalog', status: 'success' },
-  admin_edit_tutorial:     { label: 'Edit Tutorial',                       icon: '✏️', category: 'catalog', status: 'success' },
-  admin_delete_tutorial:   { label: 'Hapus Tutorial',                      icon: '🗑️', category: 'catalog', status: 'warning' },
   admin_add_voucher:       { label: 'Tambah Voucher',                      icon: '➕', category: 'catalog', status: 'success', reserved: true },
   admin_edit_voucher:      { label: 'Edit Voucher',                        icon: '✏️', category: 'catalog', status: 'success', reserved: true },
   admin_delete_voucher:    { label: 'Hapus Voucher',                       icon: '🗑️', category: 'catalog', status: 'warning', reserved: true },
+  admin_add_tutorial:            { label: 'Tambah Tutorial',               icon: '📘', category: 'catalog', status: 'success' },
+  admin_edit_tutorial:           { label: 'Edit Tutorial',                 icon: '✏️', category: 'catalog', status: 'success' },
+  admin_delete_tutorial:         { label: 'Hapus Tutorial',                icon: '🗑️', category: 'catalog', status: 'warning' },
+  admin_reorder_tutorial:        { label: 'Ubah Urutan Tutorial',          icon: '↕️', category: 'catalog', status: 'success' },
+  admin_add_tutorial_category:   { label: 'Tambah Kategori Tutorial',      icon: '➕', category: 'catalog', status: 'success' },
+  admin_delete_tutorial_category:{ label: 'Hapus Kategori Tutorial',       icon: '🗑️', category: 'catalog', status: 'warning' },
+  admin_add_app_version:    { label: 'Rilis Versi Launcher Baru',    icon: '🚀', category: 'system', status: 'success' },
+  admin_edit_app_version:   { label: 'Edit Versi Launcher',          icon: '✏️', category: 'system', status: 'success' },
+  admin_delete_app_version: { label: 'Hapus Versi Launcher',         icon: '🗑️', category: 'system', status: 'warning' },
+  update_check:    { label: 'Cek Update Launcher',                  icon: '🔍', category: 'system', status: 'info' },
+  update_download: { label: 'Download Update Launcher',              icon: '📥', category: 'system', status: 'success' },
+  update_install:  { label: 'Install Update Launcher',                icon: '📦', category: 'system', status: 'info' },
+  update_success:  { label: 'Launcher Berhasil Diperbarui',          icon: '✅', category: 'system', status: 'success' },
+  update_failed:   { label: 'Launcher Gagal Diperbarui',              icon: '⚠️', category: 'system', status: 'error' },
   admin_add_package:       { label: 'Tambah Paket',                        icon: '➕', category: 'catalog', status: 'success', reserved: true },
   admin_edit_package:      { label: 'Edit Paket',                          icon: '✏️', category: 'catalog', status: 'success', reserved: true },
   admin_delete_package:    { label: 'Hapus Paket',                         icon: '🗑️', category: 'catalog', status: 'warning', reserved: true },
@@ -715,8 +708,7 @@ const NOTIF_META = {
   renewal:          { status: 'info',    label: 'Perpanjangan Paket' },
   announcement:     { status: 'info',    label: 'Pengumuman Admin' },
   login:            { status: 'info',    label: 'Login Akun' },
-  system_error:     { status: 'error',   label: 'Error Sistem' },
-  voucher_claim:    { status: 'success', label: 'Voucher Berhasil Diklaim' }
+  system_error:     { status: 'error',   label: 'Error Sistem' }
 };
 
 // Fungsi utama pengiriman notifikasi. Selalu simpan ke DB (in-app, muncul di lonceng
@@ -795,21 +787,7 @@ async function notifyAllUsers({ title, message, dm = false, webhook = true }) {
   return results.length;
 }
 
-const roleSync = require('./discordRoleSync')({
-  getDb: () => db, ROLE_LEVEL,
-  // BUG FIX: sebelumnya perubahan role yang dipicu dari SISI DISCORD (admin
-  // add/remove role manual di server Discord, user keluar guild, atau full resync
-  // Discord->App) TIDAK push update realtime ke app maupun Admin Web sama sekali —
-  // user/admin baru lihat perubahannya setelah reload/refresh manual. Sekarang
-  // disamakan dengan jalur app (Set Paket/klaim voucher): begitu role (& limit
-  // download yang direset bareng) berubah, langsung didorong lewat WebSocket.
-  onRoleChanged: (discordId) => {
-    pushAccountUpdate(discordId).catch(() => {});
-    db.collection('users').findOne({ discordId })
-      .then(fresh => fresh && computeUserStats(discordId).then(stats => broadcastAdmin('user:update', publicUser(fresh, stats))))
-      .catch(() => {});
-  }
-});
+const roleSync = require('./discordRoleSync')({ getDb: () => db, ROLE_LEVEL });
 
 // Webhook Discord PER KATEGORI notifikasi (lihat webhookManager.js) — menggantikan
 // webhook tunggal DISCORD_NOTIF_WEBHOOK_URL lama. Diatur dari Admin Web > Webhook
@@ -1200,8 +1178,7 @@ const WEBHOOK_CATEGORY_BY_NOTIF_TYPE = {
   renewal:           'renewal',
   announcement:      'announcement',
   login:             'login',
-  system_error:      'system_error',
-  voucher_claim:      'purchase' // reuse channel "Pembelian Paket" — voucher juga memberi paket Gold/Platinum
+  system_error:      'system_error'
 };
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1247,13 +1224,16 @@ async function connectDB() {
     await db.collection('deviceLogs').createIndex({ createdAt: -1 });
     await db.collection('banners').createIndex({ order: 1 });
     await db.collection('banners').createIndex({ isActive: 1 });
-    await db.collection('tutorials').createIndex({ status: 1, createdAt: -1 });
-    await db.collection('tutorials').createIndex({ category: 1 });
-    await db.collection('tutorials').createIndex({ title: 'text', description: 'text' });
     await db.collection('leaderboardHistory').createIndex({ weekStart: -1 });
+    // Halaman Tutorial (Help Center) — App & Admin Web
+    await db.collection('tutorials').createIndex({ status: 1, isPinned: -1, order: 1, createdAt: -1 });
+    await db.collection('tutorials').createIndex({ categorySlug: 1 });
+    await db.collection('tutorials').createIndex({ views: -1 });
+    await db.collection('tutorialCategories').createIndex({ slug: 1 }, { unique: true });
+    // Auto Update Launcher — riwayat rilis versi launcher (App Version di Admin Web)
+    await db.collection('appVersions').createIndex({ version: 1 }, { unique: true });
+    await db.collection('appVersions').createIndex({ isActive: 1 });
     await db.collection('hubcapApiKeys').createIndex({ createdAt: 1 });
-    // Voucher Paket Gold/Platinum — kode unik + cegah 1 user klaim voucher sama 2x.
-    await voucherManager.ensureIndexes();
 
     // Migrasi satu kali: kalau ada HUBCAP_API_KEY* lama di .env tapi koleksi
     // hubcapApiKeys masih kosong, import jadi entri DB (lihat hubcapKeyManager.js).
@@ -1268,6 +1248,10 @@ async function connectDB() {
     // `categories` masih kosong sama sekali, supaya kategori yang sudah
     // diedit/ditambah/dihapus admin TIDAK PERNAH ditimpa ulang tiap restart.
     seedDefaultCategoriesIfEmpty().catch(e => console.warn('[Seed Kategori] Gagal:', e.message));
+
+    // Seed kategori default Tutorial (Memulai/Game/Bypass/Akun & Paket/Troubleshooting) —
+    // HANYA kalau koleksi `tutorialCategories` masih kosong sama sekali.
+    seedDefaultTutorialCategoriesIfEmpty().catch(e => console.warn('[Seed Kategori Tutorial] Gagal:', e.message));
 
     // Cron ringan: cek tiap 5 menit apakah minggu leaderboard sudah berganti,
     // kalau ya snapshot leaderboard minggu sebelumnya ke `leaderboardHistory`.
@@ -2536,156 +2520,6 @@ app.post('/api/downloads/failed', requireUser, async (req, res) => {
   }
 });
 
-// ══════════════════════════════════════════════════════════════════════════
-// APP — CLAIM VOUCHER (lihat voucherManager.js buat validasi & logika klaim
-// yang aman dari race condition). Berhasil klaim -> role user berubah ke
-// Gold/Platinum, masa aktif bertambah, limit paket ikut update otomatis
-// (limit dihitung dari role, lihat accountStatusSummary), realtime ke app user
-// (WS account:update) & Admin Web (WS user:update), semua tercatat di Logs.
-// ══════════════════════════════════════════════════════════════════════════
-const VOUCHER_FAIL_MESSAGE = {
-  invalid_code:    'Kode voucher tidak ditemukan/tidak valid.',
-  inactive:        'Voucher ini sedang dinonaktifkan oleh Admin.',
-  expired:         'Voucher ini sudah kedaluwarsa (masa berlaku habis).',
-  quota_full:      'Kuota voucher ini sudah habis.',
-  already_claimed: 'Kamu sudah pernah memakai voucher ini sebelumnya.'
-};
-
-app.post('/api/voucher/claim', requireUser, async (req, res) => {
-  const discordId = req.user.discordId;
-  const username = req.user.username || discordId;
-  const rawCode = String(req.body?.code || '');
-  const normCode = voucherManager.normalizeCode(rawCode);
-
-  const logFail = (reason, voucherSnapshot) => {
-    logActivity({
-      type: 'voucher_claim_failed',
-      username, discordId, status: 'warning',
-      ip: getReqIp(req),
-      description: `Claim voucher "${normCode || rawCode}" oleh ${username} GAGAL: ${VOUCHER_FAIL_MESSAGE[reason] || reason}.`,
-      meta: { code: normCode || rawCode, reason, voucherId: voucherSnapshot ? String(voucherSnapshot._id) : null }
-    }).catch(() => {});
-  };
-
-  try {
-    if (!normCode) {
-      return res.status(400).json({ error: 'Kode voucher wajib diisi.' });
-    }
-
-    const result = await voucherManager.claimVoucher({ code: normCode, discordId, username });
-
-    if (!result.ok) {
-      logFail(result.reason, result.voucher);
-      return res.status(400).json({ error: VOUCHER_FAIL_MESSAGE[result.reason] || 'Voucher tidak bisa diklaim.', reason: result.reason });
-    }
-
-    const voucher = result.voucher;
-    const user = await db.collection('users').findOne({ discordId });
-    if (!user) {
-      // Skenario nyaris mustahil (JWT valid tapi user hilang dari DB) — tapi kalau
-      // sampai kejadian, jangan biarkan slot/kuota voucher sudah kepakai sia-sia.
-      await db.collection('vouchers').updateOne({ _id: voucher._id }, { $inc: { usedCount: -1 } }).catch(() => {});
-      await db.collection('voucherRedemptions').deleteOne({ voucherId: voucher._id, discordId }).catch(() => {});
-      return res.status(404).json({ error: 'User tidak ditemukan.' });
-    }
-
-    const oldRole = user.role;
-    const durationMs = voucher.durationAmount * voucherManager.DURATION_UNIT_MS[voucher.durationUnit];
-    // Kalau user SAAT INI sudah di role yang SAMA dengan voucher & masih aktif ->
-    // masa aktifnya DITAMBAH (extend) dari activeUntil yang ada, bukan direset dari
-    // sekarang — biar user tidak dirugikan kalau masih ada sisa waktu berjalan.
-    // Kalau role beda / belum ada masa aktif aktif -> dihitung dari sekarang.
-    const now = new Date();
-    const hasActiveSameRole = oldRole === voucher.role && user.activeUntil && new Date(user.activeUntil) > now;
-    const baseTime = hasActiveSameRole ? new Date(user.activeUntil) : now;
-    const activeUntil = new Date(baseTime.getTime() + durationMs);
-
-    await db.collection('users').updateOne(
-      { discordId },
-      {
-        $set: {
-          role: voucher.role, activeUntil, roleUpdatedAt: now,
-          // BUG FIX: kalau paket berubah (mis. Public -> Gold), limit download harian
-          // (Game & Bypass) WAJIB direset ke 0/dipakai — biar user langsung dapat kuota
-          // penuh sesuai paket barunya, bukan kebawa sisa/habis dari paket lama.
-          // Kalau cuma perpanjang paket yang SAMA (oldRole === voucher.role), limit
-          // TIDAK direset — user yang masih ada sisa kuota hari ini gak dirugikan.
-          ...(oldRole !== voucher.role ? { downloadUsage: { date: todayDateStrJakarta(), game: 0, bypass: 0 } } : {})
-        }
-      }
-    );
-
-    // Sinkron ke Discord + DM cuma kalau rolenya beneran berubah (sama seperti alur
-    // Admin set-role) — kalau user platinum klaim voucher platinum lagi, rolenya
-    // tidak berubah jadi tidak perlu sinkron ulang role Discord, cukup extend waktu.
-    let discordSync = null;
-    if (oldRole !== voucher.role) {
-      discordSync = await roleSync.syncAppRoleToDiscord(discordId, voucher.role).catch(() => null);
-    }
-
-    const durationLabel = `${voucher.durationAmount} ${voucherManager.DURATION_UNIT_LABEL[voucher.durationUnit]}`;
-    const voucherFields = [
-      field('👤 Username', username, true),
-      field('🎟️ Kode Voucher', voucher.code, true),
-      field('📦 Paket', voucher.role.toUpperCase(), true),
-      field('⏱️ Durasi', durationLabel, true),
-      field('⏳ Aktif Sampai', fmtDateTimeWIB(activeUntil), true)
-    ];
-
-    notifyUser(discordId, {
-      type: 'voucher_claim',
-      title: 'Voucher Berhasil Diklaim!',
-      message: `Voucher "${voucher.code}" berhasil diklaim — paket ${voucher.role.toUpperCase()} kamu ${hasActiveSameRole ? 'diperpanjang' : 'aktif'} ${durationLabel}, sampai ${fmtDateTimeWIB(activeUntil)}.`,
-      fields: voucherFields,
-      dm: true, webhook: true
-    }).catch(() => {});
-
-    logActivity({
-      type: 'voucher_claim_success',
-      username, discordId, role: voucher.role, status: 'success',
-      ip: getReqIp(req),
-      before: oldRole,
-      after: voucher.role,
-      description: `${username} berhasil claim voucher "${voucher.code}" -> paket ${voucher.role.toUpperCase()} (${durationLabel}), aktif sampai ${fmtDateTimeWIB(activeUntil)}.`,
-      meta: { code: voucher.code, voucherId: String(voucher._id), role: voucher.role, durationAmount: voucher.durationAmount, durationUnit: voucher.durationUnit, activeUntil }
-    }).catch(() => {});
-
-    webhookManager.sendCategoryWebhook('purchase', {
-      embed: buildEmbed({
-        status: 'success',
-        title: 'Voucher Diklaim',
-        description: `Seorang user berhasil claim voucher paket.`,
-        fields: voucherFields,
-        thumbnail: APP_LOGO_URL || undefined,
-        appName: APP_NAME,
-        footerNote: 'Voucher Paket'
-      })
-    }).catch(() => {});
-
-    // Realtime — role/masa aktif user langsung update di app TANPA reload/restart,
-    // dan Admin Web (kalau lagi buka halaman Users/Voucher) ikut ter-update juga.
-    pushAccountUpdate(discordId).catch(() => {});
-    db.collection('users').findOne({ discordId })
-      .then(fresh => computeUserStats(discordId).then(stats => broadcastAdmin('user:update', publicUser(fresh, stats))))
-      .catch(() => {});
-    voucherManager.listVouchers()
-      .then(list => broadcastAdmin('voucher:update', list.map(voucherPublic)))
-      .catch(() => {});
-
-    res.json({
-      success: true,
-      role: voucher.role,
-      activeUntil,
-      durationLabel,
-      extended: hasActiveSameRole
-    });
-  } catch (e) {
-    console.error('[Voucher] Gagal klaim:', e);
-    logFail('server_error');
-    res.status(500).json({ error: 'Terjadi kesalahan di server, coba lagi sebentar.' });
-  }
-});
-
 app.get('/api/history', requireUser, async (req, res) => {
   try {
     const rows = await db.collection('history')
@@ -3799,177 +3633,318 @@ app.delete('/api/admin/banners/:id', requireAdmin, async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// TUTORIAL — Halaman Tutorial (App) & Kelola Tutorial (Admin Web)
-// Sama seperti Banner: thumbnail & gambar disimpan sebagai data URI base64 di
-// Mongo (boleh juga link eksternal), jadi tidak butuh disk/storage terpisah —
-// aman dipakai di hosting apa pun termasuk yang filesystem-nya ephemeral.
-//
-// "Isi Tutorial" adalah rich text (HTML) hasil editor Admin Web, disanitasi
-// ketat sebelum disimpan (lihat sanitizeTutorialContent) — SENGAJA tidak
-// mengizinkan <img>/<iframe>/<script> di dalam isi tutorial, karena gambar &
-// video tutorial sudah punya kolom terpisah (imageData/imageUrl & youtubeId)
-// supaya ukuran dokumen tetap terkendali & gampang diaudit.
-//
-// Realtime: setiap Tambah/Edit/Hapus/ubah status Publish-Draft di Admin Web
-// langsung di-broadcast lewat WebSocket ('tutorials:update') ke semua device
-// App yang online — App tidak perlu update launcher ataupun restart sama sekali.
+// TUTORIAL — Help Center (App: baca tutorial, Admin Web: Kelola Tutorial)
+// Sama seperti Banner: thumbnail & file download disimpan sebagai base64 (data
+// URI) langsung di dokumen Mongo ATAU sebagai link eksternal biasa — tanpa
+// ketergantungan storage/disk eksternal, aman dipakai di hosting mana pun.
+// Perubahan admin (tambah/edit/hapus/publish/pin/reorder) langsung disiarkan
+// lewat WebSocket ('tutorials:update') supaya App update TANPA perlu update
+// launcher / restart aplikasi sama sekali.
 // ══════════════════════════════════════════════════════════════════════════
-const TUTORIAL_MAX_THUMB_BYTES = 2 * 1024 * 1024; // 2MB — cukup buat thumbnail kartu
-const TUTORIAL_MAX_IMAGE_BYTES = 2 * 1024 * 1024; // 2MB — gambar pendukung di halaman isi tutorial
-const TUTORIAL_MAX_CONTENT_LEN = 200000; // ~200rb karakter HTML rich text — jauh lebih dari cukup buat 1 tutorial
+const TUTORIAL_MAX_IMAGE_BYTES = 3 * 1024 * 1024;  // 3MB per gambar (thumbnail / gambar isi artikel)
+const TUTORIAL_MAX_FILE_BYTES  = 9 * 1024 * 1024;  // 9MB untuk file download (base64) — cukup buat file kecil (config/tool)
+const TUTORIAL_MAX_CONTENT_LEN = 6 * 1024 * 1024;  // 6 juta karakter — batas atas panjang isi tutorial (termasuk gambar base64 di dalamnya)
 
-const TUTORIAL_CONTENT_SANITIZE_OPTIONS = {
+const TUTORIAL_HTML_SANITIZE_OPTIONS = {
   allowedTags: [
-    'p','br','h1','h2','h3','h4','ul','ol','li','strong','em','b','i','u','s',
-    'blockquote','a','code','pre','hr','span'
+    'p','br','h1','h2','h3','h4','strong','b','em','i','u','s','strike',
+    'blockquote','pre','code','ul','ol','li','a','img','span','div','sub','sup'
   ],
   allowedAttributes: {
-    '*': ['class', 'style'],
-    a: ['href', 'target', 'rel']
+    a: ['href','target','rel'],
+    img: ['src','alt','loading','class'],
+    span: ['class'],
+    p: ['class'],
+    li: ['class'],
+    div: ['class'],
+    ol: ['class']
   },
-  allowedSchemes: ['http', 'https', 'mailto'],
+  allowedSchemes: ['http', 'https', 'data'],
   allowProtocolRelative: false,
   disallowedTagsMode: 'discard',
-  // <img>/<iframe>/<script> dibuang total dari isi tutorial dengan sengaja — lihat
-  // catatan di atas soal kenapa gambar & video tutorial punya kolom sendiri.
-  exclusiveFilter: (frame) => ['script', 'iframe', 'img', 'style'].includes(frame.tag)
+  exclusiveFilter: (frame) => frame.tag === 'style' || frame.tag === 'script'
 };
 
 function sanitizeTutorialContent(html) {
   if (!html) return '';
   const trimmed = String(html).slice(0, TUTORIAL_MAX_CONTENT_LEN);
-  return sanitizeHtml(trimmed, TUTORIAL_CONTENT_SANITIZE_OPTIONS);
+  return sanitizeHtml(trimmed, TUTORIAL_HTML_SANITIZE_OPTIONS);
 }
 
-// Thumbnail & gambar tutorial: boleh upload base64 (data URI) dari Admin Web ATAU
-// link gambar eksternal biasa — pola & validasinya sama persis dengan Banner.
-function validateTutorialImage(imageData, imageUrl, maxBytes, label) {
-  const out = { data: null, url: null };
+// Validasi field gambar tutorial (thumbnail). Sama persis polanya dengan Banner.
+function validateTutorialImageFields({ imageData, imageUrl }, fieldLabel = 'Gambar') {
+  const out = { thumbnailData: null, thumbnailUrl: null };
   if (imageData) {
     const m = /^data:image\/(png|jpe?g|gif|webp);base64,([a-zA-Z0-9+/=]+)$/.exec(String(imageData).trim());
-    if (!m) throw new Error(`Format ${label} tidak didukung. Gunakan PNG, JPG, GIF, atau WEBP.`);
+    if (!m) throw new Error(`Format ${fieldLabel} tidak didukung. Gunakan PNG, JPG, GIF, atau WEBP.`);
     const approxBytes = Math.ceil((m[2].length * 3) / 4);
-    if (approxBytes > maxBytes) throw new Error(`Ukuran ${label} maksimal ${(maxBytes / 1024 / 1024).toFixed(1)}MB.`);
-    out.data = imageData;
+    if (approxBytes > TUTORIAL_MAX_IMAGE_BYTES) throw new Error(`Ukuran ${fieldLabel} maksimal ${(TUTORIAL_MAX_IMAGE_BYTES / 1024 / 1024).toFixed(1)}MB.`);
+    out.thumbnailData = imageData;
   } else if (imageUrl) {
     const url = String(imageUrl).trim();
-    if (!/^https?:\/\//i.test(url)) throw new Error(`URL ${label} harus diawali http:// atau https://`);
-    out.url = url;
+    if (!/^https?:\/\//i.test(url)) throw new Error(`URL ${fieldLabel} harus diawali http:// atau https://`);
+    out.thumbnailUrl = url;
   }
   return out;
 }
 
-// Terima link YouTube dalam format apa pun (watch?v=, youtu.be/, /shorts/, /embed/)
-// dan kembalikan videoId murni (11 karakter) — App merakit sendiri <iframe embed>-nya
-// dari videoId ini, jadi tidak pernah percaya string mentah apa pun dari DB.
-function extractYoutubeId(url) {
-  if (!url) return '';
-  const s = String(url).trim();
-  const m = s.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
-  return m ? m[1] : '';
+// Validasi file download (opsional). Terima SALAH SATU: fileData (base64, disimpan
+// di Mongo) atau fileUrl (link eksternal biasa, di-redirect saat didownload).
+function validateTutorialFileField({ fileData, fileUrl, fileName }) {
+  const out = { fileData: null, fileUrl: null, fileName: null, fileSize: null };
+  if (fileData) {
+    const m = /^data:([\w.+-]+\/[\w.+-]+);base64,([a-zA-Z0-9+/=]+)$/.exec(String(fileData).trim());
+    if (!m) throw new Error('Format file download tidak valid.');
+    const approxBytes = Math.ceil((m[2].length * 3) / 4);
+    if (approxBytes > TUTORIAL_MAX_FILE_BYTES) throw new Error(`Ukuran file download maksimal ${(TUTORIAL_MAX_FILE_BYTES / 1024 / 1024).toFixed(1)}MB.`);
+    out.fileData = fileData;
+    out.fileSize = approxBytes;
+    out.fileName = fileName ? String(fileName).slice(0, 200) : 'download';
+  } else if (fileUrl) {
+    const url = String(fileUrl).trim();
+    if (!/^https?:\/\//i.test(url)) throw new Error('URL file download harus diawali http:// atau https://');
+    out.fileUrl = url;
+    out.fileName = fileName ? String(fileName).slice(0, 200) : null;
+  }
+  return out;
 }
 
-// Terima link TikTok dalam format penuh (tiktok.com/@user/video/ID) langsung dari
-// regex tanpa request tambahan. Untuk short-link (vt.tiktok.com/xxx, vm.tiktok.com/xxx)
-// TikTok tidak menaruh ID di URL-nya — harus ikuti redirect dulu ke URL penuh baru
-// ID-nya kelihatan, makanya fungsi ini async.
-async function extractTiktokId(url) {
-  if (!url) return '';
-  const s = String(url).trim();
-
-  const direct = s.match(/tiktok\.com\/@[^/]+\/video\/(\d+)/i);
-  if (direct) return direct[1];
-
-  // short-link → resolve redirect-nya dulu (vt.tiktok.com / vm.tiktok.com / m.tiktok.com)
-  if (/tiktok\.com\//i.test(s)) {
-    try {
-      const resp = await axios.get(s, {
-        maxRedirects: 5,
-        timeout: 8000,
-        headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' }
-      });
-      const finalUrl = resp.request?.res?.responseUrl || resp.request?.responseURL || '';
-      const m = finalUrl.match(/tiktok\.com\/@[^/]+\/video\/(\d+)/i);
-      if (m) return m[1];
-    } catch (e) { /* gagal resolve short-link, biarkan kosong */ }
-  }
-  return '';
+// Estimasi waktu baca (menit) dari panjang teks isi tutorial — dihitung dari
+// jumlah kata (setelah tag HTML dibuang), asumsi kecepatan baca ±200 kata/menit.
+function estimateTutorialReadingMinutes(html) {
+  const text = String(html || '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  if (!text) return 1;
+  const words = text.split(' ').length;
+  return Math.max(1, Math.round(words / 200));
 }
 
-// Deteksi platform dari satu input link (dipakai admin, cukup 1 kolom untuk YouTube/TikTok)
-// dan kembalikan { platform, id }. Mengembalikan platform:'' kalau linknya gak dikenali
-// atau videoId gagal diekstrak (termasuk short-link TikTok yang gagal di-resolve).
-async function resolveVideoInfo(url) {
-  if (!url) return { platform: '', id: '' };
-  const s = String(url).trim();
-
-  if (/(?:youtube\.com|youtu\.be)/i.test(s)) {
-    const id = extractYoutubeId(s);
-    return id ? { platform: 'youtube', id } : { platform: '', id: '' };
-  }
-  if (/tiktok\.com/i.test(s)) {
-    const id = await extractTiktokId(s);
-    return id ? { platform: 'tiktok', id } : { platform: '', id: '' };
-  }
-  return { platform: '', id: '' };
+// Ubah link YouTube (watch / youtu.be / shorts) jadi embed URL yang aman ditaruh di <iframe>.
+function toYoutubeEmbedUrl(url) {
+  if (!url) return null;
+  const raw = String(url).trim();
+  let id = null;
+  let m = /youtu\.be\/([a-zA-Z0-9_-]{6,})/.exec(raw); if (m) id = m[1];
+  if (!id) { m = /[?&]v=([a-zA-Z0-9_-]{6,})/.exec(raw); if (m) id = m[1]; }
+  if (!id) { m = /youtube\.com\/embed\/([a-zA-Z0-9_-]{6,})/.exec(raw); if (m) id = m[1]; }
+  if (!id) { m = /youtube\.com\/shorts\/([a-zA-Z0-9_-]{6,})/.exec(raw); if (m) id = m[1]; }
+  if (!id) return null;
+  return `https://www.youtube.com/embed/${id}`;
 }
 
-async function broadcastPublishedTutorials() {
+async function seedDefaultTutorialCategoriesIfEmpty() {
+  if (!db) return;
+  const existing = await db.collection('tutorialCategories').countDocuments({});
+  if (existing > 0) return; // sudah pernah ada isinya — jangan timpa
+
+  const defaults = ['Memulai', 'Game', 'Bypass', 'Akun & Paket', 'Troubleshooting'];
+  await db.collection('tutorialCategories').insertMany(
+    defaults.map((name, i) => ({ name, slug: slugify(name), order: i, createdAt: new Date() }))
+  );
+  console.log('✅ Kategori Tutorial default berhasil dibuat:', defaults.join(', '));
+}
+
+function broadcastTutorialsUpdate() {
+  // Sengaja hanya kirim sinyal ringan (bukan seluruh isi tutorial yang bisa besar
+  // karena base64) — App tinggal fetch ulang /api/tutorials & /api/tutorials/:id
+  // yang sedang dibuka begitu terima event ini.
+  wsBroadcastAll('tutorials:update', { at: new Date().toISOString() });
+}
+
+// Ubah dokumen Mongo tutorial jadi bentuk ringkas buat list (App) — TANPA field
+// `content` (isi lengkap) supaya payload /api/tutorials tetap kecil & cepat walau
+// jumlah tutorial sudah banyak / isinya panjang dengan banyak gambar.
+function toTutorialListItem(t) {
+  return {
+    _id: t._id,
+    title: t.title,
+    subtitle: t.subtitle || '',
+    excerpt: t.excerpt || '',
+    thumbnailData: t.thumbnailData || null,
+    thumbnailUrl: t.thumbnailUrl || null,
+    categorySlug: t.categorySlug || null,
+    isPinned: !!t.isPinned,
+    views: t.views || 0,
+    readingTimeMin: t.readingTimeMin || 1,
+    hasVideo: !!t.youtubeUrl,
+    hasFile: !!(t.fileData || t.fileUrl),
+    createdAt: t.createdAt || null,
+    updatedAt: t.updatedAt || null,
+  };
+}
+
+// ── APP: daftar kategori tutorial (buat chip filter) ──
+app.get('/api/tutorial-categories', requireUser, async (req, res) => {
   try {
-    const tutorials = await db.collection('tutorials')
-      .find({ status: 'published' })
-      .sort({ createdAt: -1 })
-      .toArray();
-    wsBroadcastAll('tutorials:update', tutorials);
-  } catch (e) { /* noop */ }
-}
+    const categories = await db.collection('tutorialCategories').find({}).sort({ order: 1, name: 1 }).toArray();
+    res.json(categories.map(c => ({ _id: c._id, name: c.name, slug: c.slug })));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 
-// ── APP: daftar tutorial published ──
-// Search & filter kategori dikerjakan di sisi client (sama seperti /api/games)
-// supaya instan tanpa fetch ulang server tiap kali ganti keyword/kategori.
+// ── APP: daftar tutorial (published saja) — search, filter kategori, sort ──
 app.get('/api/tutorials', requireUser, async (req, res) => {
-  const tutorials = await db.collection('tutorials')
-    .find({ status: 'published' })
-    .sort({ createdAt: -1 })
-    .toArray();
+  try {
+    const { category, search, sort } = req.query;
+    const query = { status: 'published' };
+    if (category && category !== 'all') query.categorySlug = String(category);
+    if (search && String(search).trim()) {
+      const rx = new RegExp(String(search).trim().replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'i');
+      query.$or = [{ title: rx }, { subtitle: rx }, { excerpt: rx }];
+    }
+
+    let sortSpec = { isPinned: -1, order: 1, createdAt: -1 };
+    if (sort === 'popular') sortSpec = { isPinned: -1, views: -1, createdAt: -1 };
+    else if (sort === 'latest') sortSpec = { createdAt: -1 };
+
+    const tutorials = await db.collection('tutorials').find(query).sort(sortSpec).toArray();
+    res.json(tutorials.map(toTutorialListItem));
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── APP: baca satu tutorial (isi lengkap) + increment views + prev/next ──
+app.get('/api/tutorials/:id', requireUser, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+    const tutorial = await db.collection('tutorials').findOneAndUpdate(
+      { _id: new ObjectId(req.params.id), status: 'published' },
+      { $inc: { views: 1 } },
+      { returnDocument: 'after' }
+    );
+    const doc = tutorial?.value || tutorial; // kompatibel driver lama/baru
+    if (!doc) return res.status(404).json({ error: 'Tutorial tidak ditemukan.' });
+
+    const category = doc.categorySlug ? await db.collection('tutorialCategories').findOne({ slug: doc.categorySlug }) : null;
+
+    // Urutan prev/next mengikuti urutan yang sama dengan list utama (pin > order > createdAt)
+    const ordered = await db.collection('tutorials')
+      .find({ status: 'published' })
+      .sort({ isPinned: -1, order: 1, createdAt: -1 })
+      .project({ _id: 1 })
+      .toArray();
+    const idx = ordered.findIndex(t => String(t._id) === String(doc._id));
+    const prevId = idx > 0 ? ordered[idx - 1]._id : null;
+    const nextId = idx >= 0 && idx < ordered.length - 1 ? ordered[idx + 1]._id : null;
+
+    res.json({
+      _id: doc._id,
+      title: doc.title,
+      subtitle: doc.subtitle || '',
+      excerpt: doc.excerpt || '',
+      content: doc.content || '',
+      thumbnailData: doc.thumbnailData || null,
+      thumbnailUrl: doc.thumbnailUrl || null,
+      categorySlug: doc.categorySlug || null,
+      categoryName: category?.name || null,
+      youtubeEmbedUrl: toYoutubeEmbedUrl(doc.youtubeUrl),
+      hasFile: !!(doc.fileData || doc.fileUrl),
+      fileName: doc.fileName || null,
+      fileSize: doc.fileSize || null,
+      isPinned: !!doc.isPinned,
+      views: doc.views || 0,
+      readingTimeMin: doc.readingTimeMin || 1,
+      createdAt: doc.createdAt || null,
+      updatedAt: doc.updatedAt || null,
+      prevId, nextId
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ── APP: download file tutorial ──
+// Dibuka lewat browser eksternal (electronAPI.openExternal), BUKAN fetch dari
+// dalam app — makanya auth-nya lewat query `?token=` (sama seperti koneksi
+// WebSocket), bukan header Authorization biasa.
+app.get('/api/tutorials/:id/download', async (req, res) => {
+  try {
+    if (!db) return res.status(503).send('Database belum siap.');
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).send('ID tidak valid.');
+    const token = req.query.token;
+    if (!token) return res.status(401).send('Token dibutuhkan.');
+    let payload;
+    try { payload = jwt.verify(token, JWT_SECRET); } catch (e) { return res.status(401).send('Token tidak valid.'); }
+    if (!payload?.discordId) return res.status(401).send('Token tidak valid.');
+    const user = await db.collection('users').findOne({ discordId: payload.discordId });
+    if (!user || isUserBlocked(user)) return res.status(403).send('Akses ditolak.');
+
+    const doc = await db.collection('tutorials').findOne({ _id: new ObjectId(req.params.id), status: 'published' });
+    if (!doc) return res.status(404).send('Tutorial tidak ditemukan.');
+
+    if (doc.fileUrl) return res.redirect(doc.fileUrl);
+    if (doc.fileData) {
+      const m = /^data:([\w.+-]+\/[\w.+-]+);base64,([a-zA-Z0-9+/=]+)$/.exec(doc.fileData);
+      if (!m) return res.status(500).send('File rusak.');
+      const buffer = Buffer.from(m[2], 'base64');
+      res.setHeader('Content-Type', m[1]);
+      res.setHeader('Content-Disposition', `attachment; filename="${(doc.fileName || 'download').replace(/["]/g, '')}"`);
+      return res.send(buffer);
+    }
+    return res.status(404).send('Tutorial ini tidak punya file download.');
+  } catch (e) {
+    res.status(500).send('Gagal memproses download: ' + e.message);
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// ADMIN — KELOLA TUTORIAL
+// ══════════════════════════════════════════════════════════════════════════
+app.get('/api/admin/tutorials', requireAdmin, async (req, res) => {
+  const tutorials = await db.collection('tutorials').find({}).sort({ isPinned: -1, order: 1, createdAt: -1 }).toArray();
   res.json(tutorials);
 });
 
-// ── ADMIN: Kelola Tutorial ──
-app.get('/api/admin/tutorials', requireAdmin, async (req, res) => {
-  const tutorials = await db.collection('tutorials').find({}).sort({ createdAt: -1 }).toArray();
-  res.json(tutorials);
+app.get('/api/admin/tutorials/:id', requireAdmin, async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+  const doc = await db.collection('tutorials').findOne({ _id: new ObjectId(req.params.id) });
+  if (!doc) return res.status(404).json({ error: 'Tutorial tidak ditemukan.' });
+  res.json(doc);
 });
 
 app.post('/api/admin/tutorials', requireAdmin, async (req, res) => {
   try {
     const {
-      title, description, content, category, videoUrl, youtubeUrl,
-      thumbnailData, thumbnailUrl, imageData, imageUrl, status
+      title, subtitle, excerpt, content, categorySlug, youtubeUrl,
+      imageUrl, imageData, fileUrl, fileData, fileName,
+      status, isPinned, order
     } = req.body;
 
     if (!title?.trim()) return res.status(400).json({ error: 'Judul tutorial wajib diisi.' });
-    if (!content?.trim()) return res.status(400).json({ error: 'Isi tutorial wajib diisi.' });
+    const catSlug = String(categorySlug || '').trim();
+    if (!catSlug) return res.status(400).json({ error: 'Kategori wajib dipilih.' });
+    const categoryDoc = await db.collection('tutorialCategories').findOne({ slug: catSlug });
+    if (!categoryDoc) return res.status(400).json({ error: 'Kategori tidak valid.' });
 
-    const thumb = validateTutorialImage(thumbnailData, thumbnailUrl, TUTORIAL_MAX_THUMB_BYTES, 'thumbnail');
-    const img   = validateTutorialImage(imageData, imageUrl, TUTORIAL_MAX_IMAGE_BYTES, 'gambar');
-    // videoUrl = nama field baru (YouTube atau TikTok, 1 kolom); youtubeUrl tetap
-    // diterima untuk kompatibilitas kalau ada request lama yang masih kirim field itu.
-    const { platform: videoPlatform, id: videoId } = await resolveVideoInfo(videoUrl || youtubeUrl);
+    const sanitizedContent = sanitizeTutorialContent(content);
+
+    let lastOrder = -1;
+    if (order === undefined) {
+      const last = await db.collection('tutorials').find({}).sort({ order: -1 }).limit(1).toArray();
+      lastOrder = last.length ? (last[0].order || 0) : -1;
+    }
 
     const doc = {
       title: title.trim(),
-      description: (description || '').trim(),
-      content: sanitizeTutorialContent(content),
-      category: (category || 'Umum').trim() || 'Umum',
-      videoPlatform, videoId,
-      youtubeId: videoPlatform === 'youtube' ? videoId : '', // kompat untuk build app lama
-      thumbnailData: thumb.data, thumbnailUrl: thumb.url,
-      imageData: img.data, imageUrl: img.url,
+      subtitle: subtitle || '',
+      excerpt: excerpt || '',
+      content: sanitizedContent,
+      categorySlug: catSlug,
+      youtubeUrl: youtubeUrl ? String(youtubeUrl).trim() : null,
+      thumbnailData: null, thumbnailUrl: null,
+      fileData: null, fileUrl: null, fileName: null, fileSize: null,
+      order: order !== undefined ? Number(order) : lastOrder + 1,
+      isPinned: !!isPinned,
       status: status === 'draft' ? 'draft' : 'published',
+      views: 0,
+      readingTimeMin: estimateTutorialReadingMinutes(sanitizedContent),
       createdAt: new Date(),
       updatedAt: new Date()
     };
+
+    Object.assign(doc, validateTutorialImageFields({ imageData, imageUrl }, 'Thumbnail'));
+    Object.assign(doc, validateTutorialFileField({ fileData, fileUrl, fileName }));
 
     const result = await db.collection('tutorials').insertOne(doc);
 
@@ -3979,11 +3954,11 @@ app.post('/api/admin/tutorials', requireAdmin, async (req, res) => {
       admin: req.admin?.username || 'Admin',
       status: 'success',
       ip: getReqIp(req),
-      description: `Admin menambahkan tutorial "${doc.title}".`,
+      description: `Admin menambahkan tutorial baru "${doc.title}".`,
       meta: { tutorialId: result.insertedId, title: doc.title }
     }).catch(() => {});
 
-    broadcastPublishedTutorials();
+    broadcastTutorialsUpdate();
     res.json({ ...doc, _id: result.insertedId });
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -3994,8 +3969,9 @@ app.put('/api/admin/tutorials/:id', requireAdmin, async (req, res) => {
   try {
     if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
     const {
-      title, description, content, category, videoUrl, youtubeUrl,
-      thumbnailData, thumbnailUrl, imageData, imageUrl, status
+      title, subtitle, excerpt, content, categorySlug, youtubeUrl,
+      imageUrl, imageData, fileUrl, fileData, fileName, removeFile,
+      status, isPinned, order
     } = req.body;
 
     const update = { updatedAt: new Date() };
@@ -4003,27 +3979,32 @@ app.put('/api/admin/tutorials/:id', requireAdmin, async (req, res) => {
       if (!title.trim()) return res.status(400).json({ error: 'Judul tutorial wajib diisi.' });
       update.title = title.trim();
     }
-    if (description !== undefined) update.description = (description || '').trim();
+    if (subtitle !== undefined) update.subtitle = subtitle;
+    if (excerpt !== undefined) update.excerpt = excerpt;
     if (content !== undefined) {
-      if (!content.trim()) return res.status(400).json({ error: 'Isi tutorial wajib diisi.' });
       update.content = sanitizeTutorialContent(content);
+      update.readingTimeMin = estimateTutorialReadingMinutes(update.content);
     }
-    if (category !== undefined) update.category = (category || 'Umum').trim() || 'Umum';
-    if (videoUrl !== undefined || youtubeUrl !== undefined) {
-      const { platform: videoPlatform, id: videoId } = await resolveVideoInfo(videoUrl !== undefined ? videoUrl : youtubeUrl);
-      update.videoPlatform = videoPlatform;
-      update.videoId = videoId;
-      update.youtubeId = videoPlatform === 'youtube' ? videoId : ''; // kompat untuk build app lama
+    if (categorySlug !== undefined) {
+      const catSlug = String(categorySlug || '').trim();
+      if (!catSlug) return res.status(400).json({ error: 'Kategori wajib dipilih.' });
+      const categoryDoc = await db.collection('tutorialCategories').findOne({ slug: catSlug });
+      if (!categoryDoc) return res.status(400).json({ error: 'Kategori tidak valid.' });
+      update.categorySlug = catSlug;
     }
+    if (youtubeUrl !== undefined) update.youtubeUrl = youtubeUrl ? String(youtubeUrl).trim() : null;
     if (status !== undefined) update.status = status === 'draft' ? 'draft' : 'published';
+    if (isPinned !== undefined) update.isPinned = !!isPinned;
+    if (order !== undefined) update.order = Number(order);
 
-    if (thumbnailData !== undefined || thumbnailUrl !== undefined) {
-      const thumb = validateTutorialImage(thumbnailData, thumbnailUrl, TUTORIAL_MAX_THUMB_BYTES, 'thumbnail');
-      update.thumbnailData = thumb.data; update.thumbnailUrl = thumb.url;
+    if (imageUrl !== undefined || imageData !== undefined) {
+      Object.assign(update, validateTutorialImageFields({ imageData, imageUrl }, 'Thumbnail'));
     }
-    if (imageData !== undefined || imageUrl !== undefined) {
-      const img = validateTutorialImage(imageData, imageUrl, TUTORIAL_MAX_IMAGE_BYTES, 'gambar');
-      update.imageData = img.data; update.imageUrl = img.url;
+
+    if (removeFile) {
+      update.fileData = null; update.fileUrl = null; update.fileName = null; update.fileSize = null;
+    } else if (fileUrl !== undefined || fileData !== undefined) {
+      Object.assign(update, validateTutorialFileField({ fileData, fileUrl, fileName }));
     }
 
     await db.collection('tutorials').updateOne({ _id: new ObjectId(req.params.id) }, { $set: update });
@@ -4035,34 +4016,14 @@ app.put('/api/admin/tutorials/:id', requireAdmin, async (req, res) => {
       status: 'success',
       ip: getReqIp(req),
       description: `Admin mengubah tutorial "${update.title || req.params.id}".`,
-      meta: { tutorialId: req.params.id }
+      meta: { tutorialId: req.params.id, update: { ...update, thumbnailData: update.thumbnailData ? '(base64 disimpan)' : update.thumbnailData, fileData: update.fileData ? '(base64 disimpan)' : update.fileData, content: update.content ? '(html disimpan)' : update.content } }
     }).catch(() => {});
 
-    broadcastPublishedTutorials();
+    broadcastTutorialsUpdate();
     res.json({ success: true });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
-});
-
-// Toggle cepat Publish <-> Draft tanpa perlu buka form Edit lengkap.
-app.put('/api/admin/tutorials/:id/status', requireAdmin, async (req, res) => {
-  if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
-  const status = req.body.status === 'draft' ? 'draft' : 'published';
-  await db.collection('tutorials').updateOne({ _id: new ObjectId(req.params.id) }, { $set: { status, updatedAt: new Date() } });
-
-  logActivity({
-    type: 'admin_edit_tutorial',
-    username: req.admin?.username || 'Admin',
-    admin: req.admin?.username || 'Admin',
-    status: 'success',
-    ip: getReqIp(req),
-    description: `Admin mengubah status tutorial menjadi ${status === 'draft' ? 'Draft' : 'Published'}.`,
-    meta: { tutorialId: req.params.id, status }
-  }).catch(() => {});
-
-  broadcastPublishedTutorials();
-  res.json({ success: true });
 });
 
 app.delete('/api/admin/tutorials/:id', requireAdmin, async (req, res) => {
@@ -4080,7 +4041,316 @@ app.delete('/api/admin/tutorials/:id', requireAdmin, async (req, res) => {
     meta: { tutorialId: req.params.id, title: tutorial?.title }
   }).catch(() => {});
 
-  broadcastPublishedTutorials();
+  broadcastTutorialsUpdate();
+  res.json({ success: true });
+});
+
+app.put('/api/admin/tutorials/reorder', requireAdmin, async (req, res) => {
+  const { order } = req.body; // array of tutorial _id, urutan baru
+  if (!Array.isArray(order)) return res.status(400).json({ error: '`order` harus array of id.' });
+  const invalid = order.find(id => !ObjectId.isValid(id));
+  if (invalid) return res.status(400).json({ error: 'Ada ID tutorial yang tidak valid.' });
+
+  await Promise.all(order.map((id, idx) =>
+    db.collection('tutorials').updateOne({ _id: new ObjectId(id) }, { $set: { order: idx, updatedAt: new Date() } })
+  ));
+
+  logActivity({
+    type: 'admin_reorder_tutorial',
+    username: req.admin?.username || 'Admin',
+    admin: req.admin?.username || 'Admin',
+    status: 'success',
+    ip: getReqIp(req),
+    description: `Admin mengubah urutan tutorial.`,
+    meta: { order }
+  }).catch(() => {});
+
+  broadcastTutorialsUpdate();
+  res.json({ success: true });
+});
+
+// ── ADMIN: kategori Tutorial (dipakai isi pilihan kategori & filter di App) ──
+app.get('/api/admin/tutorial-categories', requireAdmin, async (req, res) => {
+  const categories = await db.collection('tutorialCategories').find({}).sort({ order: 1, name: 1 }).toArray();
+  res.json(categories);
+});
+
+app.post('/api/admin/tutorial-categories', requireAdmin, async (req, res) => {
+  const name = String(req.body.name || '').trim();
+  if (!name) return res.status(400).json({ error: 'Nama kategori wajib diisi.' });
+  const slug = slugify(name);
+  if (!slug) return res.status(400).json({ error: 'Nama kategori tidak valid.' });
+  const existing = await db.collection('tutorialCategories').findOne({ slug });
+  if (existing) return res.status(400).json({ error: 'Kategori dengan nama tersebut sudah ada.' });
+
+  const count = await db.collection('tutorialCategories').countDocuments({});
+  const doc = { name, slug, order: count, createdAt: new Date() };
+  const result = await db.collection('tutorialCategories').insertOne(doc);
+
+  logActivity({
+    type: 'admin_add_tutorial_category',
+    username: req.admin?.username || 'Admin',
+    admin: req.admin?.username || 'Admin',
+    status: 'success',
+    ip: getReqIp(req),
+    description: `Admin menambahkan kategori tutorial baru "${name}".`,
+    meta: { categoryId: result.insertedId, name }
+  }).catch(() => {});
+
+  res.json({ ...doc, _id: result.insertedId });
+});
+
+app.delete('/api/admin/tutorial-categories/:id', requireAdmin, async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+  const category = await db.collection('tutorialCategories').findOne({ _id: new ObjectId(req.params.id) });
+  if (!category) return res.status(404).json({ error: 'Kategori tidak ditemukan.' });
+
+  const inUse = await db.collection('tutorials').countDocuments({ categorySlug: category.slug });
+  if (inUse > 0) {
+    return res.status(400).json({ error: `Kategori masih dipakai oleh ${inUse} tutorial. Ubah kategori tutorial tersebut dulu sebelum menghapus.` });
+  }
+
+  await db.collection('tutorialCategories').deleteOne({ _id: new ObjectId(req.params.id) });
+
+  logActivity({
+    type: 'admin_delete_tutorial_category',
+    username: req.admin?.username || 'Admin',
+    admin: req.admin?.username || 'Admin',
+    status: 'warning',
+    ip: getReqIp(req),
+    description: `Admin menghapus kategori tutorial "${category.name}".`,
+    meta: { categoryId: req.params.id, name: category.name }
+  }).catch(() => {});
+
+  res.json({ success: true });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// AUTO UPDATE LAUNCHER — App Version (Admin Web) & pengecekan update (App)
+// Admin merilis versi baru (link download GitHub/dsb + changelog + Force
+// Update opsional) dari Admin Web → App mendeteksinya saat startup, secara
+// berkala, DAN realtime lewat WebSocket ('app_version:update') tanpa perlu
+// restart. Proses download/verifikasi/install dikerjakan Electron main
+// process (lihat main.js) — server di sini cuma menyimpan & menyajikan info
+// rilis + mencatat log setiap tahap update.
+// ══════════════════════════════════════════════════════════════════════════
+
+// Bandingkan 2 nomor versi (terima format "1.0.2" atau "v1.0.2").
+// > 0 kalau a lebih baru dari b, < 0 kalau lebih lama, 0 kalau sama.
+function compareAppVersions(a, b) {
+  const pa = String(a || '0').replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b || '0').replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const x = pa[i] || 0, y = pb[i] || 0;
+    if (x !== y) return x - y;
+  }
+  return 0;
+}
+
+// Coba deteksi ukuran file (bytes) dari URL download lewat HEAD request — best-effort,
+// dipakai buat tampilan "Ukuran file update" & validasi setelah download di App.
+async function probeFileSizeBytes(url) {
+  try {
+    const resp = await axios.head(url, {
+      timeout: 8000,
+      maxRedirects: 5,
+      headers: { 'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)' },
+      validateStatus: s => s >= 200 && s < 400
+    });
+    const len = parseInt(resp.headers['content-length'] || '0', 10);
+    return len > 0 ? len : null;
+  } catch (e) {
+    return null;
+  }
+}
+
+function broadcastAppVersionUpdate() {
+  wsBroadcastAll('app_version:update', { at: new Date().toISOString() });
+}
+
+// ── APP: cek versi terbaru — PUBLIC (launcher perlu cek bahkan sebelum login) ──
+app.get('/api/app-version', async (req, res) => {
+  try {
+    if (!db) return res.json({ available: false });
+    const active = await db.collection('appVersions').find({ isActive: true }).toArray();
+    if (!active.length) return res.json({ available: false });
+
+    // Ambil versi TERBESAR (semver) di antara yang aktif — memungkinkan admin
+    // "rollback" cukup dengan menonaktifkan rilis terbaru, otomatis kembali
+    // ke versi aktif tertinggi berikutnya.
+    active.sort((a, b) => compareAppVersions(b.version, a.version));
+    const latest = active[0];
+
+    res.json({
+      available: true,
+      version: latest.version,
+      changelog: latest.changelog || [],
+      releaseDate: latest.releaseDate || latest.createdAt,
+      downloadUrl: latest.downloadUrl,
+      fileSize: latest.fileSize || null,
+      checksum: latest.checksum || null,
+      isRequired: !!latest.isRequired
+    });
+  } catch (e) {
+    res.status(500).json({ available: false, error: e.message });
+  }
+});
+
+// ── APP: catat log proses update dari Electron main process (best-effort, tanpa auth
+// khusus — dipanggil dari proses native, bukan dari browser/renderer dgn token user) ──
+app.post('/api/app-version/log', async (req, res) => {
+  try {
+    const { type, description, appVersion } = req.body;
+    const allowedTypes = ['update_check', 'update_download', 'update_install', 'update_success', 'update_failed'];
+    if (!allowedTypes.includes(type)) return res.status(400).json({ error: 'Tipe log tidak valid.' });
+
+    logActivity({
+      type,
+      username: 'Launcher',
+      status: type === 'update_failed' ? 'error' : (LOG_CATALOG[type]?.status || 'info'),
+      ip: getReqIp(req),
+      description: description || '',
+      meta: { appVersion: appVersion || null }
+    }).catch(() => {});
+
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// ADMIN — KELOLA APP VERSION (rilis update launcher)
+// ══════════════════════════════════════════════════════════════════════════
+app.get('/api/admin/app-versions', requireAdmin, async (req, res) => {
+  const versions = await db.collection('appVersions').find({}).sort({ createdAt: -1 }).toArray();
+  res.json(versions);
+});
+
+app.post('/api/admin/app-versions', requireAdmin, async (req, res) => {
+  try {
+    const { version, changelog, downloadUrl, isRequired, isActive, fileSize, checksum, releaseDate } = req.body;
+
+    const ver = String(version || '').trim();
+    if (!ver) return res.status(400).json({ error: 'Nomor versi wajib diisi.' });
+    if (!/^v?\d+(\.\d+){1,3}$/i.test(ver)) return res.status(400).json({ error: 'Format versi tidak valid. Contoh: 1.0.2 atau v1.0.2' });
+
+    const existing = await db.collection('appVersions').findOne({ version: ver });
+    if (existing) return res.status(400).json({ error: `Versi "${ver}" sudah pernah dibuat sebelumnya.` });
+
+    const url = String(downloadUrl || '').trim();
+    if (!url) return res.status(400).json({ error: 'Link download update wajib diisi.' });
+    if (!/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'Link download harus diawali http:// atau https://' });
+
+    let finalFileSize = fileSize ? Number(fileSize) : null;
+    if (!finalFileSize) finalFileSize = await probeFileSizeBytes(url); // best-effort auto-deteksi lewat HEAD request
+
+    const changelogList = Array.isArray(changelog)
+      ? changelog.filter(Boolean).map(String)
+      : String(changelog || '').split('\n').map(s => s.trim()).filter(Boolean);
+
+    const doc = {
+      version: ver,
+      changelog: changelogList,
+      downloadUrl: url,
+      fileSize: finalFileSize,
+      checksum: checksum ? String(checksum).trim() : null,
+      isRequired: !!isRequired,
+      isActive: isActive !== undefined ? !!isActive : true,
+      releaseDate: releaseDate ? new Date(releaseDate) : new Date(),
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    const result = await db.collection('appVersions').insertOne(doc);
+
+    logActivity({
+      type: 'admin_add_app_version',
+      username: req.admin?.username || 'Admin',
+      admin: req.admin?.username || 'Admin',
+      status: 'success',
+      ip: getReqIp(req),
+      description: `Admin merilis versi launcher baru "${ver}"${doc.isRequired ? ' (Force Update)' : ''}.`,
+      meta: { versionId: result.insertedId, version: ver, isRequired: doc.isRequired }
+    }).catch(() => {});
+
+    broadcastAppVersionUpdate();
+    res.json({ ...doc, _id: result.insertedId });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.put('/api/admin/app-versions/:id', requireAdmin, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+    const { version, changelog, downloadUrl, isRequired, isActive, fileSize, checksum, releaseDate } = req.body;
+
+    const update = { updatedAt: new Date() };
+    if (version !== undefined) {
+      const ver = String(version).trim();
+      if (!ver) return res.status(400).json({ error: 'Nomor versi wajib diisi.' });
+      if (!/^v?\d+(\.\d+){1,3}$/i.test(ver)) return res.status(400).json({ error: 'Format versi tidak valid. Contoh: 1.0.2 atau v1.0.2' });
+      const dupe = await db.collection('appVersions').findOne({ version: ver, _id: { $ne: new ObjectId(req.params.id) } });
+      if (dupe) return res.status(400).json({ error: `Versi "${ver}" sudah dipakai rilis lain.` });
+      update.version = ver;
+    }
+    if (downloadUrl !== undefined) {
+      const url = String(downloadUrl).trim();
+      if (url && !/^https?:\/\//i.test(url)) return res.status(400).json({ error: 'Link download harus diawali http:// atau https://' });
+      update.downloadUrl = url;
+      if (url && !fileSize) {
+        const probed = await probeFileSizeBytes(url);
+        if (probed) update.fileSize = probed;
+      }
+    }
+    if (changelog !== undefined) {
+      update.changelog = Array.isArray(changelog)
+        ? changelog.filter(Boolean).map(String)
+        : String(changelog || '').split('\n').map(s => s.trim()).filter(Boolean);
+    }
+    if (fileSize !== undefined && fileSize) update.fileSize = Number(fileSize);
+    if (checksum !== undefined) update.checksum = checksum ? String(checksum).trim() : null;
+    if (isRequired !== undefined) update.isRequired = !!isRequired;
+    if (isActive !== undefined) update.isActive = !!isActive;
+    if (releaseDate !== undefined) update.releaseDate = releaseDate ? new Date(releaseDate) : new Date();
+
+    await db.collection('appVersions').updateOne({ _id: new ObjectId(req.params.id) }, { $set: update });
+
+    logActivity({
+      type: 'admin_edit_app_version',
+      username: req.admin?.username || 'Admin',
+      admin: req.admin?.username || 'Admin',
+      status: 'success',
+      ip: getReqIp(req),
+      description: `Admin mengubah versi launcher "${update.version || req.params.id}".`,
+      meta: { versionId: req.params.id, update }
+    }).catch(() => {});
+
+    broadcastAppVersionUpdate();
+    res.json({ success: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.delete('/api/admin/app-versions/:id', requireAdmin, async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+  const versionDoc = await db.collection('appVersions').findOne({ _id: new ObjectId(req.params.id) });
+  await db.collection('appVersions').deleteOne({ _id: new ObjectId(req.params.id) });
+
+  logActivity({
+    type: 'admin_delete_app_version',
+    username: req.admin?.username || 'Admin',
+    admin: req.admin?.username || 'Admin',
+    status: 'warning',
+    ip: getReqIp(req),
+    description: `Admin menghapus rilis versi launcher "${versionDoc?.version || req.params.id}".`,
+    meta: { versionId: req.params.id, version: versionDoc?.version }
+  }).catch(() => {});
+
+  broadcastAppVersionUpdate();
   res.json({ success: true });
 });
 
@@ -4350,13 +4620,6 @@ app.put('/api/admin/users/:discordId/role', requireAdmin, async (req, res) => {
   // Masa aktif (activeUntil) cuma relevan buat Gold & Platinum — Public & Admin selalu
   // unlimited waktu jadi field-nya dikosongkan lagi kalau paketnya diubah ke salah satunya.
   const update = { role, roleUpdatedAt: new Date() };
-  // BUG FIX: limit download harian (Game & Bypass) WAJIB direset begitu paket beneran
-  // berubah (mis. Public -> Gold) — kalau tidak, sisa/habis kuota dari paket lama masih
-  // kebawa padahal limit paket barunya beda. Reset TIDAK dilakukan kalau role-nya SAMA
-  // (admin cuma ubah masa aktif doang), biar user tidak dirugikan kehilangan sisa kuota.
-  if (oldRole !== role) {
-    update.downloadUsage = { date: todayDateStrJakarta(), game: 0, bypass: 0 };
-  }
   if (role === 'gold' || role === 'platinum') {
     const period = computeActiveUntil(req.body);
     if (!period.ok) return res.status(400).json({ error: period.error });
@@ -4471,127 +4734,6 @@ app.put('/api/admin/users/:discordId/role', requireAdmin, async (req, res) => {
     roleRemoved: discordSync?.removed ?? [],
     activeUntil: update.activeUntil !== undefined ? update.activeUntil : (user.activeUntil || null)
   });
-});
-
-// ══════════════════════════════════════════════════════════════════════════
-// ADMIN — VOUCHER PAKET GOLD/PLATINUM (lihat voucherManager.js buat CRUD/logika
-// klaim yang atomic). Halaman "Kelola Voucher" di Admin Web.
-// ══════════════════════════════════════════════════════════════════════════
-function voucherPublic(v) {
-  const now = new Date();
-  const isExpired = !!(v.expiresAt && new Date(v.expiresAt) <= now);
-  const isFull = v.usedCount >= v.quota;
-  return {
-    id: String(v._id),
-    code: v.code,
-    role: v.role,
-    durationAmount: v.durationAmount,
-    durationUnit: v.durationUnit,
-    quota: v.quota,
-    usedCount: v.usedCount,
-    remaining: Math.max(0, v.quota - v.usedCount),
-    expiresAt: v.expiresAt,
-    active: v.active !== false,
-    isExpired,
-    isFull,
-    // Status ringkas buat badge di tabel Admin Web — satu sumber kebenaran biar
-    // konsisten dgn alasan gagal klaim yang dilihat user ("kenapa nonaktif").
-    status: v.active === false ? 'inactive' : isExpired ? 'expired' : isFull ? 'full' : 'active',
-    createdAt: v.createdAt,
-    createdBy: v.createdBy,
-    updatedAt: v.updatedAt
-  };
-}
-
-app.get('/api/admin/vouchers', requireAdmin, async (req, res) => {
-  try {
-    const vouchers = await voucherManager.listVouchers();
-    res.json({ vouchers: vouchers.map(voucherPublic) });
-  } catch (e) {
-    res.status(500).json({ error: e.message });
-  }
-});
-
-app.post('/api/admin/vouchers', requireAdmin, async (req, res) => {
-  try {
-    const { code, role, durationAmount, durationUnit, quota, expiresAt } = req.body || {};
-    const voucher = await voucherManager.createVoucher({
-      code, role, durationAmount, durationUnit, quota, expiresAt,
-      createdBy: req.admin?.username || 'Admin'
-    });
-
-    logActivity({
-      type: 'voucher_create',
-      admin: req.admin?.username || 'Admin',
-      status: 'success',
-      ip: getReqIp(req),
-      description: `Admin membuat voucher "${voucher.code}" (${voucher.role.toUpperCase()}, ${voucher.durationAmount} ${voucherManager.DURATION_UNIT_LABEL[voucher.durationUnit]}, kuota ${voucher.quota}).`,
-      meta: { voucherId: String(voucher._id), code: voucher.code, role: voucher.role, quota: voucher.quota }
-    }).catch(() => {});
-
-    res.json({ success: true, voucher: voucherPublic(voucher) });
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
-});
-
-app.put('/api/admin/vouchers/:id', requireAdmin, async (req, res) => {
-  try {
-    const { code, role, durationAmount, durationUnit, quota, expiresAt, active } = req.body || {};
-    const voucher = await voucherManager.updateVoucher(req.params.id, { code, role, durationAmount, durationUnit, quota, expiresAt, active });
-
-    logActivity({
-      type: 'voucher_edit',
-      admin: req.admin?.username || 'Admin',
-      status: 'success',
-      ip: getReqIp(req),
-      description: `Admin mengubah voucher "${voucher.code}".`,
-      meta: { voucherId: String(voucher._id), code: voucher.code }
-    }).catch(() => {});
-
-    res.json({ success: true, voucher: voucherPublic(voucher) });
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
-});
-
-app.put('/api/admin/vouchers/:id/toggle', requireAdmin, async (req, res) => {
-  try {
-    const { active } = req.body || {};
-    const voucher = await voucherManager.updateVoucher(req.params.id, { active: !!active });
-
-    logActivity({
-      type: 'voucher_toggle',
-      admin: req.admin?.username || 'Admin',
-      status: 'success',
-      ip: getReqIp(req),
-      description: `Admin ${voucher.active ? 'mengaktifkan' : 'menonaktifkan'} voucher "${voucher.code}".`,
-      meta: { voucherId: String(voucher._id), code: voucher.code, active: voucher.active }
-    }).catch(() => {});
-
-    res.json({ success: true, voucher: voucherPublic(voucher) });
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
-});
-
-app.delete('/api/admin/vouchers/:id', requireAdmin, async (req, res) => {
-  try {
-    const voucher = await voucherManager.deleteVoucher(req.params.id);
-
-    logActivity({
-      type: 'voucher_delete',
-      admin: req.admin?.username || 'Admin',
-      status: 'warning',
-      ip: getReqIp(req),
-      description: `Admin menghapus voucher "${voucher.code}".`,
-      meta: { voucherId: String(voucher._id), code: voucher.code }
-    }).catch(() => {});
-
-    res.json({ success: true });
-  } catch (e) {
-    res.status(400).json({ error: e.message });
-  }
 });
 
 // "Atur Masa Aktif" — ubah/perpanjang masa aktif Gold/Platinum TANPA ganti paket.

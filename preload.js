@@ -24,4 +24,11 @@ contextBridge.exposeInMainWorld('electronAPI', {
 
   // Device Lock — kumpulkan info hardware buat fingerprint perangkat
   getDeviceInfo: () => ipcRenderer.invoke('get-device-info'),
+
+  // ── Auto Update Launcher ──
+  getAppVersion:    ()      => ipcRenderer.invoke('get-app-version'),
+  startUpdate:      (args)  => ipcRenderer.invoke('update:start', args),
+  cancelUpdateDownload: ()  => ipcRenderer.invoke('cancel-download'),
+  onUpdateProgress: (cb) => ipcRenderer.on('update:progress', (_, data) => cb(data)),
+  onUpdateStatus:   (cb) => ipcRenderer.on('update:status',   (_, data) => cb(data)),
 });

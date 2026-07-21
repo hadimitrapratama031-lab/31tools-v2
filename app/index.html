@@ -38,10 +38,9 @@
       <a href="#" class="active" data-page="dashboard"><span class="ic">▦</span> Dashboard</a>
       <a href="#" data-page="games"><span class="ic">🎮</span> Games <span class="badge">10</span></a>
       <a href="#" data-page="bypasses"><span class="ic">🛡️</span> Bypass <span class="badge" id="bypassesNavBadge">0</span></a>
-      <a href="#" data-page="tutorial"><span class="ic">📘</span> Tutorial</a>
       <a href="#" data-page="store"><span class="ic">🛒</span> Store <span class="badge update">Update</span></a>
       <a href="#" data-page="histori"><span class="ic">🕒</span> Histori</a>
-      <a href="#" data-page="voucher"><span class="ic">🎟️</span> Claim Voucher</a>
+      <a href="#" data-page="tutorial"><span class="ic">📘</span> Tutorial</a>
       <a href="#" data-page="setting"><span class="ic">⚙</span> Setting</a>
       <a href="#" id="navLogout"><span class="ic">⏻</span> Log Out</a>
     </nav>
@@ -195,24 +194,6 @@
       <div id="historiListPage"></div>
     </div>
 
-    <!-- ═══════════ PAGE: CLAIM VOUCHER ═══════════ -->
-    <div class="page-content" id="pageVoucher" style="display:none;">
-      <div class="voucher-claim-wrap">
-        <div class="voucher-claim-card">
-          <div class="voucher-claim-icon">🎟️</div>
-          <div class="voucher-claim-title">Claim Voucher</div>
-          <div class="voucher-claim-text">Punya kode voucher paket Gold/Platinum? Masukkan di bawah untuk langsung mengaktifkan paketmu.</div>
-
-          <div class="voucher-claim-form">
-            <input type="text" id="voucherCodeInput" class="voucher-claim-input" placeholder="Masukkan kode voucher..." autocomplete="off" maxlength="32">
-            <button class="btn-primary voucher-claim-btn" id="btnClaimVoucher">Claim</button>
-          </div>
-
-          <div id="voucherClaimResult" class="voucher-claim-result" style="display:none;"></div>
-        </div>
-      </div>
-    </div>
-
     <!-- ═══════════ PAGE: BYPASS (nampilin semua bypass yang tersedia buat role kamu) ═══════════ -->
     <div class="page-content" id="pageBypasses" style="display:none;">
       <section class="section">
@@ -229,69 +210,66 @@
       </section>
     </div>
 
-    <!-- ═══════════ PAGE: TUTORIAL (daftar tutorial, 100% dari /api/tutorials,
-         update realtime lewat WebSocket 'tutorials:update' — tanpa perlu update
-         launcher) ═══════════ -->
-    <div class="page-content" id="pageTutorial" style="display:none;">
-
-      <section class="section">
-        <div class="section-head">
-          <h3><span class="emoji">🆕</span> Tutorial Terbaru</h3>
-        </div>
-        <div class="cards-row" id="tutorialLatestGrid"></div>
-      </section>
-
-      <section class="section">
-        <div class="section-head">
-          <h3><span class="emoji">📘</span> Semua Tutorial</h3>
-          <div class="search" style="max-width:220px;">
-            <span class="icon">🔍</span>
-            <input type="text" id="tutorialSearchInput" placeholder="Cari tutorial...">
-          </div>
-        </div>
-        <div class="role-filter-tabs" id="tutorialCategoryFilter">
-          <button class="role-filter-tab active" data-category="all">Semua Kategori</button>
-        </div>
-        <div class="cards-row" id="tutorialGrid"></div>
-      </section>
-
-    </div>
-
-    <!-- ═══════════ PAGE: TUTORIAL DETAIL (baca isi tutorial + Next/Previous) ═══════════ -->
-    <div class="page-content detail-page" id="pageTutorialDetail" style="display:none;">
-      <div class="detail-scroll">
-        <button class="detail-back" id="tutorialDetailBackBtn"><span>←</span> Kembali ke Tutorial</button>
-
-        <div class="tutorial-reader">
-          <div class="tutorial-reader__category" id="tutorialDetailCategory">—</div>
-          <h1 class="detail-title" id="tutorialDetailTitle">—</h1>
-
-          <div class="tutorial-reader__image" id="tutorialDetailImageWrap" style="display:none;">
-            <img id="tutorialDetailImage" alt="">
-          </div>
-
-          <div class="tutorial-reader__content" id="tutorialDetailContent"></div>
-
-          <div class="tutorial-reader__video" id="tutorialDetailVideoWrap" style="display:none;">
-            <div class="tutorial-reader__video-inner">
-              <webview id="tutorialDetailVideo" src="" allowpopups useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"></webview>
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <div class="detail-action-bar tutorial-reader__nav">
-        <button class="detail-install-btn" id="tutorialPrevBtn">‹ Sebelumnya</button>
-        <button class="detail-install-btn" id="tutorialNextBtn">Selanjutnya ›</button>
-      </div>
-    </div>
-
     <!-- ═══════════ PAGE: STORE (polos, belum ada fitur) ═══════════ -->
     <div class="page-content" id="pageStore" style="display:none;">
       <div class="blank-page">
         <div class="blank-page-emoji">🛒</div>
         <div class="blank-page-title">Store</div>
         <div class="blank-page-text">Halaman ini belum ada fiturnya.</div>
+      </div>
+    </div>
+
+    <!-- ═══════════ PAGE: TUTORIAL (Help Center) ═══════════ -->
+    <div class="page-content" id="pageTutorial" style="display:none;">
+      <section class="section">
+        <div class="section-head tut-head">
+          <h3><span class="emoji">📘</span> Tutorial</h3>
+          <div class="tut-search">
+            <span class="icon">🔍</span>
+            <input type="text" id="tutSearchInput" placeholder="Cari tutorial...">
+          </div>
+        </div>
+
+        <div class="tut-toolbar">
+          <div class="tut-tabs" id="tutTabs">
+            <button class="tut-tab active" data-tab="all">📋 Semua</button>
+            <button class="tut-tab" data-tab="latest">🆕 Terbaru</button>
+            <button class="tut-tab" data-tab="popular">🔥 Populer</button>
+          </div>
+          <div class="tut-cat-filters" id="tutCategoryFilters">
+            <span class="active" data-cat="all">Semua Kategori</span>
+          </div>
+        </div>
+
+        <div class="tut-grid" id="tutGrid">
+          <div class="tut-card tut-skel"><div class="tut-skel-thumb"></div><div class="tut-skel-line w70"></div><div class="tut-skel-line w40"></div></div>
+          <div class="tut-card tut-skel"><div class="tut-skel-thumb"></div><div class="tut-skel-line w70"></div><div class="tut-skel-line w40"></div></div>
+          <div class="tut-card tut-skel"><div class="tut-skel-thumb"></div><div class="tut-skel-line w70"></div><div class="tut-skel-line w40"></div></div>
+          <div class="tut-card tut-skel"><div class="tut-skel-thumb"></div><div class="tut-skel-line w70"></div><div class="tut-skel-line w40"></div></div>
+        </div>
+      </section>
+    </div>
+
+    <!-- ═══════════ PAGE: TUTORIAL DETAIL (baca tutorial) ═══════════ -->
+    <div class="page-content detail-page" id="pageTutorialDetail" style="display:none;">
+      <div class="detail-scroll">
+        <button class="detail-back" id="tutDetailBackBtn"><span>←</span> Kembali ke Tutorial</button>
+
+        <div class="tut-reader" id="tutReader">
+          <div class="tut-reader-cover" id="tutReaderCover"></div>
+
+          <div class="tut-reader-meta" id="tutReaderMeta"></div>
+          <h1 class="tut-reader-title" id="tutReaderTitle">—</h1>
+          <p class="tut-reader-subtitle" id="tutReaderSubtitle"></p>
+
+          <div class="tut-reader-video" id="tutReaderVideo" style="display:none;"></div>
+
+          <div class="tut-reader-content" id="tutReaderContent"></div>
+
+          <div class="tut-reader-download" id="tutReaderDownload" style="display:none;"></div>
+        </div>
+
+        <div class="tut-nav-buttons" id="tutNavButtons"></div>
       </div>
     </div>
 
@@ -387,6 +365,10 @@
        showPremiumCleanupModal() di app.js. Tidak ada tombol close di state 'start'
        (proses tidak bisa dibatalkan user biasa). -->
   <div class="pcm-overlay" id="premiumCleanupOverlay" style="display:none;"></div>
+
+  <!-- AUTO UPDATE LAUNCHER — overlay diisi dinamis oleh showUpdateModal() di app.js.
+       Kalau update bertipe Force/Required, tidak ada tombol tutup (akses app diblok). -->
+  <div class="pcm-overlay" id="updateOverlay" style="display:none;"></div>
 
 <script src="app.js"></script>
 </body>

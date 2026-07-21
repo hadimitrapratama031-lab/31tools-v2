@@ -185,7 +185,8 @@ const PAGE_META = {
   games:     { title: 'Game',       breadcrumb: 'Pages / Game' },
   bypasses:  { title: 'Bypass',     breadcrumb: 'Pages / Bypass' },
   banners:   { title: 'Banner',     breadcrumb: 'Pages / Banner' },
-  tutorial:  { title: 'Kelola Tutorial', breadcrumb: 'Pages / Tutorial' },
+  tutorials: { title: 'Tutorial',   breadcrumb: 'Pages / Tutorial' },
+  appversions: { title: 'App Version', breadcrumb: 'Pages / App Version' },
   leaderboard:{ title: 'Top Installer', breadcrumb: 'Pages / Top Installer' },
   users:     { title: 'Users',      breadcrumb: 'Pages / Users' },
   history:   { title: 'Histori',    breadcrumb: 'Pages / Histori' },
@@ -226,7 +227,8 @@ function loadPage(page) {
   else if (page === 'games') renderTable('games');
   else if (page === 'bypasses') renderTable('bypasses');
   else if (page === 'banners') renderBannerAdmin();
-  else if (page === 'tutorial') renderTutorialAdmin();
+  else if (page === 'tutorials') renderTutorialAdmin();
+  else if (page === 'appversions') renderAppVersionAdmin();
   else if (page === 'leaderboard') renderLeaderboardAdmin();
   else if (page === 'users') renderUsers();
   else if (page === 'history') renderHistory();
@@ -235,7 +237,6 @@ function loadPage(page) {
   else if (page === 'webhooks') renderWebhookSettings();
   else if (page === 'hubcap') renderHubcapPage();
   else if (page === 'paket') renderPaketSettings();
-  else if (page === 'voucher') renderVoucherPage();
 }
 
 document.getElementById('btnAddItem').addEventListener('click', () => openItemModal(currentPage, null));
@@ -468,9 +469,6 @@ function connectAdminWS() {
         if (currentPage === 'hubcap' && _hcActiveTab === 'ryu') {
           renderRyKeysList(msg.data);
         }
-      } else if (msg.event === 'voucher:update') {
-        _voucherList = msg.data;
-        if (currentPage === 'voucher') renderVoucherTable(_voucherList);
       }
       if (msg.event === 'activity' && currentPage === 'hubcap' && _hcActiveTab === 'logs' && (msg.data?.category === 'hubcap' || msg.data?.category === 'ryu')) {
         loadHcLogs();
@@ -2706,207 +2704,6 @@ function wirePaketPageOnce() {
   });
 }
 
-// ══════════════════════════════════════════════════════════════════════════
-// KELOLA VOUCHER — Voucher Paket Gold/Platinum (lihat voucherManager.js di server)
-// ══════════════════════════════════════════════════════════════════════════
-let _voucherWired = false;
-let _voucherList = [];
-const VOUCHER_UNIT_LABEL = { minutes: 'Menit', hours: 'Jam', days: 'Hari' };
-const VOUCHER_STATUS_LABEL = { active: 'Aktif', inactive: 'Nonaktif', expired: 'Kedaluwarsa', full: 'Kuota Habis' };
-const VOUCHER_STATUS_CLASS = { active: 'success', inactive: 'info', expired: 'error', full: 'warning' };
-
-async function renderVoucherPage() {
-  wireVoucherPageOnce();
-  await loadVoucherList();
-}
-
-function wireVoucherPageOnce() {
-  if (_voucherWired) return;
-  _voucherWired = true;
-
-  document.getElementById('btnAddVoucher').addEventListener('click', () => openVoucherModal(null));
-  document.getElementById('btnSaveVoucher').addEventListener('click', doSaveVoucher);
-
-  const roleSegmentEl = document.getElementById('voucherRoleSegment');
-  const roleHiddenEl = document.getElementById('voucherRole');
-  roleSegmentEl.querySelectorAll('.segmented-opt').forEach(btn => {
-    btn.addEventListener('click', () => setSegmentValue(roleSegmentEl, roleHiddenEl, 'role', btn.dataset.role));
-  });
-
-  document.getElementById('tableVoucher').addEventListener('click', handleVoucherTableClick);
-  document.getElementById('tableVoucher').addEventListener('change', handleVoucherTableChange);
-}
-
-async function loadVoucherList() {
-  const table = document.getElementById('tableVoucher');
-  table.innerHTML = `<tbody><tr><td style="padding:20px;text-align:center;color:var(--text-3);">⏳ Memuat voucher...</td></tr></tbody>`;
-  try {
-    const data = await api('/api/admin/vouchers');
-    _voucherList = data.vouchers || [];
-    renderVoucherTable(_voucherList);
-  } catch (e) {
-    table.innerHTML = `<tbody><tr><td style="padding:20px;text-align:center;color:var(--red);">Gagal memuat voucher: ${escapeHtml(e.message)}</td></tr></tbody>`;
-  }
-}
-
-function renderVoucherTable(list) {
-  const table = document.getElementById('tableVoucher');
-  if (!list.length) {
-    table.innerHTML = `<tbody><tr><td style="padding:24px;text-align:center;color:var(--text-3);">🎟️ Belum ada voucher. Klik "+ Buat Voucher" untuk membuat yang pertama.</td></tr></tbody>`;
-    return;
-  }
-  table.innerHTML = `
-    <thead>
-      <tr>
-        <th>Kode</th>
-        <th>Paket</th>
-        <th>Durasi</th>
-        <th>Kuota</th>
-        <th>Masa Berlaku</th>
-        <th>Status</th>
-        <th>Dibuat</th>
-        <th style="text-align:right;">Aksi</th>
-      </tr>
-    </thead>
-    <tbody>
-      ${list.map(voucherRowHtml).join('')}
-    </tbody>`;
-}
-
-function voucherRowHtml(v) {
-  const durationLabel = `${v.durationAmount} ${VOUCHER_UNIT_LABEL[v.durationUnit] || v.durationUnit}`;
-  const expiryLabel = v.expiresAt ? fmtDateShort(v.expiresAt) : 'Tidak ada batas';
-  const statusClass = VOUCHER_STATUS_CLASS[v.status] || 'info';
-  const statusLabel = VOUCHER_STATUS_LABEL[v.status] || v.status;
-  return `
-    <tr data-id="${v.id}">
-      <td><code style="font-weight:700;letter-spacing:.03em;">${escapeHtml(v.code)}</code></td>
-      <td>${roleTagHtml(v.role)}</td>
-      <td>${escapeHtml(durationLabel)}</td>
-      <td>${v.usedCount} / ${v.quota} <span style="color:var(--text-3);">(sisa ${v.remaining})</span></td>
-      <td>${escapeHtml(expiryLabel)}</td>
-      <td><span class="log-badge log-badge--${statusClass}">${escapeHtml(statusLabel)}</span></td>
-      <td>${v.createdAt ? timeAgo(v.createdAt) : '—'}${v.createdBy ? ` <span style="color:var(--text-3);">oleh ${escapeHtml(v.createdBy)}</span>` : ''}</td>
-      <td style="text-align:right;white-space:nowrap;">
-        <label class="switch" title="Aktif / Nonaktif" style="vertical-align:middle;margin-right:8px;">
-          <input type="checkbox" data-voucher-toggle="${v.id}" ${v.active ? 'checked' : ''}>
-          <span class="switch-slider"></span>
-        </label>
-        <button class="btn-icon-sm" title="Edit" data-voucher-edit="${v.id}">✏️</button>
-        <button class="btn-icon-sm" title="Hapus" data-voucher-delete="${v.id}">🗑️</button>
-      </td>
-    </tr>`;
-}
-
-function handleVoucherTableClick(e) {
-  const editBtn = e.target.closest('[data-voucher-edit]');
-  const delBtn = e.target.closest('[data-voucher-delete]');
-  if (editBtn) {
-    const v = _voucherList.find(x => x.id === editBtn.dataset.voucherEdit);
-    if (v) openVoucherModal(v);
-  } else if (delBtn) {
-    doDeleteVoucher(delBtn.dataset.voucherDelete);
-  }
-}
-
-function handleVoucherTableChange(e) {
-  const toggleEl = e.target.closest('[data-voucher-toggle]');
-  if (toggleEl) doToggleVoucher(toggleEl.dataset.voucherToggle, toggleEl.checked, toggleEl);
-}
-
-function openVoucherModal(v) {
-  document.getElementById('voucherModalTitle').textContent = v ? 'Edit Voucher' : 'Buat Voucher';
-  document.getElementById('voucherId').value = v ? v.id : '';
-  document.getElementById('voucherCode').value = v ? v.code : '';
-  document.getElementById('voucherCode').disabled = false;
-  document.getElementById('voucherDurationAmount').value = v ? v.durationAmount : '';
-  document.getElementById('voucherDurationUnit').value = v ? v.durationUnit : 'days';
-  document.getElementById('voucherQuota').value = v ? v.quota : '';
-  document.getElementById('voucherExpiresAt').value = v && v.expiresAt ? toDatetimeLocalValue(v.expiresAt) : '';
-  document.getElementById('voucherActive').checked = v ? v.active : true;
-
-  const roleSegmentEl = document.getElementById('voucherRoleSegment');
-  const roleHiddenEl = document.getElementById('voucherRole');
-  setSegmentValue(roleSegmentEl, roleHiddenEl, 'role', v ? v.role : 'gold');
-
-  document.getElementById('voucherModalBackdrop').style.display = 'flex';
-}
-function closeVoucherModal() { document.getElementById('voucherModalBackdrop').style.display = 'none'; }
-
-function toDatetimeLocalValue(dateStr) {
-  const d = new Date(dateStr);
-  const pad = n => String(n).padStart(2, '0');
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-}
-
-async function doSaveVoucher() {
-  const id = document.getElementById('voucherId').value;
-  const code = document.getElementById('voucherCode').value.trim();
-  const role = document.getElementById('voucherRole').value;
-  const durationAmount = document.getElementById('voucherDurationAmount').value;
-  const durationUnit = document.getElementById('voucherDurationUnit').value;
-  const quota = document.getElementById('voucherQuota').value;
-  const expiresAtLocal = document.getElementById('voucherExpiresAt').value;
-  const active = document.getElementById('voucherActive').checked;
-
-  if (!code) { showToast('Kode voucher wajib diisi.', 'error'); return; }
-  if (!durationAmount || Number(durationAmount) <= 0) { showToast('Durasi paket harus lebih dari 0.', 'error'); return; }
-  if (!quota || Number(quota) <= 0) { showToast('Jumlah kuota voucher harus lebih dari 0.', 'error'); return; }
-
-  const body = {
-    code, role,
-    durationAmount: Number(durationAmount),
-    durationUnit,
-    quota: Number(quota),
-    expiresAt: expiresAtLocal ? new Date(expiresAtLocal).toISOString() : null,
-    active
-  };
-
-  const btn = document.getElementById('btnSaveVoucher');
-  const original = btn.textContent;
-  btn.disabled = true; btn.textContent = 'Menyimpan...';
-  try {
-    if (id) {
-      await api(`/api/admin/vouchers/${id}`, { method: 'PUT', body: JSON.stringify(body) });
-      showToast('Voucher berhasil diperbarui.', 'success');
-    } else {
-      await api('/api/admin/vouchers', { method: 'POST', body: JSON.stringify(body) });
-      showToast('Voucher berhasil dibuat.', 'success');
-    }
-    closeVoucherModal();
-    await loadVoucherList();
-  } catch (e) {
-    showToast('Gagal menyimpan voucher: ' + e.message, 'error');
-  } finally {
-    btn.disabled = false; btn.textContent = original;
-  }
-}
-
-async function doToggleVoucher(id, checked, checkboxEl) {
-  try {
-    await api(`/api/admin/vouchers/${id}/toggle`, { method: 'PUT', body: JSON.stringify({ active: checked }) });
-    const v = _voucherList.find(x => x.id === id);
-    if (v) { v.active = checked; v.status = checked ? (v.isExpired ? 'expired' : v.isFull ? 'full' : 'active') : 'inactive'; }
-    renderVoucherTable(_voucherList);
-    showToast(`Voucher ${checked ? 'diaktifkan' : 'dinonaktifkan'}.`, 'success');
-  } catch (e) {
-    if (checkboxEl) checkboxEl.checked = !checked;
-    showToast('Gagal mengubah status: ' + e.message, 'error');
-  }
-}
-
-async function doDeleteVoucher(id) {
-  const v = _voucherList.find(x => x.id === id);
-  if (!confirm(`Hapus voucher "${v?.code || id}"? Riwayat klaim voucher ini juga akan ikut terhapus. Tindakan ini tidak bisa dibatalkan.`)) return;
-  try {
-    await api(`/api/admin/vouchers/${id}`, { method: 'DELETE' });
-    showToast('Voucher berhasil dihapus.', 'success');
-    await loadVoucherList();
-  } catch (e) {
-    showToast('Gagal menghapus voucher: ' + e.message, 'error');
-  }
-}
-
 async function renderWebhookSettings() {
   const container = document.getElementById('whList');
   container.innerHTML = `<div class="empty-cell"><span class="empty-icon">⏳</span>Memuat pengaturan webhook...</div>`;
@@ -3633,331 +3430,6 @@ document.getElementById('btnSaveBanner')?.addEventListener('click', async () => 
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// KELOLA TUTORIAL — Admin Web
-// Pola CRUD-nya sama seperti Banner (list + modal + toggle status + delete),
-// bedanya "Isi Tutorial" pakai rich text editor (Quill) dan tidak ada
-// drag-reorder (tutorial ditampilkan terurut createdAt terbaru dulu, sama
-// seperti di App). Thumbnail & Gambar Pendukung disimpan base64 (atau URL),
-// polanya identik dengan upload gambar Banner.
-// ══════════════════════════════════════════════════════════════════════════
-let _tutorialList = [];
-let _tutorialEditId = null;
-let _tutorialFilter = { search: '', status: 'all' };
-let _tutorialThumbPayload = { url: '', data: '' };
-let _tutorialImagePayload = { url: '', data: '' };
-let _tutorialQuill = null;
-
-async function renderTutorialAdmin() {
-  const wrap = document.getElementById('tutorialAdminList');
-  wrap.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-faint);font-size:12.5px;">Memuat tutorial...</div>`;
-  try {
-    _tutorialList = await api('/api/admin/tutorials');
-    renderTutorialStatusFilter();
-    drawTutorialAdminList();
-    populateTutorialCategoryDatalist();
-  } catch (e) {
-    wrap.innerHTML = `<div style="padding:24px;text-align:center;color:var(--red);font-size:12.5px;">Gagal memuat tutorial: ${escapeHtml(e.message)}</div>`;
-  }
-}
-
-function renderTutorialStatusFilter() {
-  const el = document.getElementById('tutorialStatusFilter');
-  if (!el) return;
-  const counts = {
-    all: _tutorialList.length,
-    published: _tutorialList.filter(t => t.status === 'published').length,
-    draft: _tutorialList.filter(t => t.status === 'draft').length
-  };
-  const chips = [
-    { key: 'all', label: 'Semua', count: counts.all },
-    { key: 'published', label: '✅ Published', count: counts.published },
-    { key: 'draft', label: '📝 Draft', count: counts.draft }
-  ];
-  el.innerHTML = chips.map(c => `
-    <button class="filter-chip ${_tutorialFilter.status === c.key ? 'active' : ''}" data-status="${c.key}">
-      ${c.label} <span class="count">${c.count}</span>
-    </button>`).join('');
-  el.querySelectorAll('.filter-chip').forEach(btn => {
-    btn.addEventListener('click', () => { _tutorialFilter.status = btn.dataset.status; drawTutorialAdminList(); });
-  });
-}
-
-document.getElementById('tutorialSearchInputAdmin')?.addEventListener('input', (e) => {
-  _tutorialFilter.search = e.target.value;
-  drawTutorialAdminList();
-});
-
-function getFilteredTutorials() {
-  let rows = _tutorialList;
-  if (_tutorialFilter.status !== 'all') rows = rows.filter(t => t.status === _tutorialFilter.status);
-  const q = _tutorialFilter.search.trim().toLowerCase();
-  if (q) rows = rows.filter(t => (t.title || '').toLowerCase().includes(q) || (t.category || '').toLowerCase().includes(q));
-  return rows;
-}
-
-function populateTutorialCategoryDatalist() {
-  const el = document.getElementById('tutorialCategoryOptions');
-  if (!el) return;
-  const categories = Array.from(new Set(_tutorialList.map(t => t.category).filter(Boolean))).sort();
-  el.innerHTML = categories.map(c => `<option value="${escapeHtml(c)}">`).join('');
-}
-
-function drawTutorialAdminList() {
-  const wrap = document.getElementById('tutorialAdminList');
-  const rows = getFilteredTutorials();
-
-  if (!_tutorialList.length) {
-    wrap.innerHTML = `
-      <div style="padding:40px 20px;text-align:center;color:var(--text-faint);">
-        <div style="font-size:32px;margin-bottom:8px;">📘</div>
-        <div style="font-size:13px;">Belum ada tutorial. Klik "Tambah Tutorial" untuk membuat yang pertama.</div>
-      </div>`;
-    return;
-  }
-  if (!rows.length) {
-    wrap.innerHTML = `
-      <div style="padding:40px 20px;text-align:center;color:var(--text-faint);">
-        <div style="font-size:32px;margin-bottom:8px;">🔍</div>
-        <div style="font-size:13px;">Tidak ada tutorial yang cocok dengan pencarian/filter.</div>
-      </div>`;
-    return;
-  }
-
-  wrap.innerHTML = rows.map((t) => {
-    const thumb = t.thumbnailData || t.thumbnailUrl;
-    const thumbHtml = thumb
-      ? `<div class="banner-thumb" style="background-image:url('${escapeHtml(thumb)}');"></div>`
-      : `<div class="banner-thumb" style="background:linear-gradient(135deg,#4facfe,#7c5cff);"><span style="font-size:20px;">📘</span></div>`;
-
-    return `
-    <div class="banner-admin-item" data-id="${t._id}" style="display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border);">
-      ${thumbHtml}
-      <div style="flex:1;min-width:0;">
-        <div style="font-weight:700;font-size:13.5px;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title)}</div>
-        <div style="font-size:11.5px;color:var(--text-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.description || '—')}</div>
-        <div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap;">
-          <span class="tag public" style="font-size:10px;">🏷️ ${escapeHtml(t.category || 'Umum')}</span>
-          <span class="tag ${t.status}" style="font-size:10px;">${t.status === 'published' ? '✅ Published' : '📝 Draft'}</span>
-          ${t.videoPlatform === 'tiktok' ? `<span class="tag public" style="font-size:10px;">🎵 TikTok</span>` : ''}
-          ${(t.videoPlatform === 'youtube' || (!t.videoPlatform && t.youtubeId)) ? `<span class="tag public" style="font-size:10px;">▶️ YouTube</span>` : ''}
-        </div>
-      </div>
-      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
-        <label class="switch" title="Publish/Draft">
-          <input type="checkbox" ${t.status === 'published' ? 'checked' : ''} onchange="toggleTutorialStatus('${t._id}', this.checked)">
-          <span class="switch-slider"></span>
-        </label>
-        <button class="btn btn-secondary btn-sm" onclick="openTutorialModal('${t._id}')">✎ Edit</button>
-        <button class="btn btn-danger btn-sm" onclick="deleteTutorial('${t._id}')">🗑</button>
-      </div>
-    </div>`;
-  }).join('');
-}
-
-async function toggleTutorialStatus(id, isPublished) {
-  const status = isPublished ? 'published' : 'draft';
-  try {
-    await api(`/api/admin/tutorials/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) });
-    showToast(isPublished ? '✅ Tutorial dipublish.' : '✅ Tutorial dijadikan draft.', 'success');
-    const t = _tutorialList.find(x => x._id === id);
-    if (t) t.status = status;
-    renderTutorialStatusFilter();
-    drawTutorialAdminList();
-  } catch (e) {
-    showToast('Gagal: ' + e.message, 'error');
-    renderTutorialAdmin();
-  }
-}
-
-async function deleteTutorial(id) {
-  const t = _tutorialList.find(x => x._id === id);
-  if (!confirm(`Yakin mau hapus tutorial "${t?.title || ''}"? Tindakan ini tidak bisa dibatalkan.`)) return;
-  try {
-    await api(`/api/admin/tutorials/${id}`, { method: 'DELETE' });
-    showToast('✅ Tutorial dihapus.', 'success');
-    renderTutorialAdmin();
-  } catch (e) {
-    showToast('Gagal hapus tutorial: ' + e.message, 'error');
-  }
-}
-
-// Quill dibuat sekali (lazy) & dipakai ulang tiap buka modal. Toolbar sengaja
-// tidak menyertakan tombol image/video — itu diisi lewat kolom Gambar
-// Pendukung & Link YouTube terpisah di modal, bukan disisipkan ke dalam konten.
-function ensureTutorialQuill() {
-  if (_tutorialQuill) return;
-  if (typeof Quill === 'undefined') return; // CDN gagal load (mis. offline) — modal tetap jalan tanpa rich text editor
-  _tutorialQuill = new Quill('#tutorialContentEditor', {
-    theme: 'snow',
-    placeholder: 'Tulis isi tutorial di sini...',
-    modules: {
-      toolbar: [
-        [{ header: [1, 2, 3, false] }],
-        ['bold', 'italic', 'underline', 'strike'],
-        [{ list: 'ordered' }, { list: 'bullet' }],
-        ['blockquote', 'code-block', 'link'],
-        ['clean']
-      ]
-    }
-  });
-}
-
-function getTutorialContentValue() {
-  if (_tutorialQuill) return _tutorialQuill.root.innerHTML;
-  return document.querySelector('#tutorialContentEditor')?.innerHTML || '';
-}
-
-function setTutorialContentValue(html) {
-  if (_tutorialQuill) _tutorialQuill.root.innerHTML = html || '';
-}
-
-function clearTutorialImage(which) {
-  if (which === 'thumbnail') {
-    _tutorialThumbPayload = { url: '', data: '' };
-    document.getElementById('tutorialThumbnailUrl').value = '';
-    document.getElementById('tutorialThumbnailFile').value = '';
-    document.getElementById('tutorialThumbnailPreviewWrap').style.display = 'none';
-  } else {
-    _tutorialImagePayload = { url: '', data: '' };
-    document.getElementById('tutorialImageUrl').value = '';
-    document.getElementById('tutorialImageFile').value = '';
-    document.getElementById('tutorialImagePreviewWrap').style.display = 'none';
-  }
-}
-
-function showTutorialImagePreview(which, src) {
-  const img = document.getElementById(which === 'thumbnail' ? 'tutorialThumbnailPreviewImg' : 'tutorialImagePreviewImg');
-  const wrap = document.getElementById(which === 'thumbnail' ? 'tutorialThumbnailPreviewWrap' : 'tutorialImagePreviewWrap');
-  img.src = src;
-  wrap.style.display = 'block';
-}
-
-function wireTutorialImageInputs(which) {
-  const fileId = which === 'thumbnail' ? 'tutorialThumbnailFile' : 'tutorialImageFile';
-  const urlId = which === 'thumbnail' ? 'tutorialThumbnailUrl' : 'tutorialImageUrl';
-  document.getElementById(fileId)?.addEventListener('change', (e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    if (file.size > 2 * 1024 * 1024) {
-      showToast('Ukuran gambar maksimal 2MB.', 'error');
-      e.target.value = '';
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      const payload = { url: '', data: reader.result };
-      if (which === 'thumbnail') _tutorialThumbPayload = payload; else _tutorialImagePayload = payload;
-      document.getElementById(urlId).value = '';
-      showTutorialImagePreview(which, reader.result);
-    };
-    reader.readAsDataURL(file);
-  });
-  document.getElementById(urlId)?.addEventListener('input', (e) => {
-    const url = e.target.value.trim();
-    if (url) {
-      const payload = { url, data: '' };
-      if (which === 'thumbnail') _tutorialThumbPayload = payload; else _tutorialImagePayload = payload;
-      document.getElementById(fileId).value = '';
-      showTutorialImagePreview(which, url);
-    } else if (!document.getElementById(fileId).files?.length) {
-      clearTutorialImage(which);
-    }
-  });
-}
-wireTutorialImageInputs('thumbnail');
-wireTutorialImageInputs('image');
-
-document.getElementById('tutorialStatusSegment')?.querySelectorAll('.segmented-opt').forEach(btn => {
-  btn.addEventListener('click', () => {
-    const status = btn.dataset.status;
-    document.getElementById('tutorialStatus').value = status;
-    document.getElementById('tutorialStatusSegment').dataset.value = status;
-    document.getElementById('tutorialStatusSegment').querySelectorAll('.segmented-opt').forEach(b => b.classList.toggle('active', b.dataset.status === status));
-  });
-});
-
-function openTutorialModal(id) {
-  _tutorialEditId = id || null;
-  const t = id ? _tutorialList.find(x => x._id === id) : null;
-
-  document.getElementById('tutorialModalTitle').textContent = t ? 'Edit Tutorial' : 'Tambah Tutorial';
-  document.getElementById('tutorialTitle').value = t?.title || '';
-  document.getElementById('tutorialCategory').value = t?.category || '';
-  document.getElementById('tutorialDescription').value = t?.description || '';
-  const _tPlatform = t?.videoPlatform || (t?.youtubeId ? 'youtube' : '');
-  const _tVideoId = t?.videoId || t?.youtubeId || '';
-  let _tVideoUrlPrefill = '';
-  if (_tPlatform === 'youtube' && _tVideoId) _tVideoUrlPrefill = `https://youtu.be/${_tVideoId}`;
-  else if (_tPlatform === 'tiktok' && _tVideoId) _tVideoUrlPrefill = `https://www.tiktok.com/embed/v2/${_tVideoId}`;
-  document.getElementById('tutorialVideoUrl').value = _tVideoUrlPrefill;
-
-  const status = t?.status === 'draft' ? 'draft' : 'published';
-  document.getElementById('tutorialStatus').value = status;
-  document.getElementById('tutorialStatusSegment').dataset.value = status;
-  document.getElementById('tutorialStatusSegment').querySelectorAll('.segmented-opt').forEach(b => b.classList.toggle('active', b.dataset.status === status));
-
-  _tutorialThumbPayload = { url: t?.thumbnailUrl || '', data: t?.thumbnailData || '' };
-  document.getElementById('tutorialThumbnailUrl').value = t?.thumbnailUrl || '';
-  document.getElementById('tutorialThumbnailFile').value = '';
-  if (t?.thumbnailData || t?.thumbnailUrl) showTutorialImagePreview('thumbnail', t.thumbnailData || t.thumbnailUrl);
-  else document.getElementById('tutorialThumbnailPreviewWrap').style.display = 'none';
-
-  _tutorialImagePayload = { url: t?.imageUrl || '', data: t?.imageData || '' };
-  document.getElementById('tutorialImageUrl').value = t?.imageUrl || '';
-  document.getElementById('tutorialImageFile').value = '';
-  if (t?.imageData || t?.imageUrl) showTutorialImagePreview('image', t.imageData || t.imageUrl);
-  else document.getElementById('tutorialImagePreviewWrap').style.display = 'none';
-
-  ensureTutorialQuill();
-  setTutorialContentValue(t?.content || '');
-
-  document.getElementById('tutorialModalBackdrop').style.display = 'flex';
-}
-
-function closeTutorialModal() {
-  document.getElementById('tutorialModalBackdrop').style.display = 'none';
-  _tutorialEditId = null;
-}
-
-document.getElementById('btnAddTutorial')?.addEventListener('click', () => openTutorialModal(null));
-
-document.getElementById('btnSaveTutorial')?.addEventListener('click', async () => {
-  const btn = document.getElementById('btnSaveTutorial');
-  const payload = {
-    title: document.getElementById('tutorialTitle').value.trim(),
-    category: document.getElementById('tutorialCategory').value.trim(),
-    description: document.getElementById('tutorialDescription').value.trim(),
-    videoUrl: document.getElementById('tutorialVideoUrl').value.trim(),
-    status: document.getElementById('tutorialStatus').value,
-    content: getTutorialContentValue(),
-    thumbnailUrl: _tutorialThumbPayload.url || '',
-    thumbnailData: _tutorialThumbPayload.data || '',
-    imageUrl: _tutorialImagePayload.url || '',
-    imageData: _tutorialImagePayload.data || ''
-  };
-
-  if (!payload.title) { showToast('Judul tutorial wajib diisi.', 'error'); return; }
-  const plainContent = payload.content.replace(/<[^>]*>/g, '').trim();
-  if (!plainContent) { showToast('Isi tutorial wajib diisi.', 'error'); return; }
-
-  btn.disabled = true; btn.textContent = 'Menyimpan...';
-  try {
-    if (_tutorialEditId) {
-      await api(`/api/admin/tutorials/${_tutorialEditId}`, { method: 'PUT', body: JSON.stringify(payload) });
-    } else {
-      await api('/api/admin/tutorials', { method: 'POST', body: JSON.stringify(payload) });
-    }
-    showToast('✅ Tutorial berhasil disimpan.', 'success');
-    closeTutorialModal();
-    renderTutorialAdmin();
-  } catch (e) {
-    showToast('Gagal simpan tutorial: ' + e.message, 'error');
-  } finally {
-    btn.disabled = false; btn.textContent = 'Simpan Tutorial';
-  }
-});
-
-// ══════════════════════════════════════════════════════════════════════════
 // TOP INSTALLER MINGGUAN — Admin view (realtime dari histori install asli)
 // ══════════════════════════════════════════════════════════════════════════
 const LB_ADMIN_ROLE_LABEL = { public: 'Public', gold: 'Gold', platinum: 'Platinum', admin: 'Admin' };
@@ -4503,3 +3975,812 @@ function hcLogRowHtml(item) {
     <td>${timeAgo(item.createdAt)}</td>
   </tr>`;
 }
+
+// ══════════════════════════════════════════════════════════════════════════
+// KELOLA TUTORIAL (Help Center) — App baca tutorial, di sini kelola isinya.
+// Pola sama persis dengan Banner (list + drag/reorder + modal), ditambah
+// Rich Text Editor (Quill) untuk isi tutorial & kategori (mirip Kelola Game).
+// ══════════════════════════════════════════════════════════════════════════
+let _tutorialList = [];
+let _tutEditId = null;
+let _tutFilter = { search: '', status: 'all' };
+let _tutThumbPayload = { imageUrl: '', imageData: '' };
+let _tutFilePayload = { fileUrl: '', fileData: '', fileName: '' };
+let _tutDragFromId = null;
+let adminTutorialCategories = [];
+let _tutQuill = null;
+
+// ── Kategori Tutorial ──
+async function loadAdminTutorialCategories() {
+  try {
+    adminTutorialCategories = await api('/api/admin/tutorial-categories');
+    renderTutCategorySelect();
+  } catch (e) { /* diam-diam gagal — select kategori tetap ada, kosong sampai reload berhasil */ }
+}
+
+function renderTutCategorySelect(selectedSlug) {
+  const sel = document.getElementById('tutCategory');
+  if (!sel) return;
+  const current = selectedSlug !== undefined ? selectedSlug : sel.value;
+  sel.innerHTML = adminTutorialCategories.length
+    ? adminTutorialCategories.map(c => `<option value="${escapeHtml(c.slug)}">${escapeHtml(c.name)}</option>`).join('')
+    : `<option value="">— belum ada kategori —</option>`;
+  if (current && adminTutorialCategories.some(c => c.slug === current)) sel.value = current;
+}
+
+function tutCategoryNameAdmin(slug) {
+  const c = adminTutorialCategories.find(c => c.slug === slug);
+  return c ? c.name : 'Umum';
+}
+
+document.getElementById('btnAddTutCategoryInline')?.addEventListener('click', async () => {
+  const name = prompt('Nama kategori tutorial baru (contoh: Memulai, Troubleshooting, dll):');
+  if (!name || !name.trim()) return;
+  const statusEl = document.getElementById('tutCategoryStatus');
+  try {
+    const created = await api('/api/admin/tutorial-categories', { method: 'POST', body: JSON.stringify({ name: name.trim() }) });
+    await loadAdminTutorialCategories();
+    renderTutCategorySelect(created.slug);
+    statusEl.textContent = `✓ Kategori "${created.name}" ditambahkan.`;
+    statusEl.style.color = 'var(--green, #4ade80)';
+    showToast('Kategori tutorial ditambahkan.', 'success');
+  } catch (e) {
+    statusEl.textContent = e.message;
+    statusEl.style.color = 'var(--red)';
+    showToast('Gagal menambah kategori: ' + e.message, 'error');
+  }
+});
+
+document.getElementById('btnDeleteTutCategoryInline')?.addEventListener('click', async () => {
+  const sel = document.getElementById('tutCategory');
+  const slug = sel.value;
+  const cat = adminTutorialCategories.find(c => c.slug === slug);
+  if (!cat) return;
+  if (!confirm(`Hapus kategori "${cat.name}"? Kategori hanya bisa dihapus kalau tidak ada tutorial yang memakainya.`)) return;
+  const statusEl = document.getElementById('tutCategoryStatus');
+  try {
+    await api(`/api/admin/tutorial-categories/${cat._id}`, { method: 'DELETE' });
+    await loadAdminTutorialCategories();
+    statusEl.textContent = `✓ Kategori "${cat.name}" dihapus.`;
+    statusEl.style.color = 'var(--green, #4ade80)';
+    showToast('Kategori tutorial dihapus.', 'success');
+  } catch (e) {
+    statusEl.textContent = e.message;
+    statusEl.style.color = 'var(--red)';
+    showToast('Gagal menghapus kategori: ' + e.message, 'error');
+  }
+});
+
+// ── Modal "Kelola Kategori" terpisah (dibuka dari tombol 🏷️ Kategori di halaman utama) ──
+function openTutCategoryModal() {
+  renderTutCategoryManageList();
+  document.getElementById('tutCategoryModalBackdrop').style.display = 'flex';
+}
+function closeTutCategoryModal() {
+  document.getElementById('tutCategoryModalBackdrop').style.display = 'none';
+}
+function renderTutCategoryManageList() {
+  const wrap = document.getElementById('tutCategoryManageList');
+  if (!wrap) return;
+  if (!adminTutorialCategories.length) {
+    wrap.innerHTML = `<div style="color:var(--text-faint);font-size:12.5px;">Belum ada kategori.</div>`;
+    return;
+  }
+  wrap.innerHTML = adminTutorialCategories.map(c => `
+    <div class="tut-cat-manage-row">
+      <span style="font-size:13px;color:var(--text-main);">${escapeHtml(c.name)}</span>
+      <button class="btn btn-danger btn-sm" onclick="deleteTutCategoryFromManage('${c._id}')">🗑️</button>
+    </div>`).join('');
+}
+async function deleteTutCategoryFromManage(id) {
+  const cat = adminTutorialCategories.find(c => c._id === id);
+  if (!cat) return;
+  if (!confirm(`Hapus kategori "${cat.name}"?`)) return;
+  try {
+    await api(`/api/admin/tutorial-categories/${id}`, { method: 'DELETE' });
+    await loadAdminTutorialCategories();
+    renderTutCategoryManageList();
+    showToast('Kategori tutorial dihapus.', 'success');
+  } catch (e) {
+    showToast('Gagal menghapus kategori: ' + e.message, 'error');
+  }
+}
+document.getElementById('btnManageTutCategories')?.addEventListener('click', openTutCategoryModal);
+document.getElementById('btnCreateTutCategory')?.addEventListener('click', async () => {
+  const input = document.getElementById('tutNewCategoryName');
+  const name = input.value.trim();
+  if (!name) return;
+  try {
+    await api('/api/admin/tutorial-categories', { method: 'POST', body: JSON.stringify({ name }) });
+    input.value = '';
+    await loadAdminTutorialCategories();
+    renderTutCategoryManageList();
+    showToast('Kategori tutorial ditambahkan.', 'success');
+  } catch (e) {
+    showToast('Gagal menambah kategori: ' + e.message, 'error');
+  }
+});
+window.deleteTutCategoryFromManage = deleteTutCategoryFromManage;
+
+// ── Daftar Tutorial ──
+async function renderTutorialAdmin() {
+  const wrap = document.getElementById('tutorialList');
+  wrap.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-faint);font-size:12.5px;">Memuat tutorial...</div>`;
+  try {
+    if (!adminTutorialCategories.length) await loadAdminTutorialCategories();
+    _tutorialList = await api('/api/admin/tutorials');
+    renderTutorialStats();
+    renderTutorialStatusFilter();
+    drawTutorialAdminList();
+  } catch (e) {
+    wrap.innerHTML = `<div style="padding:24px;text-align:center;color:var(--red);font-size:12.5px;">Gagal memuat tutorial: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderTutorialStats() {
+  const wrap = document.getElementById('tutorialStats');
+  if (!wrap) return;
+  const total = _tutorialList.length;
+  const published = _tutorialList.filter(t => t.status === 'published').length;
+  const draft = _tutorialList.filter(t => t.status === 'draft').length;
+  const totalViews = _tutorialList.reduce((sum, t) => sum + (t.views || 0), 0);
+  wrap.innerHTML = `
+    <div class="stat-card"><div class="stat-card-label">Total Tutorial</div><div class="stat-card-value">${total}</div></div>
+    <div class="stat-card"><div class="stat-card-label">Published</div><div class="stat-card-value" style="color:var(--green);">${published}</div></div>
+    <div class="stat-card"><div class="stat-card-label">Draft</div><div class="stat-card-value" style="color:var(--text-faint);">${draft}</div></div>
+    <div class="stat-card"><div class="stat-card-label">Total Dilihat</div><div class="stat-card-value">${totalViews}</div></div>
+  `;
+}
+
+function renderTutorialStatusFilter() {
+  const el = document.getElementById('tutorialStatusFilter');
+  if (!el) return;
+  const counts = {
+    all: _tutorialList.length,
+    published: _tutorialList.filter(t => t.status === 'published').length,
+    draft: _tutorialList.filter(t => t.status === 'draft').length
+  };
+  const chips = [
+    { key: 'all', label: 'Semua', count: counts.all },
+    { key: 'published', label: '✅ Published', count: counts.published },
+    { key: 'draft', label: '📝 Draft', count: counts.draft }
+  ];
+  el.innerHTML = chips.map(c => `
+    <button class="filter-chip ${_tutFilter.status === c.key ? 'active' : ''}" data-status="${c.key}">
+      ${c.label} <span class="count">${c.count}</span>
+    </button>`).join('');
+  el.querySelectorAll('.filter-chip').forEach(btn => {
+    btn.addEventListener('click', () => { _tutFilter.status = btn.dataset.status; drawTutorialAdminList(); });
+  });
+}
+
+document.getElementById('tutorialSearchInput')?.addEventListener('input', (e) => {
+  _tutFilter.search = e.target.value;
+  drawTutorialAdminList();
+});
+
+function getFilteredTutorials() {
+  let rows = _tutorialList;
+  if (_tutFilter.status !== 'all') rows = rows.filter(t => t.status === _tutFilter.status);
+  const q = _tutFilter.search.trim().toLowerCase();
+  if (q) rows = rows.filter(t => (t.title || '').toLowerCase().includes(q) || (t.subtitle || '').toLowerCase().includes(q));
+  return rows;
+}
+
+function drawTutorialAdminList() {
+  const wrap = document.getElementById('tutorialList');
+  const rows = getFilteredTutorials();
+
+  if (!_tutorialList.length) {
+    wrap.innerHTML = `
+      <div style="padding:40px 20px;text-align:center;color:var(--text-faint);">
+        <div style="font-size:32px;margin-bottom:8px;">📘</div>
+        <div style="font-size:13px;">Belum ada tutorial. Klik "Tambah Tutorial" untuk membuat yang pertama.</div>
+      </div>`;
+    return;
+  }
+  if (!rows.length) {
+    wrap.innerHTML = `
+      <div style="padding:40px 20px;text-align:center;color:var(--text-faint);">
+        <div style="font-size:32px;margin-bottom:8px;">🔍</div>
+        <div style="font-size:13px;">Tidak ada tutorial yang cocok dengan pencarian/filter.</div>
+      </div>`;
+    return;
+  }
+
+  wrap.innerHTML = rows.map((t) => {
+    const idx = _tutorialList.findIndex(x => x._id === t._id);
+    const img = t.thumbnailData || t.thumbnailUrl;
+    const thumb = img
+      ? `<div class="banner-thumb" style="background-image:url('${img}');"></div>`
+      : `<div class="banner-thumb" style="background:linear-gradient(135deg,#3dd9f5,#7b5cff);"><span style="font-size:20px;">📘</span></div>`;
+
+    return `
+    <div class="banner-admin-item" draggable="true" data-id="${t._id}" style="display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border);">
+      <span class="banner-drag-handle" title="Geser untuk ubah urutan">⠿</span>
+      <div style="display:flex;flex-direction:column;gap:2px;">
+        <button class="btn-icon-sm" title="Naikkan urutan" onclick="moveTutorial('${t._id}', -1)" ${idx === 0 ? 'disabled style="opacity:.3;"' : ''}>▲</button>
+        <button class="btn-icon-sm" title="Turunkan urutan" onclick="moveTutorial('${t._id}', 1)" ${idx === _tutorialList.length - 1 ? 'disabled style="opacity:.3;"' : ''}>▼</button>
+      </div>
+      ${thumb}
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:700;font-size:13.5px;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">
+          ${t.isPinned ? '📌 ' : ''}${escapeHtml(t.title)}
+        </div>
+        <div style="font-size:11.5px;color:var(--text-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.excerpt || t.subtitle || '—')}</div>
+        <div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap;align-items:center;">
+          <span class="tut-status-badge ${t.status}">${t.status === 'published' ? '✅ Published' : '📝 Draft'}</span>
+          <span class="tag public" style="font-size:10px;">${escapeHtml(tutCategoryNameAdmin(t.categorySlug))}</span>
+          <span style="font-size:11px;color:var(--text-faint);">👁️ ${t.views || 0}</span>
+          <span style="font-size:11px;color:var(--text-faint);">⏱️ ${t.readingTimeMin || 1} menit</span>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+        <label class="switch" title="Publish/Draft">
+          <input type="checkbox" ${t.status === 'published' ? 'checked' : ''} onchange="toggleTutorialPublish('${t._id}', this.checked)">
+          <span class="switch-slider"></span>
+        </label>
+        <button class="btn btn-secondary btn-sm" title="Pin" onclick="toggleTutorialPin('${t._id}', ${!t.isPinned})">${t.isPinned ? '📌' : '📍'}</button>
+        <button class="btn btn-secondary btn-sm" onclick="openTutorialModal('${t._id}')">✎ Edit</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteTutorial('${t._id}')">🗑</button>
+      </div>
+    </div>`;
+  }).join('');
+
+  wireTutorialDragAndDrop();
+}
+
+function wireTutorialDragAndDrop() {
+  const items = document.querySelectorAll('#tutorialList .banner-admin-item');
+  items.forEach(el => {
+    el.addEventListener('dragstart', () => {
+      _tutDragFromId = el.dataset.id;
+      el.classList.add('dragging');
+    });
+    el.addEventListener('dragend', () => {
+      el.classList.remove('dragging');
+      items.forEach(x => x.classList.remove('drag-over'));
+    });
+    el.addEventListener('dragover', (e) => {
+      e.preventDefault();
+      if (el.dataset.id !== _tutDragFromId) el.classList.add('drag-over');
+    });
+    el.addEventListener('dragleave', () => el.classList.remove('drag-over'));
+    el.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      el.classList.remove('drag-over');
+      const toId = el.dataset.id;
+      if (!_tutDragFromId || _tutDragFromId === toId) return;
+      const fromIdx = _tutorialList.findIndex(t => t._id === _tutDragFromId);
+      const toIdx = _tutorialList.findIndex(t => t._id === toId);
+      if (fromIdx < 0 || toIdx < 0) return;
+      const [moved] = _tutorialList.splice(fromIdx, 1);
+      _tutorialList.splice(toIdx, 0, moved);
+      drawTutorialAdminList(); // optimistic UI
+      try {
+        await api('/api/admin/tutorials/reorder', { method: 'PUT', body: JSON.stringify({ order: _tutorialList.map(t => t._id) }) });
+        showToast('✅ Urutan tutorial diperbarui.', 'success');
+      } catch (err) {
+        showToast('Gagal ubah urutan: ' + err.message, 'error');
+        renderTutorialAdmin();
+      }
+    });
+  });
+}
+
+async function moveTutorial(id, dir) {
+  const idx = _tutorialList.findIndex(t => t._id === id);
+  const swapIdx = idx + dir;
+  if (idx < 0 || swapIdx < 0 || swapIdx >= _tutorialList.length) return;
+  [_tutorialList[idx], _tutorialList[swapIdx]] = [_tutorialList[swapIdx], _tutorialList[idx]];
+  drawTutorialAdminList(); // optimistic UI
+  try {
+    await api('/api/admin/tutorials/reorder', { method: 'PUT', body: JSON.stringify({ order: _tutorialList.map(t => t._id) }) });
+    showToast('✅ Urutan tutorial diperbarui.', 'success');
+  } catch (e) {
+    showToast('Gagal ubah urutan: ' + e.message, 'error');
+    renderTutorialAdmin();
+  }
+}
+
+async function toggleTutorialPublish(id, isChecked) {
+  try {
+    await api(`/api/admin/tutorials/${id}`, { method: 'PUT', body: JSON.stringify({ status: isChecked ? 'published' : 'draft' }) });
+    showToast(isChecked ? '✅ Tutorial dipublish.' : '✅ Tutorial dijadikan draft.', 'success');
+    const t = _tutorialList.find(x => x._id === id);
+    if (t) t.status = isChecked ? 'published' : 'draft';
+    renderTutorialStats();
+    drawTutorialAdminList();
+  } catch (e) {
+    showToast('Gagal: ' + e.message, 'error');
+    renderTutorialAdmin();
+  }
+}
+
+async function toggleTutorialPin(id, pinned) {
+  try {
+    await api(`/api/admin/tutorials/${id}`, { method: 'PUT', body: JSON.stringify({ isPinned: pinned }) });
+    showToast(pinned ? '📌 Tutorial dipin.' : 'Tutorial dilepas dari pin.', 'success');
+    renderTutorialAdmin();
+  } catch (e) {
+    showToast('Gagal: ' + e.message, 'error');
+  }
+}
+
+async function deleteTutorial(id) {
+  const t = _tutorialList.find(x => x._id === id);
+  if (!confirm(`Yakin mau hapus tutorial "${t?.title || ''}"? Tindakan ini tidak bisa dibatalkan.`)) return;
+  try {
+    await api(`/api/admin/tutorials/${id}`, { method: 'DELETE' });
+    showToast('✅ Tutorial dihapus.', 'success');
+    renderTutorialAdmin();
+  } catch (e) {
+    showToast('Gagal hapus tutorial: ' + e.message, 'error');
+  }
+}
+window.moveTutorial = moveTutorial;
+window.toggleTutorialPublish = toggleTutorialPublish;
+window.toggleTutorialPin = toggleTutorialPin;
+window.deleteTutorial = deleteTutorial;
+window.openTutorialModal = null; // di-set ulang di bawah setelah didefinisikan
+
+// ── Quill Rich Text Editor (lazy init) ──
+function ensureTutQuill() {
+  if (_tutQuill || typeof Quill === 'undefined') return _tutQuill;
+  _tutQuill = new Quill('#tutQuillEditor', {
+    theme: 'snow',
+    placeholder: 'Tulis isi tutorial di sini...',
+    modules: {
+      toolbar: {
+        container: [
+          [{ header: [1, 2, 3, false] }],
+          ['bold', 'italic', 'underline', 'strike'],
+          ['blockquote', 'code-block'],
+          [{ list: 'ordered' }, { list: 'bullet' }],
+          ['link', 'image'],
+          ['clean']
+        ],
+        handlers: { image: tutQuillImageHandler }
+      }
+    }
+  });
+  return _tutQuill;
+}
+
+function tutQuillImageHandler() {
+  const input = document.createElement('input');
+  input.setAttribute('type', 'file');
+  input.setAttribute('accept', 'image/png,image/jpeg,image/webp,image/gif');
+  input.onchange = () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    if (file.size > 3 * 1024 * 1024) {
+      showToast('Ukuran gambar maksimal 3MB.', 'error');
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const range = _tutQuill.getSelection(true);
+      _tutQuill.insertEmbed(range ? range.index : 0, 'image', reader.result, 'user');
+      _tutQuill.setSelection((range ? range.index : 0) + 1);
+    };
+    reader.readAsDataURL(file);
+  };
+  input.click();
+}
+
+// ── Thumbnail upload ──
+function clearTutThumbnail() {
+  _tutThumbPayload = { imageUrl: '', imageData: '' };
+  document.getElementById('tutThumbUrl').value = '';
+  document.getElementById('tutThumbFile').value = '';
+  document.getElementById('tutThumbPreviewWrap').style.display = 'none';
+}
+document.getElementById('tutThumbFile')?.addEventListener('change', (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  if (file.size > 3 * 1024 * 1024) {
+    showToast('Ukuran gambar maksimal 3MB.', 'error');
+    e.target.value = '';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    _tutThumbPayload = { imageUrl: '', imageData: reader.result };
+    document.getElementById('tutThumbUrl').value = '';
+    showTutThumbPreview(reader.result);
+  };
+  reader.readAsDataURL(file);
+});
+document.getElementById('tutThumbUrl')?.addEventListener('input', (e) => {
+  const url = e.target.value.trim();
+  if (url) {
+    _tutThumbPayload = { imageUrl: url, imageData: '' };
+    document.getElementById('tutThumbFile').value = '';
+    showTutThumbPreview(url);
+  } else if (!document.getElementById('tutThumbFile').files?.length) {
+    clearTutThumbnail();
+  }
+});
+function showTutThumbPreview(src) {
+  document.getElementById('tutThumbPreviewImg').src = src;
+  document.getElementById('tutThumbPreviewWrap').style.display = 'block';
+}
+window.clearTutThumbnail = clearTutThumbnail;
+
+// ── File download upload ──
+function clearTutFile() {
+  _tutFilePayload = { fileUrl: '', fileData: '', fileName: '', removeFile: true };
+  document.getElementById('tutFileUrl').value = '';
+  document.getElementById('tutFileInput').value = '';
+  document.getElementById('tutFileStatus').style.display = 'none';
+}
+document.getElementById('tutFileInput')?.addEventListener('change', (e) => {
+  const file = e.target.files?.[0];
+  if (!file) return;
+  if (file.size > 9 * 1024 * 1024) {
+    showToast('Ukuran file maksimal 9MB.', 'error');
+    e.target.value = '';
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    _tutFilePayload = { fileUrl: '', fileData: reader.result, fileName: file.name };
+    document.getElementById('tutFileUrl').value = '';
+    showTutFileStatus(file.name);
+  };
+  reader.readAsDataURL(file);
+});
+document.getElementById('tutFileUrl')?.addEventListener('input', (e) => {
+  const url = e.target.value.trim();
+  if (url) {
+    _tutFilePayload = { fileUrl: url, fileData: '', fileName: url.split('/').pop() };
+    document.getElementById('tutFileInput').value = '';
+    showTutFileStatus(url.split('/').pop());
+  } else if (!document.getElementById('tutFileInput').files?.length) {
+    clearTutFile();
+  }
+});
+function showTutFileStatus(name) {
+  document.getElementById('tutFileStatusName').textContent = name || 'File';
+  document.getElementById('tutFileStatus').style.display = 'block';
+}
+window.clearTutFile = clearTutFile;
+
+// ── Segmented: Status Publish/Draft ──
+const tutStatusSegmentEl = document.getElementById('tutStatusSegment');
+const tutStatusHiddenEl = document.getElementById('tutStatus');
+tutStatusSegmentEl?.querySelectorAll('.segmented-opt').forEach(btn => {
+  btn.addEventListener('click', () => setSegmentValue(tutStatusSegmentEl, tutStatusHiddenEl, 'status', btn.dataset.status));
+});
+
+// ── Buka/Tutup modal Tambah/Edit Tutorial ──
+function openTutorialModal(id) {
+  _tutEditId = id || null;
+  const t = id ? _tutorialList.find(x => x._id === id) : null;
+
+  document.getElementById('tutorialModalTitle').textContent = t ? 'Edit Tutorial' : 'Tambah Tutorial';
+  document.getElementById('tutTitle').value = t?.title || '';
+  document.getElementById('tutSubtitle').value = t?.subtitle || '';
+  document.getElementById('tutExcerpt').value = t?.excerpt || '';
+  document.getElementById('tutOrder').value = t?.order ?? '';
+  document.getElementById('tutIsPinned').checked = t ? !!t.isPinned : false;
+  document.getElementById('tutYoutubeUrl').value = t?.youtubeUrl || '';
+
+  renderTutCategorySelect(t?.categorySlug);
+  setSegmentValue(tutStatusSegmentEl, tutStatusHiddenEl, 'status', t?.status === 'draft' ? 'draft' : 'published');
+
+  // Thumbnail
+  _tutThumbPayload = { imageUrl: t?.thumbnailUrl || '', imageData: t?.thumbnailData || '' };
+  document.getElementById('tutThumbUrl').value = t?.thumbnailUrl || '';
+  document.getElementById('tutThumbFile').value = '';
+  if (t?.thumbnailData || t?.thumbnailUrl) showTutThumbPreview(t.thumbnailData || t.thumbnailUrl);
+  else document.getElementById('tutThumbPreviewWrap').style.display = 'none';
+
+  // File download
+  _tutFilePayload = { fileUrl: t?.fileUrl || '', fileData: t?.fileData || '', fileName: t?.fileName || '' };
+  document.getElementById('tutFileUrl').value = t?.fileUrl || '';
+  document.getElementById('tutFileInput').value = '';
+  if (t?.fileUrl || t?.fileData) showTutFileStatus(t.fileName); else document.getElementById('tutFileStatus').style.display = 'none';
+
+  // Isi tutorial (Quill)
+  ensureTutQuill();
+  if (_tutQuill) _tutQuill.root.innerHTML = t?.content || '';
+
+  document.getElementById('tutorialModalBackdrop').style.display = 'flex';
+}
+window.openTutorialModal = openTutorialModal;
+
+function closeTutorialModal() {
+  document.getElementById('tutorialModalBackdrop').style.display = 'none';
+  _tutEditId = null;
+}
+window.closeTutorialModal = closeTutorialModal;
+
+document.getElementById('btnAddTutorial')?.addEventListener('click', () => openTutorialModal(null));
+
+document.getElementById('btnSaveTutorial')?.addEventListener('click', async () => {
+  const btn = document.getElementById('btnSaveTutorial');
+  const categorySlug = document.getElementById('tutCategory').value;
+  const payload = {
+    title: document.getElementById('tutTitle').value.trim(),
+    subtitle: document.getElementById('tutSubtitle').value.trim(),
+    excerpt: document.getElementById('tutExcerpt').value.trim(),
+    content: _tutQuill ? _tutQuill.root.innerHTML : '',
+    categorySlug,
+    youtubeUrl: document.getElementById('tutYoutubeUrl').value.trim(),
+    status: document.getElementById('tutStatus').value,
+    isPinned: document.getElementById('tutIsPinned').checked,
+    ...( _tutThumbPayload.imageData ? { imageData: _tutThumbPayload.imageData } : { imageUrl: _tutThumbPayload.imageUrl } ),
+  };
+  const order = document.getElementById('tutOrder').value;
+  if (order !== '') payload.order = Number(order);
+
+  if (_tutFilePayload.removeFile) {
+    payload.removeFile = true;
+  } else if (_tutFilePayload.fileData) {
+    payload.fileData = _tutFilePayload.fileData;
+    payload.fileName = _tutFilePayload.fileName;
+  } else if (_tutFilePayload.fileUrl) {
+    payload.fileUrl = _tutFilePayload.fileUrl;
+    payload.fileName = _tutFilePayload.fileName;
+  }
+
+  if (!payload.title) { showToast('Judul tutorial wajib diisi.', 'error'); return; }
+  if (!payload.categorySlug) { showToast('Kategori wajib dipilih.', 'error'); return; }
+
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = 'Menyimpan...';
+  try {
+    if (_tutEditId) {
+      await api(`/api/admin/tutorials/${_tutEditId}`, { method: 'PUT', body: JSON.stringify(payload) });
+      showToast('✅ Tutorial diperbarui.', 'success');
+    } else {
+      await api('/api/admin/tutorials', { method: 'POST', body: JSON.stringify(payload) });
+      showToast('✅ Tutorial ditambahkan.', 'success');
+    }
+    closeTutorialModal();
+    renderTutorialAdmin();
+  } catch (e) {
+    showToast('Gagal menyimpan tutorial: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+});
+
+// ── Preview ──
+function tutToYoutubeEmbedAdmin(url) {
+  if (!url) return null;
+  const raw = String(url).trim();
+  let id = null;
+  let m = /youtu\.be\/([a-zA-Z0-9_-]{6,})/.exec(raw); if (m) id = m[1];
+  if (!id) { m = /[?&]v=([a-zA-Z0-9_-]{6,})/.exec(raw); if (m) id = m[1]; }
+  if (!id) { m = /youtube\.com\/embed\/([a-zA-Z0-9_-]{6,})/.exec(raw); if (m) id = m[1]; }
+  if (!id) return null;
+  return `https://www.youtube.com/embed/${id}`;
+}
+
+document.getElementById('btnPreviewTutorial')?.addEventListener('click', () => {
+  const title = document.getElementById('tutTitle').value.trim() || '(Belum ada judul)';
+  const subtitle = document.getElementById('tutSubtitle').value.trim();
+  const category = tutCategoryNameAdmin(document.getElementById('tutCategory').value);
+  const content = _tutQuill ? _tutQuill.root.innerHTML : '';
+  const youtubeEmbed = tutToYoutubeEmbedAdmin(document.getElementById('tutYoutubeUrl').value.trim());
+  const img = _tutThumbPayload.imageData || _tutThumbPayload.imageUrl;
+  const hasFile = !!(_tutFilePayload.fileData || _tutFilePayload.fileUrl) && !_tutFilePayload.removeFile;
+
+  const body = document.getElementById('tutPreviewBody');
+  body.innerHTML = `
+    ${img ? `<div class="tp-cover" style="background-image:url('${img}');"></div>` : ''}
+    <div class="tp-meta"><span>${escapeHtml(category)}</span><span>🗓️ Hari ini</span></div>
+    <div class="tp-title">${escapeHtml(title)}</div>
+    ${subtitle ? `<div class="tp-subtitle">${escapeHtml(subtitle)}</div>` : ''}
+    ${youtubeEmbed ? `<div class="tp-video"><iframe src="${youtubeEmbed}" frameborder="0" allowfullscreen></iframe></div>` : ''}
+    ${content || '<p style="color:var(--text-faint);">Belum ada isi.</p>'}
+    ${hasFile ? `<div style="margin-top:16px;"><button class="btn btn-primary" disabled>⬇️ Download ${escapeHtml(_tutFilePayload.fileName || 'File')}</button></div>` : ''}
+  `;
+  document.getElementById('tutPreviewModalBackdrop').style.display = 'flex';
+});
+function closeTutPreviewModal() {
+  document.getElementById('tutPreviewModalBackdrop').style.display = 'none';
+}
+window.closeTutPreviewModal = closeTutPreviewModal;
+window.closeTutCategoryModal = closeTutCategoryModal;
+window.openTutCategoryModal = openTutCategoryModal;
+
+// ══════════════════════════════════════════════════════════════════════════
+// APP VERSION — Auto Update Launcher (Admin Web)
+// ══════════════════════════════════════════════════════════════════════════
+let _appVersionList = [];
+let _avEditId = null;
+
+async function renderAppVersionAdmin() {
+  const wrap = document.getElementById('appVersionList');
+  wrap.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-faint);font-size:12.5px;">Memuat riwayat rilis...</div>`;
+  try {
+    _appVersionList = await api('/api/admin/app-versions');
+    renderAppVersionStats();
+    drawAppVersionList();
+  } catch (e) {
+    wrap.innerHTML = `<div style="padding:24px;text-align:center;color:var(--red);font-size:12.5px;">Gagal memuat: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function avCompareVersions(a, b) {
+  const pa = String(a || '0').replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+  const pb = String(b || '0').replace(/^v/i, '').split('.').map(n => parseInt(n, 10) || 0);
+  const len = Math.max(pa.length, pb.length);
+  for (let i = 0; i < len; i++) {
+    const x = pa[i] || 0, y = pb[i] || 0;
+    if (x !== y) return x - y;
+  }
+  return 0;
+}
+
+function avCurrentLiveVersion() {
+  const activeOnes = _appVersionList.filter(v => v.isActive);
+  if (!activeOnes.length) return null;
+  return activeOnes.slice().sort((a, b) => avCompareVersions(b.version, a.version))[0];
+}
+
+function fmtBytesAdmin(bytes) {
+  if (!bytes || bytes <= 0) return '—';
+  const units = ['B', 'KB', 'MB', 'GB'];
+  let i = 0, val = bytes;
+  while (val >= 1024 && i < units.length - 1) { val /= 1024; i++; }
+  return `${val.toFixed(val >= 10 || i === 0 ? 0 : 1)} ${units[i]}`;
+}
+
+function renderAppVersionStats() {
+  const wrap = document.getElementById('appVersionStats');
+  if (!wrap) return;
+  const live = avCurrentLiveVersion();
+  const total = _appVersionList.length;
+  const requiredCount = _appVersionList.filter(v => v.isRequired && v.isActive).length;
+  wrap.innerHTML = `
+    <div class="stat-card"><div class="stat-card-label">Versi Aktif Saat Ini</div><div class="stat-card-value" style="color:var(--violet);">${live ? 'v' + escapeHtml(live.version) : '—'}</div></div>
+    <div class="stat-card"><div class="stat-card-label">Total Rilis</div><div class="stat-card-value">${total}</div></div>
+    <div class="stat-card"><div class="stat-card-label">Force Update Aktif</div><div class="stat-card-value" style="color:${requiredCount ? 'var(--red)' : 'var(--text-faint)'};">${requiredCount ? 'Ya' : 'Tidak'}</div></div>
+  `;
+}
+
+function drawAppVersionList() {
+  const wrap = document.getElementById('appVersionList');
+  if (!_appVersionList.length) {
+    wrap.innerHTML = `
+      <div style="padding:40px 20px;text-align:center;color:var(--text-faint);">
+        <div style="font-size:32px;margin-bottom:8px;">🚀</div>
+        <div style="font-size:13px;">Belum ada rilis. Klik "Rilis Versi Baru" untuk membuat yang pertama.</div>
+      </div>`;
+    return;
+  }
+
+  const live = avCurrentLiveVersion();
+  const sorted = _appVersionList.slice().sort((a, b) => avCompareVersions(b.version, a.version));
+
+  wrap.innerHTML = sorted.map((v) => {
+    const isLive = live && live._id === v._id;
+    return `
+    <div class="banner-admin-item" style="display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border);">
+      <div class="banner-thumb" style="background:linear-gradient(135deg,#a78bfa,#7b5cff);display:flex;align-items:center;justify-content:center;">
+        <span style="font-size:18px;font-weight:800;color:#fff;">v${escapeHtml(v.version.replace(/^v/i, ''))}</span>
+      </div>
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:700;font-size:13.5px;color:var(--text-main);display:flex;align-items:center;gap:8px;flex-wrap:wrap;">
+          v${escapeHtml(v.version)}
+          ${isLive ? '<span class="tag gold" style="font-size:10px;">🟢 Live</span>' : ''}
+          ${v.isRequired ? '<span class="tag" style="font-size:10px;background:rgba(255,107,129,.15);color:var(--red);">⚠️ Force Update</span>' : ''}
+        </div>
+        <div style="font-size:11.5px;color:var(--text-faint);margin-top:2px;">
+          ${v.changelog?.length ? escapeHtml(v.changelog.slice(0, 2).join(' • ')) : 'Tidak ada changelog'}
+        </div>
+        <div style="margin-top:4px;display:flex;gap:10px;flex-wrap:wrap;font-size:11px;color:var(--text-faint);">
+          <span>🗓️ ${v.releaseDate ? new Date(v.releaseDate).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</span>
+          <span>💾 ${fmtBytesAdmin(v.fileSize)}</span>
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+        <label class="switch" title="Aktif/Nonaktif">
+          <input type="checkbox" ${v.isActive ? 'checked' : ''} onchange="toggleAppVersionActive('${v._id}', this.checked)">
+          <span class="switch-slider"></span>
+        </label>
+        <button class="btn btn-secondary btn-sm" onclick="openAppVersionModal('${v._id}')">✎ Edit</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteAppVersion('${v._id}')">🗑</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function toggleAppVersionActive(id, isActive) {
+  try {
+    await api(`/api/admin/app-versions/${id}`, { method: 'PUT', body: JSON.stringify({ isActive }) });
+    showToast(isActive ? '✅ Rilis diaktifkan.' : '✅ Rilis dinonaktifkan.', 'success');
+    renderAppVersionAdmin();
+  } catch (e) {
+    showToast('Gagal: ' + e.message, 'error');
+    renderAppVersionAdmin();
+  }
+}
+
+async function deleteAppVersion(id) {
+  const v = _appVersionList.find(x => x._id === id);
+  if (!confirm(`Hapus rilis versi "${v?.version || ''}"? Tindakan ini tidak bisa dibatalkan.`)) return;
+  try {
+    await api(`/api/admin/app-versions/${id}`, { method: 'DELETE' });
+    showToast('✅ Rilis dihapus.', 'success');
+    renderAppVersionAdmin();
+  } catch (e) {
+    showToast('Gagal hapus: ' + e.message, 'error');
+  }
+}
+window.toggleAppVersionActive = toggleAppVersionActive;
+window.deleteAppVersion = deleteAppVersion;
+
+function openAppVersionModal(id) {
+  _avEditId = id || null;
+  const v = id ? _appVersionList.find(x => x._id === id) : null;
+
+  document.getElementById('appVersionModalTitle').textContent = v ? 'Edit Versi' : 'Rilis Versi Baru';
+  document.getElementById('avVersion').value = v?.version || '';
+  document.getElementById('avDownloadUrl').value = v?.downloadUrl || '';
+  document.getElementById('avFileSize').value = v?.fileSize || '';
+  document.getElementById('avChecksum').value = v?.checksum || '';
+  document.getElementById('avChangelog').value = (v?.changelog || []).join('\n');
+  document.getElementById('avIsRequired').checked = v ? !!v.isRequired : false;
+  document.getElementById('avIsActive').checked = v ? !!v.isActive : true;
+
+  const dateVal = v?.releaseDate ? new Date(v.releaseDate) : new Date();
+  const pad = n => String(n).padStart(2, '0');
+  document.getElementById('avReleaseDate').value = `${dateVal.getFullYear()}-${pad(dateVal.getMonth() + 1)}-${pad(dateVal.getDate())}`;
+
+  document.getElementById('appVersionModalBackdrop').style.display = 'flex';
+}
+window.openAppVersionModal = openAppVersionModal;
+
+function closeAppVersionModal() {
+  document.getElementById('appVersionModalBackdrop').style.display = 'none';
+  _avEditId = null;
+}
+window.closeAppVersionModal = closeAppVersionModal;
+
+document.getElementById('btnAddAppVersion')?.addEventListener('click', () => openAppVersionModal(null));
+
+document.getElementById('btnSaveAppVersion')?.addEventListener('click', async () => {
+  const btn = document.getElementById('btnSaveAppVersion');
+  const payload = {
+    version: document.getElementById('avVersion').value.trim(),
+    downloadUrl: document.getElementById('avDownloadUrl').value.trim(),
+    checksum: document.getElementById('avChecksum').value.trim(),
+    changelog: document.getElementById('avChangelog').value,
+    isRequired: document.getElementById('avIsRequired').checked,
+    isActive: document.getElementById('avIsActive').checked,
+    releaseDate: document.getElementById('avReleaseDate').value || undefined,
+  };
+  const fileSize = document.getElementById('avFileSize').value;
+  if (fileSize) payload.fileSize = Number(fileSize);
+
+  if (!payload.version) { showToast('Nomor versi wajib diisi.', 'error'); return; }
+  if (!payload.downloadUrl) { showToast('Link download wajib diisi.', 'error'); return; }
+
+  btn.disabled = true;
+  const originalText = btn.textContent;
+  btn.textContent = 'Menyimpan...';
+  try {
+    if (_avEditId) {
+      await api(`/api/admin/app-versions/${_avEditId}`, { method: 'PUT', body: JSON.stringify(payload) });
+      showToast('✅ Versi diperbarui.', 'success');
+    } else {
+      await api('/api/admin/app-versions', { method: 'POST', body: JSON.stringify(payload) });
+      showToast('✅ Versi baru dirilis.', 'success');
+    }
+    closeAppVersionModal();
+    renderAppVersionAdmin();
+  } catch (e) {
+    showToast('Gagal menyimpan: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+});

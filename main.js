@@ -6,7 +6,7 @@
 const { app, BrowserWindow, ipcMain, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { execSync, exec } = require('child_process');
+const { execSync, exec, spawn } = require('child_process');
 const http = require('http');
 const https = require('https');
 // extractZip — implementasi native tanpa dependency external
@@ -77,32 +77,6 @@ function parseZip(buf) {
 
 let mainWindow;
 
-// CATATAN HISTORI DEBUG (biar gak keulang lagi kalau ada yang coba fix ini lagi):
-// 1) file:// origin gak punya Referer sama sekali -> YouTube tolak (Error 153).
-// 2) Sempat coba paksa Referer="https://www.youtube.com/" -> malah Error 152,
-//    soalnya "asal video dari YouTube sendiri" itu kontradiktif buat YouTube.
-// 3) Sempat coba load app lewat local HTTP server (127.0.0.1) supaya dapat
-//    origin HTTP asli -> video YouTube JADI JALAN, TAPI ini malah bikin semua
-//    fetch app ke backend sendiri (SERVER_URL) gagal dengan
-//    ERR_NETWORK_ACCESS_DENIED (Windows ngeblok network access dari process
-//    yang baru buka local listening server kayak gini). Jadi di-revert.
-// FINAL: tetap file:// untuk app utama (biar API ke backend tetap normal),
-// dan Referer/origin video di-set ke domain PRODUKSI KITA SENDIRI
-// (OWN_SERVER_HOST / SERVER_URL di app.js) — bukan file://, bukan juga
-// youtube.com — supaya YouTube lihat origin yang valid & make sense (situs
-// pihak ketiga yang nge-embed videonya), tanpa kontradiksi dan tanpa ganti
-// cara app di-load sama sekali.
-
-// YouTube embed player menolak User-Agent bawaan Electron (mengandung string
-// "Electron/x.x.x") dan langsung balas Error 153 "Video player configuration
-// error" — ini kejadian di SEMUA embed YouTube di app Electron manapun yang
-// belum di-override UA-nya, terlepas dari pakai <iframe> atau <webview>, dan
-// terlepas dari video itu sendiri bebas restriction atau tidak.
-// Fix: samarkan UA jadi Chrome biasa supaya YouTube menganggapnya browser normal.
-const SPOOFED_USER_AGENT =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
-app.userAgentFallback = SPOOFED_USER_AGENT;
-
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1180,
@@ -114,28 +88,12 @@ function createWindow() {
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
-      nodeIntegration: false,
-      // Video tutorial (YouTube/TikTok) di-embed pakai <webview>, bukan <iframe>.
-      webviewTag: true
+      nodeIntegration: false
     }
   });
 
   mainWindow.loadFile(path.join(__dirname, 'app', 'index.html'));
-
-  // Pastikan webview (video tutorial) juga pakai UA yang sudah disamarkan,
-  // bukan cuma window utama — guest page webview kadang punya webContents
-  // sendiri yang gak otomatis kebawa app.userAgentFallback di semua versi Electron.
-  // Catatan: UA utama sekarang di-set langsung lewat atribut `useragent` pada
-  // tag <webview> di app/index.html supaya berlaku SEBELUM navigasi pertama ke
-  // YouTube/TikTok (menghindari race condition — did-attach-webview kadang
-  // baru jalan setelah request pertama sudah terlanjur terkirim pakai UA lama).
-  // Baris setUserAgent tetap dipertahankan sebagai jaring pengaman untuk
-  // navigasi berikutnya di dalam webview yang sama (misal ganti video).
-  mainWindow.webContents.on('did-attach-webview', (event, webContents) => {
-    webContents.setUserAgent(SPOOFED_USER_AGENT);
-  });
 }
-
 
 app.whenReady().then(() => {
   createWindow();
@@ -541,6 +499,132 @@ ipcMain.handle('restart-steam', (event, steamPath) => {
     return { success: true };
   } catch (e) { return { success: false, error: e.message }; }
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// AUTO UPDATE LAUNCHER
+// Versi launcher yang berjalan (dari package.json, di-inject electron-builder
+// saat build production) dibandingkan dengan versi terbaru dari server (dicek
+// oleh renderer lewat /api/app-version — lihat app/app.js). Kalau ada versi
+// lebih baru & aktif, renderer minta main process ini yang urus proses:
+// download (dengan progress) → verifikasi → tutup app → jalankan installer
+// silent (NSIS /S) → buka lagi versi baru → app lama otomatis berhenti.
+// ══════════════════════════════════════════════════════════════════════════
+let _updateInProgress = false;
+
+ipcMain.handle('get-app-version', () => app.getVersion());
+
+ipcMain.handle('update:start', async (event, { downloadUrl, expectedSize, checksum, version } = {}) => {
+  const send = (channel, data) => mainWindow?.webContents.send(channel, data);
+
+  if (_updateInProgress) return { success: false, error: 'Proses update lain sedang berjalan.' };
+  if (!downloadUrl) return { success: false, error: 'Link download update tidak tersedia.' };
+  _updateInProgress = true;
+
+  const tempDir = app.getPath('temp');
+  let ext = '.exe';
+  try { ext = path.extname(new URL(downloadUrl).pathname) || '.exe'; } catch (e) {}
+  const installerPath = path.join(tempDir, `31Tools_Update_${(version || 'latest').replace(/[^\w.-]/g, '_')}${ext}`);
+
+  try {
+    logUpdateEvent('update_check', `Mulai download update versi ${version || '-'} dari ${downloadUrl}`);
+    send('update:status', { stage: 'downloading', message: 'Mengunduh file update...' });
+
+    await downloadFileWithProgress(downloadUrl, installerPath, (downloaded, total) => {
+      send('update:progress', {
+        downloaded, total,
+        percent: total ? Math.round((downloaded / total) * 100) : 0
+      });
+    });
+
+    send('update:status', { stage: 'verifying', message: 'Memverifikasi file update...' });
+    const stat = fs.statSync(installerPath);
+    if (!stat.size || stat.size < 10 * 1024) {
+      throw new Error('File update tidak valid (ukuran terlalu kecil / kemungkinan rusak).');
+    }
+    if (expectedSize && expectedSize > 0) {
+      const diffRatio = Math.abs(stat.size - expectedSize) / expectedSize;
+      if (diffRatio > 0.05) {
+        throw new Error('Ukuran file update tidak sesuai dengan yang diharapkan — kemungkinan file rusak atau belum lengkap.');
+      }
+    }
+    if (checksum) {
+      const crypto = require('crypto');
+      const hash = crypto.createHash('sha256').update(fs.readFileSync(installerPath)).digest('hex');
+      if (hash.toLowerCase() !== String(checksum).toLowerCase()) {
+        throw new Error('Checksum SHA-256 file update tidak cocok — file mungkin rusak atau telah dimodifikasi.');
+      }
+    }
+
+    logUpdateEvent('update_download', `File update versi ${version || '-'} berhasil diunduh & terverifikasi (${stat.size} bytes).`);
+    send('update:status', { stage: 'installing', message: 'Menutup launcher & memasang update...' });
+
+    scheduleSilentInstallAndRelaunch(installerPath);
+
+    // Beri renderer sedikit waktu untuk menampilkan status "installing" sebelum app benar-benar ditutup.
+    setTimeout(() => {
+      logUpdateEvent('update_install', `Menutup launcher untuk memasang versi ${version || '-'}.`);
+      app.quit();
+    }, 1200);
+
+    return { success: true };
+  } catch (e) {
+    _updateInProgress = false;
+    try { fs.unlinkSync(installerPath); } catch (e2) {}
+    logUpdateEvent('update_failed', `Update ke versi ${version || '-'} gagal: ${e.message}`);
+    send('update:status', { stage: 'error', message: e.message });
+    return { success: false, error: e.message };
+  }
+});
+
+// Jadwalkan installer silent (NSIS `/S`) lewat helper .bat terpisah supaya proses
+// instalasi & relaunch tetap berjalan WALAUPUN app ini sendiri sudah app.quit().
+// Helper .bat: tunggu app lama benar-benar tertutup → jalankan installer silent →
+// tunggu installer selesai → buka lagi exe (di lokasi yang sama) → hapus diri sendiri.
+function scheduleSilentInstallAndRelaunch(installerPath) {
+  try {
+    const exePath = process.execPath; // exe launcher yang sedang berjalan sekarang
+    const helperPath = path.join(app.getPath('temp'), `31tools_update_helper_${Date.now()}.bat`);
+    const batScript = [
+      '@echo off',
+      'timeout /t 2 /nobreak >nul',                                  // tunggu app lama benar2 tertutup (lepas file lock)
+      `"${installerPath}" /S`,                                       // install silent, tanpa perlu klik apa pun
+      'timeout /t 3 /nobreak >nul',                                  // beri jeda instalasi selesai menulis file
+      `start "" "${exePath}"`,                                       // buka lagi launcher versi terbaru
+      `del "${installerPath}" >nul 2>nul`,
+      `del "%~f0" >nul 2>nul`                                        // helper .bat hapus dirinya sendiri
+    ].join('\r\n');
+    fs.writeFileSync(helperPath, batScript, 'utf8');
+
+    const child = spawn('cmd.exe', ['/c', helperPath], {
+      detached: true,
+      stdio: 'ignore',
+      windowsHide: true
+    });
+    child.unref();
+  } catch (e) {
+    logUpdateEvent('update_failed', `Gagal menjadwalkan instalasi otomatis: ${e.message}`);
+  }
+}
+
+// Catat aktivitas update ke server (best-effort — kalau server/koneksi lagi bermasalah,
+// gagal diam-diam, TIDAK boleh mengganggu proses update itu sendiri).
+function logUpdateEvent(type, description) {
+  try {
+    const https2 = require('https');
+    const urlMod = require('url');
+    const SERVER_LOG_URL = 'https://31tools-v2-production.up.railway.app/api/app-version/log';
+    const body = JSON.stringify({ type, description, appVersion: app.getVersion() });
+    const parsed = urlMod.parse(SERVER_LOG_URL);
+    const req = https2.request({
+      hostname: parsed.hostname, path: parsed.path, method: 'POST', port: 443,
+      headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) },
+      timeout: 5000
+    }, () => {});
+    req.on('error', () => {});
+    req.write(body);
+    req.end();
+  } catch (e) {}
+}
 
 // ══════════════════════════════════════════════════════════════════════════
 // DEVICE LOCK — kumpulkan info hardware buat dijadikan fingerprint perangkat.

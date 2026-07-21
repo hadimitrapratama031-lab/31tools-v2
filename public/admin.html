@@ -16,9 +16,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/css/css.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/htmlmixed/htmlmixed.min.js"></script>
-<!-- Quill — rich text editor dipakai khusus buat "Isi Tutorial" di modal Kelola
-     Tutorial. Toolbar sengaja tidak menyertakan tombol image/video — gambar &
-     video tutorial punya kolom upload/link sendiri (lihat modal Tutorial). -->
+<!-- Quill — Rich Text Editor dipakai khusus di modal "Tambah/Edit Tutorial" (Kelola Tutorial). -->
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/quill/1.3.7/quill.snow.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/quill/1.3.7/quill.min.js"></script>
 </head>
@@ -78,9 +76,13 @@
           <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><rect x="3" y="5" width="18" height="14" rx="2"/><path stroke-linecap="round" stroke-linejoin="round" d="M3 9h18M8 5v4"/></svg></span>
           Banner
         </button>
-        <button class="nav-item" data-page="tutorial">
-          <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13M12 6.253C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s4.332.477 5.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg></span>
+        <button class="nav-item" data-page="tutorials">
+          <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.042A8.967 8.967 0 006 3.75c-1.052 0-2.062.18-3 .512v14.25A8.987 8.987 0 016 18c2.305 0 4.408.867 6 2.292m0-14.25a8.966 8.966 0 016-2.292c1.052 0 2.062.18 3 .512v14.25A8.987 8.987 0 0018 18a8.967 8.967 0 00-6 2.292m0-14.25v14.25"/></svg></span>
           Tutorial
+        </button>
+        <button class="nav-item" data-page="appversions">
+          <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 17.25v1.007a3 3 0 01-.879 2.122L7.5 21h9l-.621-.621A3 3 0 0115 18.257V17.25m6-12V15a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 15V5.25m18 0A2.25 2.25 0 0018.75 3H5.25A2.25 2.25 0 003 5.25m18 0V12a2.25 2.25 0 01-2.25 2.25H5.25A2.25 2.25 0 013 12V5.25"/></svg></span>
+          App Version
         </button>
         <button class="nav-item" data-page="leaderboard">
           <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg></span>
@@ -113,10 +115,6 @@
         <button class="nav-item" data-page="paket">
           <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg></span>
           Paket
-        </button>
-        <button class="nav-item" data-page="voucher">
-          <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v3a2 2 0 010 4v3a2 2 0 002 2h2m6-14h2a2 2 0 012 2v3a2 2 0 000 4v3a2 2 0 01-2 2h-2M9 5v14"/></svg></span>
-          Kelola Voucher
         </button>
       </nav>
     </div>
@@ -384,17 +382,18 @@
       </div>
     </section>
 
-    <!-- KELOLA TUTORIAL PAGE -->
-    <section class="page" id="pageTutorial">
+    <!-- TUTORIAL PAGE (Kelola Tutorial — Help Center) -->
+    <section class="page" id="pageTutorials">
       <div class="page-header">
         <div class="page-header-left">
-          <div class="page-header-icon" style="background:rgba(79,172,254,.16);">📘</div>
+          <div class="page-header-icon" style="background:rgba(61,217,245,.16);">📘</div>
           <div>
             <div class="page-header-title">Kelola Tutorial</div>
-            <div class="page-header-desc">Kelola tutorial yang tampil di halaman Tutorial aplikasi — tambah, edit, hapus, dan atur status publish.</div>
+            <div class="page-header-desc">Kelola panduan penggunaan aplikasi — tampil sebagai Help Center di App, update realtime tanpa perlu update launcher.</div>
           </div>
         </div>
-        <div class="page-header-actions" style="margin-left:auto;">
+        <div class="page-header-actions" style="margin-left:auto;display:flex;gap:8px;">
+          <button class="btn btn-secondary" id="btnManageTutCategories">🏷️ Kategori</button>
           <button class="btn btn-primary" id="btnAddTutorial" style="display:flex;align-items:center;gap:6px;">
             <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>
             Tambah Tutorial
@@ -402,18 +401,46 @@
         </div>
       </div>
 
+      <div class="page-stats" id="tutorialStats"></div>
+
       <div class="table-wrap">
         <div class="table-toolbar">
           <div class="table-toolbar-title">📘 Daftar Tutorial</div>
-          <div class="table-search">
-            <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
-            <input type="text" id="tutorialSearchInputAdmin" placeholder="Cari tutorial...">
-          </div>
-          <div class="table-toolbar-filters">
-            <div class="filter-chips" id="tutorialStatusFilter"></div>
+          <input class="form-input" id="tutorialSearchInput" type="text" placeholder="Cari judul tutorial..." style="max-width:220px;margin-left:14px;">
+          <div id="tutorialStatusFilter" class="filter-chips" style="margin-left:10px;"></div>
+          <div class="table-toolbar-filters" style="margin-left:auto;color:var(--text-faint);font-size:12px;">
+            Geser (drag) baris untuk ubah urutan, atau pakai tombol ↑ ↓.
           </div>
         </div>
-        <div id="tutorialAdminList" class="banner-admin-list"></div>
+        <div id="tutorialList" class="banner-admin-list"></div>
+      </div>
+    </section>
+
+    <!-- APP VERSION PAGE (Auto Update Launcher) -->
+    <section class="page" id="pageAppversions">
+      <div class="page-header">
+        <div class="page-header-left">
+          <div class="page-header-icon" style="background:rgba(167,139,250,.16);">🚀</div>
+          <div>
+            <div class="page-header-title">App Version</div>
+            <div class="page-header-desc">Kelola rilis Auto Update Launcher — App mendeteksi &amp; memasang update ini secara otomatis, realtime tanpa restart.</div>
+          </div>
+        </div>
+        <div class="page-header-actions" style="margin-left:auto;">
+          <button class="btn btn-primary" id="btnAddAppVersion" style="display:flex;align-items:center;gap:6px;">
+            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>
+            Rilis Versi Baru
+          </button>
+        </div>
+      </div>
+
+      <div class="page-stats" id="appVersionStats"></div>
+
+      <div class="table-wrap">
+        <div class="table-toolbar">
+          <div class="table-toolbar-title">🚀 Riwayat Rilis Versi</div>
+        </div>
+        <div id="appVersionList" class="banner-admin-list"></div>
       </div>
     </section>
 
@@ -907,29 +934,6 @@
         </div>
       </div>
     </section>
-
-    <!-- VOUCHER PAGE -->
-    <section class="page" id="pageVoucher">
-      <div class="page-header">
-        <div class="page-header-left">
-          <div class="page-header-icon" style="background:rgba(167,139,250,.16);">🎟️</div>
-          <div>
-            <div class="page-header-title">Kelola Voucher</div>
-            <div class="page-header-desc">Voucher paket Gold/Platinum yang bisa diklaim user lewat menu "Claim Voucher" di App — role, masa aktif, dan limit user langsung terupdate realtime begitu voucher diklaim.</div>
-          </div>
-        </div>
-        <div class="page-header-right">
-          <button class="btn btn-primary" id="btnAddVoucher">+ Buat Voucher</button>
-        </div>
-      </div>
-
-      <div class="table-wrap">
-        <div class="table-toolbar">
-          <div class="table-toolbar-title">🎟️ Daftar Voucher</div>
-        </div>
-        <table id="tableVoucher"></table>
-      </div>
-    </section>
   </main>
 </div>
 
@@ -1408,158 +1412,6 @@
   </div>
 </div>
 
-<!-- ═══ MODAL: TAMBAH/EDIT TUTORIAL ═══ -->
-<div class="modal-backdrop" id="tutorialModalBackdrop" style="display:none;" onclick="if(event.target===this)closeTutorialModal()">
-  <div class="modal modal-lg">
-    <div class="modal-header">
-      <div>
-        <div class="modal-title" id="tutorialModalTitle">Tambah Tutorial</div>
-        <div class="modal-subtitle">Isi konten tutorial di bawah, lalu pilih Publish atau simpan sebagai Draft.</div>
-      </div>
-      <button class="modal-close" onclick="closeTutorialModal()">✕</button>
-    </div>
-    <div class="modal-body">
-
-      <div class="form-group">
-        <label class="form-label">Judul</label>
-        <input class="form-input" type="text" id="tutorialTitle" placeholder="Contoh: Cara Install Game Lewat 31 Tools">
-      </div>
-
-      <div class="form-row">
-        <div class="form-group" style="flex:1;">
-          <label class="form-label">Kategori <span style="color:var(--text-faint);font-weight:400;">— dipakai buat filter kategori di halaman Tutorial</span></label>
-          <input class="form-input" type="text" id="tutorialCategory" list="tutorialCategoryOptions" placeholder="Contoh: Instalasi, Bypass, FAQ">
-          <datalist id="tutorialCategoryOptions"></datalist>
-        </div>
-        <div class="form-group" style="width:200px;">
-          <label class="form-label">Status</label>
-          <div class="segmented" id="tutorialStatusSegment" data-value="published">
-            <button type="button" class="segmented-opt" data-status="published">✅ Publish</button>
-            <button type="button" class="segmented-opt" data-status="draft">📝 Draft</button>
-          </div>
-          <input type="hidden" id="tutorialStatus" value="published">
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label class="form-label">Deskripsi Singkat <span style="color:var(--text-faint);font-weight:400;">— tampil di kartu daftar tutorial</span></label>
-        <textarea class="form-input" id="tutorialDescription" rows="2" placeholder="Ringkasan singkat isi tutorial ini..."></textarea>
-      </div>
-
-      <div class="modal-divider"><span>Thumbnail</span></div>
-      <div class="form-group">
-        <label class="form-label">Upload Thumbnail <span style="color:var(--text-faint);font-weight:400;">(PNG/JPG/GIF/WEBP, maks 2MB — tampil di kartu daftar tutorial)</span></label>
-        <input class="form-input" type="file" id="tutorialThumbnailFile" accept="image/png,image/jpeg,image/gif,image/webp">
-      </div>
-      <div class="form-group">
-        <label class="form-label">Atau URL Thumbnail <span style="color:var(--text-faint);font-weight:400;">(opsional, dipakai kalau tidak upload)</span></label>
-        <input class="form-input" type="text" id="tutorialThumbnailUrl" placeholder="https://...">
-      </div>
-      <div id="tutorialThumbnailPreviewWrap" style="display:none;margin-bottom:12px;position:relative;">
-        <img id="tutorialThumbnailPreviewImg" style="width:100%;max-height:160px;object-fit:cover;border-radius:12px;">
-        <button type="button" class="btn btn-danger btn-sm" style="position:absolute;top:8px;right:8px;" onclick="clearTutorialImage('thumbnail')">🗑 Hapus</button>
-      </div>
-
-      <div class="modal-divider"><span>Isi Tutorial</span></div>
-      <div class="form-group">
-        <label class="form-label">Konten <span style="color:var(--text-faint);font-weight:400;">— gunakan editor di bawah untuk format teks (heading, bold, list, dll)</span></label>
-        <div id="tutorialContentEditor" style="background:#1a1430;border-radius:0 0 10px 10px;"></div>
-      </div>
-
-      <div class="modal-divider"><span>Gambar Pendukung <span style="color:var(--text-faint);font-weight:400;">(opsional — tampil di halaman baca tutorial, terpisah dari thumbnail)</span></span></div>
-      <div class="form-group">
-        <label class="form-label">Upload Gambar <span style="color:var(--text-faint);font-weight:400;">(PNG/JPG/GIF/WEBP, maks 2MB)</span></label>
-        <input class="form-input" type="file" id="tutorialImageFile" accept="image/png,image/jpeg,image/gif,image/webp">
-      </div>
-      <div class="form-group">
-        <label class="form-label">Atau URL Gambar <span style="color:var(--text-faint);font-weight:400;">(opsional)</span></label>
-        <input class="form-input" type="text" id="tutorialImageUrl" placeholder="https://...">
-      </div>
-      <div id="tutorialImagePreviewWrap" style="display:none;margin-bottom:12px;position:relative;">
-        <img id="tutorialImagePreviewImg" style="width:100%;max-height:160px;object-fit:cover;border-radius:12px;">
-        <button type="button" class="btn btn-danger btn-sm" style="position:absolute;top:8px;right:8px;" onclick="clearTutorialImage('image')">🗑 Hapus</button>
-      </div>
-
-      <div class="modal-divider"><span>Video <span style="color:var(--text-faint);font-weight:400;">(opsional — YouTube atau TikTok)</span></span></div>
-      <div class="form-group">
-        <label class="form-label">Link Video</label>
-        <input class="form-input" type="text" id="tutorialVideoUrl" placeholder="Link YouTube (youtube.com/watch?v=... atau youtu.be/...) atau TikTok (tiktok.com/@user/video/...)">
-      </div>
-
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeTutorialModal()">Batal</button>
-      <button class="btn btn-primary" id="btnSaveTutorial">Simpan Tutorial</button>
-    </div>
-  </div>
-</div>
-
-<!-- VOUCHER MODAL -->
-<div class="modal-backdrop" id="voucherModalBackdrop" style="display:none;" onclick="if(event.target===this)closeVoucherModal()">
-  <div class="modal">
-    <div class="modal-header">
-      <div>
-        <div class="modal-title" id="voucherModalTitle">Buat Voucher</div>
-        <div class="modal-subtitle">User memasukkan kode ini lewat menu "Claim Voucher" di App untuk mendapatkan paket Gold/Platinum otomatis.</div>
-      </div>
-      <button class="modal-close" onclick="closeVoucherModal()">✕</button>
-    </div>
-    <div class="modal-body">
-      <input type="hidden" id="voucherId">
-
-      <div class="form-group">
-        <label class="form-label">Kode Voucher <span style="color:var(--text-faint);font-weight:400;">— huruf/angka/-/_, 3-32 karakter</span></label>
-        <input class="form-input" type="text" id="voucherCode" placeholder="Contoh: GOLD7HARI, PLATINUM2026" style="text-transform:uppercase;">
-      </div>
-
-      <div class="form-row">
-        <div class="form-group" style="flex:1;">
-          <label class="form-label">Paket yang Diberikan</label>
-          <div class="segmented" id="voucherRoleSegment" data-value="gold">
-            <button type="button" class="segmented-opt" data-role="gold">🥇 Gold</button>
-            <button type="button" class="segmented-opt" data-role="platinum">💎 Platinum</button>
-          </div>
-          <input type="hidden" id="voucherRole" value="gold">
-        </div>
-      </div>
-
-      <div class="form-row">
-        <div class="form-group" style="flex:1;">
-          <label class="form-label">Durasi Paket</label>
-          <input class="form-input" type="number" min="1" step="1" id="voucherDurationAmount" placeholder="Contoh: 7">
-        </div>
-        <div class="form-group" style="width:160px;">
-          <label class="form-label">Satuan</label>
-          <select class="form-input" id="voucherDurationUnit">
-            <option value="days" selected>Hari</option>
-            <option value="hours">Jam</option>
-            <option value="minutes">Menit</option>
-          </select>
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label class="form-label">Jumlah Kuota Voucher <span style="color:var(--text-faint);font-weight:400;">— berapa kali total voucher ini boleh diklaim (oleh user berbeda-beda)</span></label>
-        <input class="form-input" type="number" min="1" step="1" id="voucherQuota" placeholder="Contoh: 50">
-      </div>
-
-      <div class="form-group">
-        <label class="form-label">Masa Berlaku Voucher <span style="color:var(--text-faint);font-weight:400;">(opsional — kosongkan kalau tidak ada batas waktu klaim)</span></label>
-        <input class="form-input" type="datetime-local" id="voucherExpiresAt">
-      </div>
-
-      <div class="form-group" style="display:flex;align-items:center;gap:10px;" id="voucherActiveRow">
-        <label class="switch"><input type="checkbox" id="voucherActive" checked><span class="switch-slider"></span></label>
-        <label class="form-label" style="margin:0;" for="voucherActive">Aktifkan voucher ini</label>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeVoucherModal()">Batal</button>
-      <button class="btn btn-primary" id="btnSaveVoucher">Simpan Voucher</button>
-    </div>
-  </div>
-</div>
-
 <!-- HUBCAP API KEY MODAL -->
 <div class="modal-backdrop" id="hcKeyModalBackdrop" style="display:none;" onclick="if(event.target===this)closeHcKeyModal()">
   <div class="modal" style="max-width:440px;">
@@ -1619,6 +1471,216 @@
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeRyKeyModal()">Batal</button>
       <button class="btn btn-primary" id="btnRySaveKey">Simpan API Key</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MODAL: TAMBAH/EDIT TUTORIAL ═══ -->
+<div class="modal-backdrop" id="tutorialModalBackdrop" style="display:none;" onclick="if(event.target===this)closeTutorialModal()">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="tutorialModalTitle">Tambah Tutorial</div>
+        <div class="modal-subtitle">Isi panduan penggunaan aplikasi — tampil di halaman Tutorial App secara realtime.</div>
+      </div>
+      <button class="modal-close" onclick="closeTutorialModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-group">
+        <label class="form-label">Judul</label>
+        <input class="form-input" type="text" id="tutTitle" placeholder="Contoh: Cara Install Game Pertama Kali">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Subjudul <span style="color:var(--text-faint);font-weight:400;">(opsional)</span></label>
+        <input class="form-input" type="text" id="tutSubtitle" placeholder="Subjudul singkat...">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Deskripsi Singkat <span style="color:var(--text-faint);font-weight:400;">— tampil di kartu daftar tutorial</span></label>
+        <textarea class="form-input" id="tutExcerpt" rows="2" placeholder="Ringkasan singkat isi tutorial..."></textarea>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group" style="flex:1;">
+          <label class="form-label">Kategori <span style="color:var(--text-faint);font-weight:400;">— wajib, dipakai buat filter di App</span></label>
+          <div class="cover-row">
+            <select class="form-input" id="tutCategory" style="margin:0;"></select>
+            <button type="button" class="btn btn-secondary" id="btnAddTutCategoryInline" title="Tambah kategori baru" style="flex-shrink:0;">＋</button>
+            <button type="button" class="btn btn-secondary" id="btnDeleteTutCategoryInline" title="Hapus kategori yang dipilih" style="flex-shrink:0;">🗑️</button>
+          </div>
+          <div id="tutCategoryStatus" style="margin-top:6px;font-size:11.5px;min-height:14px;color:var(--text-faint);"></div>
+        </div>
+        <div class="form-group" style="width:150px;">
+          <label class="form-label">Urutan Tampil</label>
+          <input class="form-input" type="number" id="tutOrder" placeholder="Auto">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group" style="flex:1;">
+          <label class="form-label">Status</label>
+          <div class="segmented" id="tutStatusSegment" data-value="published">
+            <button type="button" class="segmented-opt" data-status="published"><span class="segmented-opt-icon">✅</span> Publish</button>
+            <button type="button" class="segmented-opt" data-status="draft"><span class="segmented-opt-icon">📝</span> Draft</button>
+          </div>
+          <input type="hidden" id="tutStatus" value="published">
+        </div>
+        <div class="form-group" style="display:flex;align-items:center;gap:10px;margin-top:22px;">
+          <label class="switch"><input type="checkbox" id="tutIsPinned"><span class="switch-slider"></span></label>
+          <label class="form-label" style="margin:0;" for="tutIsPinned">📌 Pin tutorial ini di atas</label>
+        </div>
+      </div>
+
+      <div class="modal-divider"><span>Thumbnail / Cover</span></div>
+      <div class="form-row">
+        <div class="form-group" style="flex:1;">
+          <label class="form-label">Upload Gambar <span style="color:var(--text-faint);font-weight:400;">(maks 3MB)</span></label>
+          <input class="form-input" type="file" accept="image/png,image/jpeg,image/webp,image/gif" id="tutThumbFile">
+        </div>
+        <div class="form-group" style="flex:1;">
+          <label class="form-label">atau URL Gambar</label>
+          <input class="form-input" type="text" id="tutThumbUrl" placeholder="https://...">
+        </div>
+      </div>
+      <div class="banner-image-preview-wrap" id="tutThumbPreviewWrap" style="display:none;margin-bottom:14px;">
+        <img id="tutThumbPreviewImg" style="width:100%;max-height:180px;object-fit:cover;border-radius:10px;" alt="">
+        <button type="button" class="btn btn-secondary btn-sm" style="margin-top:8px;" onclick="clearTutThumbnail()">Hapus Gambar</button>
+      </div>
+
+      <div class="modal-divider"><span>Isi Tutorial</span></div>
+      <div class="form-group">
+        <div id="tutQuillEditor" style="background:#fff;border-radius:10px;min-height:260px;"></div>
+        <div style="margin-top:6px;font-size:11.5px;color:var(--text-faint);">Gunakan tombol gambar di toolbar untuk menyisipkan gambar langsung ke isi tutorial (maks 3MB per gambar).</div>
+      </div>
+
+      <div class="modal-divider"><span>Video &amp; File Download (opsional)</span></div>
+      <div class="form-group">
+        <label class="form-label">Link YouTube</label>
+        <input class="form-input" type="text" id="tutYoutubeUrl" placeholder="https://www.youtube.com/watch?v=...">
+      </div>
+      <div class="form-row">
+        <div class="form-group" style="flex:1;">
+          <label class="form-label">Upload File Download <span style="color:var(--text-faint);font-weight:400;">(maks 9MB)</span></label>
+          <input class="form-input" type="file" id="tutFileInput">
+        </div>
+        <div class="form-group" style="flex:1;">
+          <label class="form-label">atau URL File</label>
+          <input class="form-input" type="text" id="tutFileUrl" placeholder="https://...">
+        </div>
+      </div>
+      <div id="tutFileStatus" style="margin-bottom:6px;font-size:12px;color:var(--text-dim);display:none;">
+        📎 <span id="tutFileStatusName"></span>
+        <button type="button" class="btn btn-secondary btn-sm" style="margin-left:8px;" onclick="clearTutFile()">Hapus File</button>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="btnPreviewTutorial">👁️ Preview</button>
+      <button class="btn btn-secondary" id="btnCancelTutorial" onclick="closeTutorialModal()">Batal</button>
+      <button class="btn btn-primary" id="btnSaveTutorial">Simpan</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MODAL: KELOLA KATEGORI TUTORIAL ═══ -->
+<div class="modal-backdrop" id="tutCategoryModalBackdrop" style="display:none;" onclick="if(event.target===this)closeTutCategoryModal()">
+  <div class="modal" style="max-width:420px;">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">🏷️ Kategori Tutorial</div>
+        <div class="modal-subtitle">Kategori dipakai untuk filter tutorial di halaman App.</div>
+      </div>
+      <button class="modal-close" onclick="closeTutCategoryModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="cover-row">
+        <input class="form-input" type="text" id="tutNewCategoryName" placeholder="Nama kategori baru..." style="margin:0;">
+        <button type="button" class="btn btn-primary" id="btnCreateTutCategory" style="flex-shrink:0;">Tambah</button>
+      </div>
+      <div id="tutCategoryManageList" style="margin-top:14px;display:flex;flex-direction:column;gap:8px;"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeTutCategoryModal()">Tutup</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MODAL: PREVIEW TUTORIAL ═══ -->
+<div class="modal-backdrop" id="tutPreviewModalBackdrop" style="display:none;" onclick="if(event.target===this)closeTutPreviewModal()">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title">👁️ Preview Tutorial</div>
+        <div class="modal-subtitle">Tampilan kurang lebih seperti yang akan dilihat user di App.</div>
+      </div>
+      <button class="modal-close" onclick="closeTutPreviewModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div id="tutPreviewBody" class="tutorial-preview"></div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeTutPreviewModal()">Tutup</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MODAL: TAMBAH/EDIT APP VERSION ═══ -->
+<div class="modal-backdrop" id="appVersionModalBackdrop" style="display:none;" onclick="if(event.target===this)closeAppVersionModal()">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="appVersionModalTitle">Rilis Versi Baru</div>
+        <div class="modal-subtitle">Launcher akan mendeteksi rilis ini otomatis (startup, berkala, &amp; realtime).</div>
+      </div>
+      <button class="modal-close" onclick="closeAppVersionModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <div class="form-row">
+        <div class="form-group" style="flex:1;">
+          <label class="form-label">Nomor Versi <span style="color:var(--text-faint);font-weight:400;">— contoh: 1.0.2</span></label>
+          <input class="form-input" type="text" id="avVersion" placeholder="1.0.2">
+        </div>
+        <div class="form-group" style="flex:1;">
+          <label class="form-label">Tanggal Rilis</label>
+          <input class="form-input" type="date" id="avReleaseDate">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Link Download <span style="color:var(--text-faint);font-weight:400;">— GitHub Release / link installer (.exe) langsung</span></label>
+        <input class="form-input" type="text" id="avDownloadUrl" placeholder="https://github.com/user/repo/releases/download/v1.0.2/Setup.exe">
+        <div style="margin-top:4px;font-size:11.5px;color:var(--text-faint);">Ukuran file otomatis dideteksi dari link ini kalau memungkinkan. Isi manual di bawah kalau deteksi otomatis gagal.</div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group" style="flex:1;">
+          <label class="form-label">Ukuran File (bytes) <span style="color:var(--text-faint);font-weight:400;">— opsional, override otomatis</span></label>
+          <input class="form-input" type="number" id="avFileSize" placeholder="Auto terdeteksi">
+        </div>
+        <div class="form-group" style="flex:1;">
+          <label class="form-label">Checksum SHA-256 <span style="color:var(--text-faint);font-weight:400;">(opsional)</span></label>
+          <input class="form-input" type="text" id="avChecksum" placeholder="Untuk verifikasi keaslian file (opsional)">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Changelog <span style="color:var(--text-faint);font-weight:400;">— satu baris = satu poin perubahan</span></label>
+        <textarea class="form-input" id="avChangelog" rows="5" placeholder="Perbaikan bug login&#10;Tambah fitur Tutorial&#10;Peningkatan performa"></textarea>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group" style="display:flex;align-items:center;gap:10px;">
+          <label class="switch"><input type="checkbox" id="avIsRequired"><span class="switch-slider"></span></label>
+          <label class="form-label" style="margin:0;" for="avIsRequired">⚠️ Required (Force Update)</label>
+        </div>
+        <div class="form-group" style="display:flex;align-items:center;gap:10px;">
+          <label class="switch"><input type="checkbox" id="avIsActive" checked><span class="switch-slider"></span></label>
+          <label class="form-label" style="margin:0;" for="avIsActive">✅ Aktifkan rilis ini</label>
+        </div>
+      </div>
+      <div style="font-size:11.5px;color:var(--text-faint);">Force Update: user WAJIB update dulu sebelum bisa memakai aplikasi lagi. Nonaktifkan rilis untuk "rollback" — App otomatis kembali ke rilis aktif tertinggi berikutnya.</div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeAppVersionModal()">Batal</button>
+      <button class="btn btn-primary" id="btnSaveAppVersion">Simpan</button>
     </div>
   </div>
 </div>
