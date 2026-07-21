@@ -16,6 +16,11 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/css/css.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/htmlmixed/htmlmixed.min.js"></script>
+<!-- Quill — rich text editor dipakai khusus buat "Isi Tutorial" di modal Kelola
+     Tutorial. Toolbar sengaja tidak menyertakan tombol image/video — gambar &
+     video tutorial punya kolom upload/link sendiri (lihat modal Tutorial). -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/quill/1.3.7/quill.snow.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/quill/1.3.7/quill.min.js"></script>
 </head>
 <body>
 
@@ -72,6 +77,10 @@
         <button class="nav-item" data-page="banners">
           <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><rect x="3" y="5" width="18" height="14" rx="2"/><path stroke-linecap="round" stroke-linejoin="round" d="M3 9h18M8 5v4"/></svg></span>
           Banner
+        </button>
+        <button class="nav-item" data-page="tutorial">
+          <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13M12 6.253C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s4.332.477 5.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg></span>
+          Tutorial
         </button>
         <button class="nav-item" data-page="leaderboard">
           <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M11.049 2.927c.3-.921 1.603-.921 1.902 0l1.519 4.674a1 1 0 00.95.69h4.915c.969 0 1.371 1.24.588 1.81l-3.976 2.888a1 1 0 00-.363 1.118l1.518 4.674c.3.922-.755 1.688-1.538 1.118l-3.976-2.888a1 1 0 00-1.176 0l-3.976 2.888c-.783.57-1.838-.197-1.538-1.118l1.518-4.674a1 1 0 00-.363-1.118l-3.976-2.888c-.784-.57-.38-1.81.588-1.81h4.914a1 1 0 00.951-.69l1.519-4.674z"/></svg></span>
@@ -368,6 +377,39 @@
           </div>
         </div>
         <div id="bannerList" class="banner-admin-list"></div>
+      </div>
+    </section>
+
+    <!-- KELOLA TUTORIAL PAGE -->
+    <section class="page" id="pageTutorial">
+      <div class="page-header">
+        <div class="page-header-left">
+          <div class="page-header-icon" style="background:rgba(79,172,254,.16);">📘</div>
+          <div>
+            <div class="page-header-title">Kelola Tutorial</div>
+            <div class="page-header-desc">Kelola tutorial yang tampil di halaman Tutorial aplikasi — tambah, edit, hapus, dan atur status publish.</div>
+          </div>
+        </div>
+        <div class="page-header-actions" style="margin-left:auto;">
+          <button class="btn btn-primary" id="btnAddTutorial" style="display:flex;align-items:center;gap:6px;">
+            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>
+            Tambah Tutorial
+          </button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <div class="table-toolbar">
+          <div class="table-toolbar-title">📘 Daftar Tutorial</div>
+          <div class="table-search">
+            <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+            <input type="text" id="tutorialSearchInputAdmin" placeholder="Cari tutorial...">
+          </div>
+          <div class="table-toolbar-filters">
+            <div class="filter-chips" id="tutorialStatusFilter"></div>
+          </div>
+        </div>
+        <div id="tutorialAdminList" class="banner-admin-list"></div>
       </div>
     </section>
 
@@ -1335,6 +1377,92 @@
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeBannerModal()">Batal</button>
       <button class="btn btn-primary" id="btnSaveBanner">Simpan Banner</button>
+    </div>
+  </div>
+</div>
+
+<!-- ═══ MODAL: TAMBAH/EDIT TUTORIAL ═══ -->
+<div class="modal-backdrop" id="tutorialModalBackdrop" style="display:none;" onclick="if(event.target===this)closeTutorialModal()">
+  <div class="modal modal-lg">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="tutorialModalTitle">Tambah Tutorial</div>
+        <div class="modal-subtitle">Isi konten tutorial di bawah, lalu pilih Publish atau simpan sebagai Draft.</div>
+      </div>
+      <button class="modal-close" onclick="closeTutorialModal()">✕</button>
+    </div>
+    <div class="modal-body">
+
+      <div class="form-group">
+        <label class="form-label">Judul</label>
+        <input class="form-input" type="text" id="tutorialTitle" placeholder="Contoh: Cara Install Game Lewat 31 Tools">
+      </div>
+
+      <div class="form-row">
+        <div class="form-group" style="flex:1;">
+          <label class="form-label">Kategori <span style="color:var(--text-faint);font-weight:400;">— dipakai buat filter kategori di halaman Tutorial</span></label>
+          <input class="form-input" type="text" id="tutorialCategory" list="tutorialCategoryOptions" placeholder="Contoh: Instalasi, Bypass, FAQ">
+          <datalist id="tutorialCategoryOptions"></datalist>
+        </div>
+        <div class="form-group" style="width:200px;">
+          <label class="form-label">Status</label>
+          <div class="segmented" id="tutorialStatusSegment" data-value="published">
+            <button type="button" class="segmented-opt" data-status="published">✅ Publish</button>
+            <button type="button" class="segmented-opt" data-status="draft">📝 Draft</button>
+          </div>
+          <input type="hidden" id="tutorialStatus" value="published">
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Deskripsi Singkat <span style="color:var(--text-faint);font-weight:400;">— tampil di kartu daftar tutorial</span></label>
+        <textarea class="form-input" id="tutorialDescription" rows="2" placeholder="Ringkasan singkat isi tutorial ini..."></textarea>
+      </div>
+
+      <div class="modal-divider"><span>Thumbnail</span></div>
+      <div class="form-group">
+        <label class="form-label">Upload Thumbnail <span style="color:var(--text-faint);font-weight:400;">(PNG/JPG/GIF/WEBP, maks 2MB — tampil di kartu daftar tutorial)</span></label>
+        <input class="form-input" type="file" id="tutorialThumbnailFile" accept="image/png,image/jpeg,image/gif,image/webp">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Atau URL Thumbnail <span style="color:var(--text-faint);font-weight:400;">(opsional, dipakai kalau tidak upload)</span></label>
+        <input class="form-input" type="text" id="tutorialThumbnailUrl" placeholder="https://...">
+      </div>
+      <div id="tutorialThumbnailPreviewWrap" style="display:none;margin-bottom:12px;position:relative;">
+        <img id="tutorialThumbnailPreviewImg" style="width:100%;max-height:160px;object-fit:cover;border-radius:12px;">
+        <button type="button" class="btn btn-danger btn-sm" style="position:absolute;top:8px;right:8px;" onclick="clearTutorialImage('thumbnail')">🗑 Hapus</button>
+      </div>
+
+      <div class="modal-divider"><span>Isi Tutorial</span></div>
+      <div class="form-group">
+        <label class="form-label">Konten <span style="color:var(--text-faint);font-weight:400;">— gunakan editor di bawah untuk format teks (heading, bold, list, dll)</span></label>
+        <div id="tutorialContentEditor" style="background:#1a1430;border-radius:0 0 10px 10px;"></div>
+      </div>
+
+      <div class="modal-divider"><span>Gambar Pendukung <span style="color:var(--text-faint);font-weight:400;">(opsional — tampil di halaman baca tutorial, terpisah dari thumbnail)</span></span></div>
+      <div class="form-group">
+        <label class="form-label">Upload Gambar <span style="color:var(--text-faint);font-weight:400;">(PNG/JPG/GIF/WEBP, maks 2MB)</span></label>
+        <input class="form-input" type="file" id="tutorialImageFile" accept="image/png,image/jpeg,image/gif,image/webp">
+      </div>
+      <div class="form-group">
+        <label class="form-label">Atau URL Gambar <span style="color:var(--text-faint);font-weight:400;">(opsional)</span></label>
+        <input class="form-input" type="text" id="tutorialImageUrl" placeholder="https://...">
+      </div>
+      <div id="tutorialImagePreviewWrap" style="display:none;margin-bottom:12px;position:relative;">
+        <img id="tutorialImagePreviewImg" style="width:100%;max-height:160px;object-fit:cover;border-radius:12px;">
+        <button type="button" class="btn btn-danger btn-sm" style="position:absolute;top:8px;right:8px;" onclick="clearTutorialImage('image')">🗑 Hapus</button>
+      </div>
+
+      <div class="modal-divider"><span>Video YouTube <span style="color:var(--text-faint);font-weight:400;">(opsional)</span></span></div>
+      <div class="form-group">
+        <label class="form-label">Link YouTube</label>
+        <input class="form-input" type="text" id="tutorialYoutubeUrl" placeholder="https://www.youtube.com/watch?v=... atau https://youtu.be/...">
+      </div>
+
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeTutorialModal()">Batal</button>
+      <button class="btn btn-primary" id="btnSaveTutorial">Simpan Tutorial</button>
     </div>
   </div>
 </div>

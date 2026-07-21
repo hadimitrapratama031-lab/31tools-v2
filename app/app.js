@@ -121,6 +121,21 @@ function grabElements() {
   els.gamesRoleFilter = document.getElementById('gamesRoleFilter');
   els.bypassesRoleFilter = document.getElementById('bypassesRoleFilter');
   els.dashCategoryFilters = document.getElementById('dashCategoryFilters');
+
+  els.tutorialLatestGrid  = document.getElementById('tutorialLatestGrid');
+  els.tutorialGrid        = document.getElementById('tutorialGrid');
+  els.tutorialCategoryFilter = document.getElementById('tutorialCategoryFilter');
+  els.tutorialSearchInput = document.getElementById('tutorialSearchInput');
+  els.tutorialDetailCategory = document.getElementById('tutorialDetailCategory');
+  els.tutorialDetailTitle   = document.getElementById('tutorialDetailTitle');
+  els.tutorialDetailImageWrap = document.getElementById('tutorialDetailImageWrap');
+  els.tutorialDetailImage   = document.getElementById('tutorialDetailImage');
+  els.tutorialDetailContent = document.getElementById('tutorialDetailContent');
+  els.tutorialDetailVideoWrap = document.getElementById('tutorialDetailVideoWrap');
+  els.tutorialDetailVideo   = document.getElementById('tutorialDetailVideo');
+  els.tutorialPrevBtn = document.getElementById('tutorialPrevBtn');
+  els.tutorialNextBtn = document.getElementById('tutorialNextBtn');
+  els.tutorialDetailBackBtn = document.getElementById('tutorialDetailBackBtn');
 }
 
 // ── FILTER KATEGORI DI DASHBOARD ("New Games") ──
@@ -248,7 +263,9 @@ const PAGE_IDS = {
   store: 'pageStore',
   histori: 'pageHistori',
   setting: 'pageSetting',
-  gameDetail: 'pageGameDetail'
+  gameDetail: 'pageGameDetail',
+  tutorial: 'pageTutorial',
+  tutorialDetail: 'pageTutorialDetail'
 };
 
 function showPage(pageName) {
@@ -264,6 +281,7 @@ function showPage(pageName) {
   if (pageName === 'games') applyGamesRoleFilter();
   if (pageName === 'bypasses') applyBypassesRoleFilter();
   if (pageName === 'histori') { loadHistori(); }
+  if (pageName === 'tutorial') applyTutorialFilter();
 }
 
 function wireNavigation() {
@@ -574,6 +592,7 @@ function enterApp(user) {
   loadBypasses();
   loadBanners();
   loadLeaderboard();
+  loadTutorials();
   flushPendingHistory().catch(() => {}); // coba kirim ulang histori yang sempat gagal tersimpan sesi sebelumnya
   startAutoRefresh(); // ← polling berkala supaya game/bypass baru dari admin langsung muncul
   checkPendingPremiumCleanups(); // ← "kalau app tidak dibuka, pengecekan dilakukan saat app dibuka kembali"
@@ -1231,6 +1250,188 @@ document.getElementById('hcTrack')?.addEventListener('click', (e) => {
     window.open(link, '_blank');
   }
 });
+
+// ══════════════════════════════════════════════════════════════════════════
+// TUTORIAL — daftar tutorial 100% dari /api/tutorials (dikelola dari Admin Web
+// di halaman "Kelola Tutorial"), update realtime lewat WebSocket
+// ('tutorials:update') tanpa perlu update launcher ataupun restart app sama sekali.
+// Search & filter kategori dikerjakan di client terhadap data yang sudah ada di
+// memori (sama seperti Games/Bypass) — instan walau jumlah tutorial banyak.
+// ══════════════════════════════════════════════════════════════════════════
+let allTutorials = [];
+let activeTutorialCategory = 'all';
+let currentTutorialNavList = []; // daftar tutorial yang sedang tampil (ikut filter aktif) — dipakai Next/Previous
+let currentTutorialIndex = -1;
+let _prevPageBeforeTutorialDetail = 'tutorial';
+
+async function loadTutorials() {
+  try {
+    allTutorials = await api('/api/tutorials');
+    renderTutorialCategoryFilters();
+    renderTutorialLatest();
+    applyTutorialFilter();
+  } catch (e) {
+    if (els.tutorialGrid) {
+      els.tutorialGrid.innerHTML = `<div style="color:#8577a3;font-size:13px;padding:10px 4px;">Gagal memuat tutorial: ${escapeHtml(e.message)}</div>`;
+    }
+  }
+}
+
+// Chip kategori dibangun dari kategori yang benar-benar ada di data tutorial saat
+// ini (bukan dari koleksi terpisah) — otomatis update begitu admin menambah
+// kategori baru lewat tutorial pertamanya di kategori itu.
+function renderTutorialCategoryFilters() {
+  if (!els.tutorialCategoryFilter) return;
+  const categories = Array.from(new Set(allTutorials.map(t => t.category || 'Umum'))).sort();
+  const chips = [{ slug: 'all', name: 'Semua Kategori' }, ...categories.map(c => ({ slug: c, name: c }))];
+
+  if (!categories.includes(activeTutorialCategory) && activeTutorialCategory !== 'all') {
+    activeTutorialCategory = 'all';
+  }
+
+  els.tutorialCategoryFilter.innerHTML = chips.map(c => `
+    <button class="role-filter-tab${c.slug === activeTutorialCategory ? ' active' : ''}" data-category="${escapeHtml(c.slug)}">${escapeHtml(c.name)}</button>
+  `).join('');
+}
+
+function wireTutorialCategoryFilter() {
+  if (!els.tutorialCategoryFilter) return;
+  els.tutorialCategoryFilter.addEventListener('click', (e) => {
+    const btn = e.target.closest('.role-filter-tab');
+    if (!btn) return;
+    els.tutorialCategoryFilter.querySelectorAll('.role-filter-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeTutorialCategory = btn.dataset.category;
+    applyTutorialFilter();
+  });
+}
+
+function wireTutorialSearch() {
+  if (!els.tutorialSearchInput) return;
+  els.tutorialSearchInput.addEventListener('input', () => applyTutorialFilter());
+}
+
+function applyTutorialFilter() {
+  if (!els.tutorialGrid) return;
+  const q = els.tutorialSearchInput ? els.tutorialSearchInput.value.trim().toLowerCase() : '';
+  let filtered = allTutorials;
+  if (activeTutorialCategory !== 'all') {
+    filtered = filtered.filter(t => (t.category || 'Umum') === activeTutorialCategory);
+  }
+  if (q) {
+    filtered = filtered.filter(t =>
+      t.title.toLowerCase().includes(q) || (t.description || '').toLowerCase().includes(q)
+    );
+  }
+  renderTutorialGrid(els.tutorialGrid, filtered);
+}
+
+// "Tutorial Terbaru" — 6 tutorial paling baru (data sudah terurut createdAt desc dari server)
+function renderTutorialLatest() {
+  if (!els.tutorialLatestGrid) return;
+  renderTutorialGrid(els.tutorialLatestGrid, allTutorials.slice(0, 6));
+}
+
+function tutorialThumbStyle(item) {
+  const src = item.thumbnailData || item.thumbnailUrl;
+  return src ? `background-image:url('${src}');background-size:cover;background-position:center;` : '';
+}
+
+function renderTutorialCard(item) {
+  return `
+    <div class="tutorial-card" data-id="${item._id}">
+      <div class="tutorial-card__thumb" style="${tutorialThumbStyle(item)}">
+        <span class="tutorial-card__category">${escapeHtml(item.category || 'Umum')}</span>
+      </div>
+      <div class="tutorial-card__body">
+        <h4 class="tutorial-card__title" title="${escapeHtml(item.title)}">${escapeHtml(item.title)}</h4>
+        <p class="tutorial-card__desc">${escapeHtml(item.description || '')}</p>
+        <span class="tutorial-card__btn">📖 Baca Tutorial</span>
+      </div>
+    </div>`;
+}
+
+function renderTutorialGrid(container, tutorials) {
+  if (!container) return;
+  container.innerHTML = tutorials.length
+    ? tutorials.map(t => renderTutorialCard(t)).join('')
+    : `<div style="color:#8577a3;font-size:13px;padding:10px 4px;">Belum ada tutorial.</div>`;
+  container.querySelectorAll('.tutorial-card').forEach(card => {
+    card.addEventListener('click', () => {
+      const tutorial = tutorials.find(t => t._id === card.dataset.id);
+      if (tutorial) openTutorialDetail(tutorial, tutorials);
+    });
+  });
+}
+
+// Buka halaman baca tutorial. `navList` = daftar tutorial yang sedang tampil di
+// kartu yang diklik (Terbaru ATAU hasil filter/search) — jadi Next/Previous
+// jalan sesuai konteks tempat user meng-klik, bukan selalu urutan semua data.
+function openTutorialDetail(tutorial, navList) {
+  currentTutorialNavList = navList || allTutorials;
+  currentTutorialIndex = currentTutorialNavList.findIndex(t => t._id === tutorial._id);
+  _prevPageBeforeTutorialDetail = els.navLinks.find(a => a.classList.contains('active'))?.dataset.page || 'tutorial';
+  renderTutorialDetail(tutorial);
+  showPage('tutorialDetail');
+}
+
+function renderTutorialDetail(tutorial) {
+  if (els.tutorialDetailCategory) els.tutorialDetailCategory.textContent = tutorial.category || 'Umum';
+  if (els.tutorialDetailTitle) els.tutorialDetailTitle.textContent = tutorial.title;
+
+  const imgSrc = tutorial.imageData || tutorial.imageUrl;
+  if (els.tutorialDetailImageWrap && els.tutorialDetailImage) {
+    if (imgSrc) {
+      els.tutorialDetailImage.src = imgSrc;
+      els.tutorialDetailImageWrap.style.display = '';
+    } else {
+      els.tutorialDetailImageWrap.style.display = 'none';
+    }
+  }
+
+  // `content` sudah disanitasi ketat di server (lihat sanitizeTutorialContent di
+  // server.js — tag berbahaya seperti <script>/<iframe>/<img> sudah dibuang di
+  // sana) sebelum pernah disimpan ke DB, jadi aman dirender sebagai HTML di sini.
+  if (els.tutorialDetailContent) els.tutorialDetailContent.innerHTML = tutorial.content || '';
+
+  if (els.tutorialDetailVideoWrap && els.tutorialDetailVideo) {
+    if (tutorial.youtubeId) {
+      els.tutorialDetailVideo.src = `https://www.youtube-nocookie.com/embed/${tutorial.youtubeId}`;
+      els.tutorialDetailVideoWrap.style.display = '';
+    } else {
+      els.tutorialDetailVideo.src = '';
+      els.tutorialDetailVideoWrap.style.display = 'none';
+    }
+  }
+
+  if (els.tutorialPrevBtn) els.tutorialPrevBtn.disabled = currentTutorialIndex <= 0;
+  if (els.tutorialNextBtn) els.tutorialNextBtn.disabled = currentTutorialIndex < 0 || currentTutorialIndex >= currentTutorialNavList.length - 1;
+
+  const scrollEl = document.querySelector('#pageTutorialDetail .detail-scroll');
+  if (scrollEl) scrollEl.scrollTop = 0;
+}
+
+function wireTutorialDetailNav() {
+  if (els.tutorialDetailBackBtn) {
+    els.tutorialDetailBackBtn.addEventListener('click', () => showPage(_prevPageBeforeTutorialDetail));
+  }
+  if (els.tutorialPrevBtn) {
+    els.tutorialPrevBtn.addEventListener('click', () => {
+      if (currentTutorialIndex > 0) {
+        currentTutorialIndex--;
+        renderTutorialDetail(currentTutorialNavList[currentTutorialIndex]);
+      }
+    });
+  }
+  if (els.tutorialNextBtn) {
+    els.tutorialNextBtn.addEventListener('click', () => {
+      if (currentTutorialIndex >= 0 && currentTutorialIndex < currentTutorialNavList.length - 1) {
+        currentTutorialIndex++;
+        renderTutorialDetail(currentTutorialNavList[currentTutorialIndex]);
+      }
+    });
+  }
+}
 
 // ══════════════════════════════════════════════════════════════════════════
 // TOP INSTALLER MINGGUAN — leaderboard realtime dari /api/leaderboard, dihitung
@@ -2091,6 +2292,11 @@ function connectRealtime() {
       handleDeviceReset();
     } else if (msg.event === 'banners:update') {
       renderBannerCarousel(msg.data);
+    } else if (msg.event === 'tutorials:update') {
+      allTutorials = msg.data;
+      renderTutorialCategoryFilters();
+      renderTutorialLatest();
+      applyTutorialFilter();
     } else if (msg.event === 'leaderboard:update') {
       renderLeaderboard(msg.data);
     } else if (msg.event === 'premium:cleanup') {
@@ -2522,6 +2728,9 @@ document.addEventListener('DOMContentLoaded', () => {
   wireBypassesRoleFilter();
   wireDashCategoryFilter();
   wireDetailPage();
+  wireTutorialCategoryFilter();
+  wireTutorialSearch();
+  wireTutorialDetailNav();
   wireHistoriTabs();
   wirePackageCard();
   wireNotifBell();

@@ -2053,3 +2053,37 @@ select.form-input option {
   background: linear-gradient(135deg, rgba(123,92,255,.9), rgba(230,75,184,.85));
   color: #fff;
 }
+
+/* ═══════════════════════════════════════════════════════════
+   KELOLA TUTORIAL — status segment + editor Quill (dark theme)
+   ═══════════════════════════════════════════════════════════ */
+.segmented-opt.active[data-status="published"] {
+  background: linear-gradient(135deg, #4ade80, #22c55e); color: #063a17;
+  box-shadow: 0 4px 14px rgba(74,222,128,.35);
+}
+.segmented-opt.active[data-status="draft"] {
+  background: rgba(255,255,255,.14); color: var(--text);
+  box-shadow: inset 0 0 0 1px rgba(255,255,255,.18);
+}
+.tag.published { background: linear-gradient(135deg, #4ade80, #22c55e); color: #063a17; }
+.tag.draft      { background: rgba(255,255,255,.1); color: var(--text-dim); box-shadow:none; }
+
+/* Quill snow theme — override supaya cocok dengan tema gelap Admin Web */
+#tutorialContentEditor.ql-container,
+.ql-toolbar.ql-snow {
+  border-color: var(--line-hi) !important;
+  font-family: 'Inter', sans-serif;
+}
+.ql-toolbar.ql-snow { border-radius: 10px 10px 0 0; background: rgba(255,255,255,.03); }
+#tutorialContentEditor.ql-container { border-radius: 0 0 10px 10px; min-height: 220px; }
+.ql-editor { min-height: 220px; color: var(--text); font-size: 13px; line-height: 1.8; }
+.ql-editor.ql-blank::before { color: var(--text-faint); font-style: normal; }
+.ql-snow .ql-stroke { stroke: var(--text-dim); }
+.ql-snow .ql-fill { fill: var(--text-dim); }
+.ql-snow .ql-picker { color: var(--text-dim); }
+.ql-snow .ql-picker-options { background: var(--surface, #1a1430); }
+.ql-toolbar.ql-snow .ql-formats { margin-right: 10px; }
+.ql-snow.ql-toolbar button:hover .ql-stroke,
+.ql-snow .ql-toolbar button:hover .ql-stroke { stroke: var(--accent, #7b5cff); }
+.ql-snow.ql-toolbar button:hover .ql-fill,
+.ql-snow .ql-toolbar button:hover .ql-fill { fill: var(--accent, #7b5cff); }

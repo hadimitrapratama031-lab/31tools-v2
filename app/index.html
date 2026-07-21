@@ -38,6 +38,7 @@
       <a href="#" class="active" data-page="dashboard"><span class="ic">▦</span> Dashboard</a>
       <a href="#" data-page="games"><span class="ic">🎮</span> Games <span class="badge">10</span></a>
       <a href="#" data-page="bypasses"><span class="ic">🛡️</span> Bypass <span class="badge" id="bypassesNavBadge">0</span></a>
+      <a href="#" data-page="tutorial"><span class="ic">📘</span> Tutorial</a>
       <a href="#" data-page="store"><span class="ic">🛒</span> Store <span class="badge update">Update</span></a>
       <a href="#" data-page="histori"><span class="ic">🕒</span> Histori</a>
       <a href="#" data-page="setting"><span class="ic">⚙</span> Setting</a>
@@ -207,6 +208,63 @@
         </div>
         <div class="cards-row" id="bypassesGrid"></div>
       </section>
+    </div>
+
+    <!-- ═══════════ PAGE: TUTORIAL (daftar tutorial, 100% dari /api/tutorials,
+         update realtime lewat WebSocket 'tutorials:update' — tanpa perlu update
+         launcher) ═══════════ -->
+    <div class="page-content" id="pageTutorial" style="display:none;">
+
+      <section class="section">
+        <div class="section-head">
+          <h3><span class="emoji">🆕</span> Tutorial Terbaru</h3>
+        </div>
+        <div class="cards-row" id="tutorialLatestGrid"></div>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <h3><span class="emoji">📘</span> Semua Tutorial</h3>
+          <div class="search" style="max-width:220px;">
+            <span class="icon">🔍</span>
+            <input type="text" id="tutorialSearchInput" placeholder="Cari tutorial...">
+          </div>
+        </div>
+        <div class="role-filter-tabs" id="tutorialCategoryFilter">
+          <button class="role-filter-tab active" data-category="all">Semua Kategori</button>
+        </div>
+        <div class="cards-row" id="tutorialGrid"></div>
+      </section>
+
+    </div>
+
+    <!-- ═══════════ PAGE: TUTORIAL DETAIL (baca isi tutorial + Next/Previous) ═══════════ -->
+    <div class="page-content detail-page" id="pageTutorialDetail" style="display:none;">
+      <div class="detail-scroll">
+        <button class="detail-back" id="tutorialDetailBackBtn"><span>←</span> Kembali ke Tutorial</button>
+
+        <div class="tutorial-reader">
+          <div class="tutorial-reader__category" id="tutorialDetailCategory">—</div>
+          <h1 class="detail-title" id="tutorialDetailTitle">—</h1>
+
+          <div class="tutorial-reader__image" id="tutorialDetailImageWrap" style="display:none;">
+            <img id="tutorialDetailImage" alt="">
+          </div>
+
+          <div class="tutorial-reader__content" id="tutorialDetailContent"></div>
+
+          <div class="tutorial-reader__video" id="tutorialDetailVideoWrap" style="display:none;">
+            <div class="tutorial-reader__video-inner">
+              <iframe id="tutorialDetailVideo" src="" title="Video Tutorial" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture" allowfullscreen></iframe>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="detail-action-bar tutorial-reader__nav">
+        <button class="detail-install-btn" id="tutorialPrevBtn">‹ Sebelumnya</button>
+        <button class="detail-install-btn" id="tutorialNextBtn">Selanjutnya ›</button>
+      </div>
     </div>
 
     <!-- ═══════════ PAGE: STORE (polos, belum ada fitur) ═══════════ -->

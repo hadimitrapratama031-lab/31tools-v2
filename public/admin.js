@@ -185,6 +185,7 @@ const PAGE_META = {
   games:     { title: 'Game',       breadcrumb: 'Pages / Game' },
   bypasses:  { title: 'Bypass',     breadcrumb: 'Pages / Bypass' },
   banners:   { title: 'Banner',     breadcrumb: 'Pages / Banner' },
+  tutorial:  { title: 'Kelola Tutorial', breadcrumb: 'Pages / Tutorial' },
   leaderboard:{ title: 'Top Installer', breadcrumb: 'Pages / Top Installer' },
   users:     { title: 'Users',      breadcrumb: 'Pages / Users' },
   history:   { title: 'Histori',    breadcrumb: 'Pages / Histori' },
@@ -225,6 +226,7 @@ function loadPage(page) {
   else if (page === 'games') renderTable('games');
   else if (page === 'bypasses') renderTable('bypasses');
   else if (page === 'banners') renderBannerAdmin();
+  else if (page === 'tutorial') renderTutorialAdmin();
   else if (page === 'leaderboard') renderLeaderboardAdmin();
   else if (page === 'users') renderUsers();
   else if (page === 'history') renderHistory();
@@ -3422,6 +3424,325 @@ document.getElementById('btnSaveBanner')?.addEventListener('click', async () => 
     showToast('Gagal simpan banner: ' + e.message, 'error');
   } finally {
     btn.disabled = false; btn.textContent = 'Simpan Banner';
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// KELOLA TUTORIAL — Admin Web
+// Pola CRUD-nya sama seperti Banner (list + modal + toggle status + delete),
+// bedanya "Isi Tutorial" pakai rich text editor (Quill) dan tidak ada
+// drag-reorder (tutorial ditampilkan terurut createdAt terbaru dulu, sama
+// seperti di App). Thumbnail & Gambar Pendukung disimpan base64 (atau URL),
+// polanya identik dengan upload gambar Banner.
+// ══════════════════════════════════════════════════════════════════════════
+let _tutorialList = [];
+let _tutorialEditId = null;
+let _tutorialFilter = { search: '', status: 'all' };
+let _tutorialThumbPayload = { url: '', data: '' };
+let _tutorialImagePayload = { url: '', data: '' };
+let _tutorialQuill = null;
+
+async function renderTutorialAdmin() {
+  const wrap = document.getElementById('tutorialAdminList');
+  wrap.innerHTML = `<div style="padding:24px;text-align:center;color:var(--text-faint);font-size:12.5px;">Memuat tutorial...</div>`;
+  try {
+    _tutorialList = await api('/api/admin/tutorials');
+    renderTutorialStatusFilter();
+    drawTutorialAdminList();
+    populateTutorialCategoryDatalist();
+  } catch (e) {
+    wrap.innerHTML = `<div style="padding:24px;text-align:center;color:var(--red);font-size:12.5px;">Gagal memuat tutorial: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function renderTutorialStatusFilter() {
+  const el = document.getElementById('tutorialStatusFilter');
+  if (!el) return;
+  const counts = {
+    all: _tutorialList.length,
+    published: _tutorialList.filter(t => t.status === 'published').length,
+    draft: _tutorialList.filter(t => t.status === 'draft').length
+  };
+  const chips = [
+    { key: 'all', label: 'Semua', count: counts.all },
+    { key: 'published', label: '✅ Published', count: counts.published },
+    { key: 'draft', label: '📝 Draft', count: counts.draft }
+  ];
+  el.innerHTML = chips.map(c => `
+    <button class="filter-chip ${_tutorialFilter.status === c.key ? 'active' : ''}" data-status="${c.key}">
+      ${c.label} <span class="count">${c.count}</span>
+    </button>`).join('');
+  el.querySelectorAll('.filter-chip').forEach(btn => {
+    btn.addEventListener('click', () => { _tutorialFilter.status = btn.dataset.status; drawTutorialAdminList(); });
+  });
+}
+
+document.getElementById('tutorialSearchInputAdmin')?.addEventListener('input', (e) => {
+  _tutorialFilter.search = e.target.value;
+  drawTutorialAdminList();
+});
+
+function getFilteredTutorials() {
+  let rows = _tutorialList;
+  if (_tutorialFilter.status !== 'all') rows = rows.filter(t => t.status === _tutorialFilter.status);
+  const q = _tutorialFilter.search.trim().toLowerCase();
+  if (q) rows = rows.filter(t => (t.title || '').toLowerCase().includes(q) || (t.category || '').toLowerCase().includes(q));
+  return rows;
+}
+
+function populateTutorialCategoryDatalist() {
+  const el = document.getElementById('tutorialCategoryOptions');
+  if (!el) return;
+  const categories = Array.from(new Set(_tutorialList.map(t => t.category).filter(Boolean))).sort();
+  el.innerHTML = categories.map(c => `<option value="${escapeHtml(c)}">`).join('');
+}
+
+function drawTutorialAdminList() {
+  const wrap = document.getElementById('tutorialAdminList');
+  const rows = getFilteredTutorials();
+
+  if (!_tutorialList.length) {
+    wrap.innerHTML = `
+      <div style="padding:40px 20px;text-align:center;color:var(--text-faint);">
+        <div style="font-size:32px;margin-bottom:8px;">📘</div>
+        <div style="font-size:13px;">Belum ada tutorial. Klik "Tambah Tutorial" untuk membuat yang pertama.</div>
+      </div>`;
+    return;
+  }
+  if (!rows.length) {
+    wrap.innerHTML = `
+      <div style="padding:40px 20px;text-align:center;color:var(--text-faint);">
+        <div style="font-size:32px;margin-bottom:8px;">🔍</div>
+        <div style="font-size:13px;">Tidak ada tutorial yang cocok dengan pencarian/filter.</div>
+      </div>`;
+    return;
+  }
+
+  wrap.innerHTML = rows.map((t) => {
+    const thumb = t.thumbnailData || t.thumbnailUrl;
+    const thumbHtml = thumb
+      ? `<div class="banner-thumb" style="background-image:url('${escapeHtml(thumb)}');"></div>`
+      : `<div class="banner-thumb" style="background:linear-gradient(135deg,#4facfe,#7c5cff);"><span style="font-size:20px;">📘</span></div>`;
+
+    return `
+    <div class="banner-admin-item" data-id="${t._id}" style="display:flex;align-items:center;gap:12px;padding:14px 16px;border-bottom:1px solid var(--border);">
+      ${thumbHtml}
+      <div style="flex:1;min-width:0;">
+        <div style="font-weight:700;font-size:13.5px;color:var(--text-main);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.title)}</div>
+        <div style="font-size:11.5px;color:var(--text-faint);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;">${escapeHtml(t.description || '—')}</div>
+        <div style="margin-top:4px;display:flex;gap:6px;flex-wrap:wrap;">
+          <span class="tag public" style="font-size:10px;">🏷️ ${escapeHtml(t.category || 'Umum')}</span>
+          <span class="tag ${t.status}" style="font-size:10px;">${t.status === 'published' ? '✅ Published' : '📝 Draft'}</span>
+          ${t.youtubeId ? `<span class="tag public" style="font-size:10px;">▶️ YouTube</span>` : ''}
+        </div>
+      </div>
+      <div style="display:flex;align-items:center;gap:8px;flex-shrink:0;">
+        <label class="switch" title="Publish/Draft">
+          <input type="checkbox" ${t.status === 'published' ? 'checked' : ''} onchange="toggleTutorialStatus('${t._id}', this.checked)">
+          <span class="switch-slider"></span>
+        </label>
+        <button class="btn btn-secondary btn-sm" onclick="openTutorialModal('${t._id}')">✎ Edit</button>
+        <button class="btn btn-danger btn-sm" onclick="deleteTutorial('${t._id}')">🗑</button>
+      </div>
+    </div>`;
+  }).join('');
+}
+
+async function toggleTutorialStatus(id, isPublished) {
+  const status = isPublished ? 'published' : 'draft';
+  try {
+    await api(`/api/admin/tutorials/${id}/status`, { method: 'PUT', body: JSON.stringify({ status }) });
+    showToast(isPublished ? '✅ Tutorial dipublish.' : '✅ Tutorial dijadikan draft.', 'success');
+    const t = _tutorialList.find(x => x._id === id);
+    if (t) t.status = status;
+    renderTutorialStatusFilter();
+    drawTutorialAdminList();
+  } catch (e) {
+    showToast('Gagal: ' + e.message, 'error');
+    renderTutorialAdmin();
+  }
+}
+
+async function deleteTutorial(id) {
+  const t = _tutorialList.find(x => x._id === id);
+  if (!confirm(`Yakin mau hapus tutorial "${t?.title || ''}"? Tindakan ini tidak bisa dibatalkan.`)) return;
+  try {
+    await api(`/api/admin/tutorials/${id}`, { method: 'DELETE' });
+    showToast('✅ Tutorial dihapus.', 'success');
+    renderTutorialAdmin();
+  } catch (e) {
+    showToast('Gagal hapus tutorial: ' + e.message, 'error');
+  }
+}
+
+// Quill dibuat sekali (lazy) & dipakai ulang tiap buka modal. Toolbar sengaja
+// tidak menyertakan tombol image/video — itu diisi lewat kolom Gambar
+// Pendukung & Link YouTube terpisah di modal, bukan disisipkan ke dalam konten.
+function ensureTutorialQuill() {
+  if (_tutorialQuill) return;
+  if (typeof Quill === 'undefined') return; // CDN gagal load (mis. offline) — modal tetap jalan tanpa rich text editor
+  _tutorialQuill = new Quill('#tutorialContentEditor', {
+    theme: 'snow',
+    placeholder: 'Tulis isi tutorial di sini...',
+    modules: {
+      toolbar: [
+        [{ header: [1, 2, 3, false] }],
+        ['bold', 'italic', 'underline', 'strike'],
+        [{ list: 'ordered' }, { list: 'bullet' }],
+        ['blockquote', 'code-block', 'link'],
+        ['clean']
+      ]
+    }
+  });
+}
+
+function getTutorialContentValue() {
+  if (_tutorialQuill) return _tutorialQuill.root.innerHTML;
+  return document.querySelector('#tutorialContentEditor')?.innerHTML || '';
+}
+
+function setTutorialContentValue(html) {
+  if (_tutorialQuill) _tutorialQuill.root.innerHTML = html || '';
+}
+
+function clearTutorialImage(which) {
+  if (which === 'thumbnail') {
+    _tutorialThumbPayload = { url: '', data: '' };
+    document.getElementById('tutorialThumbnailUrl').value = '';
+    document.getElementById('tutorialThumbnailFile').value = '';
+    document.getElementById('tutorialThumbnailPreviewWrap').style.display = 'none';
+  } else {
+    _tutorialImagePayload = { url: '', data: '' };
+    document.getElementById('tutorialImageUrl').value = '';
+    document.getElementById('tutorialImageFile').value = '';
+    document.getElementById('tutorialImagePreviewWrap').style.display = 'none';
+  }
+}
+
+function showTutorialImagePreview(which, src) {
+  const img = document.getElementById(which === 'thumbnail' ? 'tutorialThumbnailPreviewImg' : 'tutorialImagePreviewImg');
+  const wrap = document.getElementById(which === 'thumbnail' ? 'tutorialThumbnailPreviewWrap' : 'tutorialImagePreviewWrap');
+  img.src = src;
+  wrap.style.display = 'block';
+}
+
+function wireTutorialImageInputs(which) {
+  const fileId = which === 'thumbnail' ? 'tutorialThumbnailFile' : 'tutorialImageFile';
+  const urlId = which === 'thumbnail' ? 'tutorialThumbnailUrl' : 'tutorialImageUrl';
+  document.getElementById(fileId)?.addEventListener('change', (e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    if (file.size > 2 * 1024 * 1024) {
+      showToast('Ukuran gambar maksimal 2MB.', 'error');
+      e.target.value = '';
+      return;
+    }
+    const reader = new FileReader();
+    reader.onload = () => {
+      const payload = { url: '', data: reader.result };
+      if (which === 'thumbnail') _tutorialThumbPayload = payload; else _tutorialImagePayload = payload;
+      document.getElementById(urlId).value = '';
+      showTutorialImagePreview(which, reader.result);
+    };
+    reader.readAsDataURL(file);
+  });
+  document.getElementById(urlId)?.addEventListener('input', (e) => {
+    const url = e.target.value.trim();
+    if (url) {
+      const payload = { url, data: '' };
+      if (which === 'thumbnail') _tutorialThumbPayload = payload; else _tutorialImagePayload = payload;
+      document.getElementById(fileId).value = '';
+      showTutorialImagePreview(which, url);
+    } else if (!document.getElementById(fileId).files?.length) {
+      clearTutorialImage(which);
+    }
+  });
+}
+wireTutorialImageInputs('thumbnail');
+wireTutorialImageInputs('image');
+
+document.getElementById('tutorialStatusSegment')?.querySelectorAll('.segmented-opt').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const status = btn.dataset.status;
+    document.getElementById('tutorialStatus').value = status;
+    document.getElementById('tutorialStatusSegment').dataset.value = status;
+    document.getElementById('tutorialStatusSegment').querySelectorAll('.segmented-opt').forEach(b => b.classList.toggle('active', b.dataset.status === status));
+  });
+});
+
+function openTutorialModal(id) {
+  _tutorialEditId = id || null;
+  const t = id ? _tutorialList.find(x => x._id === id) : null;
+
+  document.getElementById('tutorialModalTitle').textContent = t ? 'Edit Tutorial' : 'Tambah Tutorial';
+  document.getElementById('tutorialTitle').value = t?.title || '';
+  document.getElementById('tutorialCategory').value = t?.category || '';
+  document.getElementById('tutorialDescription').value = t?.description || '';
+  document.getElementById('tutorialYoutubeUrl').value = t?.youtubeId ? `https://youtu.be/${t.youtubeId}` : '';
+
+  const status = t?.status === 'draft' ? 'draft' : 'published';
+  document.getElementById('tutorialStatus').value = status;
+  document.getElementById('tutorialStatusSegment').dataset.value = status;
+  document.getElementById('tutorialStatusSegment').querySelectorAll('.segmented-opt').forEach(b => b.classList.toggle('active', b.dataset.status === status));
+
+  _tutorialThumbPayload = { url: t?.thumbnailUrl || '', data: t?.thumbnailData || '' };
+  document.getElementById('tutorialThumbnailUrl').value = t?.thumbnailUrl || '';
+  document.getElementById('tutorialThumbnailFile').value = '';
+  if (t?.thumbnailData || t?.thumbnailUrl) showTutorialImagePreview('thumbnail', t.thumbnailData || t.thumbnailUrl);
+  else document.getElementById('tutorialThumbnailPreviewWrap').style.display = 'none';
+
+  _tutorialImagePayload = { url: t?.imageUrl || '', data: t?.imageData || '' };
+  document.getElementById('tutorialImageUrl').value = t?.imageUrl || '';
+  document.getElementById('tutorialImageFile').value = '';
+  if (t?.imageData || t?.imageUrl) showTutorialImagePreview('image', t.imageData || t.imageUrl);
+  else document.getElementById('tutorialImagePreviewWrap').style.display = 'none';
+
+  ensureTutorialQuill();
+  setTutorialContentValue(t?.content || '');
+
+  document.getElementById('tutorialModalBackdrop').style.display = 'flex';
+}
+
+function closeTutorialModal() {
+  document.getElementById('tutorialModalBackdrop').style.display = 'none';
+  _tutorialEditId = null;
+}
+
+document.getElementById('btnAddTutorial')?.addEventListener('click', () => openTutorialModal(null));
+
+document.getElementById('btnSaveTutorial')?.addEventListener('click', async () => {
+  const btn = document.getElementById('btnSaveTutorial');
+  const payload = {
+    title: document.getElementById('tutorialTitle').value.trim(),
+    category: document.getElementById('tutorialCategory').value.trim(),
+    description: document.getElementById('tutorialDescription').value.trim(),
+    youtubeUrl: document.getElementById('tutorialYoutubeUrl').value.trim(),
+    status: document.getElementById('tutorialStatus').value,
+    content: getTutorialContentValue(),
+    thumbnailUrl: _tutorialThumbPayload.url || '',
+    thumbnailData: _tutorialThumbPayload.data || '',
+    imageUrl: _tutorialImagePayload.url || '',
+    imageData: _tutorialImagePayload.data || ''
+  };
+
+  if (!payload.title) { showToast('Judul tutorial wajib diisi.', 'error'); return; }
+  const plainContent = payload.content.replace(/<[^>]*>/g, '').trim();
+  if (!plainContent) { showToast('Isi tutorial wajib diisi.', 'error'); return; }
+
+  btn.disabled = true; btn.textContent = 'Menyimpan...';
+  try {
+    if (_tutorialEditId) {
+      await api(`/api/admin/tutorials/${_tutorialEditId}`, { method: 'PUT', body: JSON.stringify(payload) });
+    } else {
+      await api('/api/admin/tutorials', { method: 'POST', body: JSON.stringify(payload) });
+    }
+    showToast('✅ Tutorial berhasil disimpan.', 'success');
+    closeTutorialModal();
+    renderTutorialAdmin();
+  } catch (e) {
+    showToast('Gagal simpan tutorial: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = 'Simpan Tutorial';
   }
 });
 

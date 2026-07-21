@@ -567,6 +567,9 @@ const LOG_CATALOG = {
   admin_add_bypass:        { label: 'Tambah Bypass',                       icon: '➕', category: 'catalog', status: 'success' },
   admin_edit_bypass:       { label: 'Edit Bypass',                         icon: '✏️', category: 'catalog', status: 'success' },
   admin_delete_bypass:     { label: 'Hapus Bypass',                        icon: '🗑️', category: 'catalog', status: 'warning' },
+  admin_add_tutorial:      { label: 'Tambah Tutorial',                     icon: '➕', category: 'catalog', status: 'success' },
+  admin_edit_tutorial:     { label: 'Edit Tutorial',                       icon: '✏️', category: 'catalog', status: 'success' },
+  admin_delete_tutorial:   { label: 'Hapus Tutorial',                      icon: '🗑️', category: 'catalog', status: 'warning' },
   admin_add_voucher:       { label: 'Tambah Voucher',                      icon: '➕', category: 'catalog', status: 'success', reserved: true },
   admin_edit_voucher:      { label: 'Edit Voucher',                        icon: '✏️', category: 'catalog', status: 'success', reserved: true },
   admin_delete_voucher:    { label: 'Hapus Voucher',                       icon: '🗑️', category: 'catalog', status: 'warning', reserved: true },
@@ -1210,6 +1213,9 @@ async function connectDB() {
     await db.collection('deviceLogs').createIndex({ createdAt: -1 });
     await db.collection('banners').createIndex({ order: 1 });
     await db.collection('banners').createIndex({ isActive: 1 });
+    await db.collection('tutorials').createIndex({ status: 1, createdAt: -1 });
+    await db.collection('tutorials').createIndex({ category: 1 });
+    await db.collection('tutorials').createIndex({ title: 'text', description: 'text' });
     await db.collection('leaderboardHistory').createIndex({ weekStart: -1 });
     await db.collection('hubcapApiKeys').createIndex({ createdAt: 1 });
 
@@ -3603,6 +3609,238 @@ app.delete('/api/admin/banners/:id', requireAdmin, async (req, res) => {
   }).catch(() => {});
 
   broadcastActiveBanners();
+  res.json({ success: true });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// TUTORIAL — Halaman Tutorial (App) & Kelola Tutorial (Admin Web)
+// Sama seperti Banner: thumbnail & gambar disimpan sebagai data URI base64 di
+// Mongo (boleh juga link eksternal), jadi tidak butuh disk/storage terpisah —
+// aman dipakai di hosting apa pun termasuk yang filesystem-nya ephemeral.
+//
+// "Isi Tutorial" adalah rich text (HTML) hasil editor Admin Web, disanitasi
+// ketat sebelum disimpan (lihat sanitizeTutorialContent) — SENGAJA tidak
+// mengizinkan <img>/<iframe>/<script> di dalam isi tutorial, karena gambar &
+// video tutorial sudah punya kolom terpisah (imageData/imageUrl & youtubeId)
+// supaya ukuran dokumen tetap terkendali & gampang diaudit.
+//
+// Realtime: setiap Tambah/Edit/Hapus/ubah status Publish-Draft di Admin Web
+// langsung di-broadcast lewat WebSocket ('tutorials:update') ke semua device
+// App yang online — App tidak perlu update launcher ataupun restart sama sekali.
+// ══════════════════════════════════════════════════════════════════════════
+const TUTORIAL_MAX_THUMB_BYTES = 2 * 1024 * 1024; // 2MB — cukup buat thumbnail kartu
+const TUTORIAL_MAX_IMAGE_BYTES = 2 * 1024 * 1024; // 2MB — gambar pendukung di halaman isi tutorial
+const TUTORIAL_MAX_CONTENT_LEN = 200000; // ~200rb karakter HTML rich text — jauh lebih dari cukup buat 1 tutorial
+
+const TUTORIAL_CONTENT_SANITIZE_OPTIONS = {
+  allowedTags: [
+    'p','br','h1','h2','h3','h4','ul','ol','li','strong','em','b','i','u','s',
+    'blockquote','a','code','pre','hr','span'
+  ],
+  allowedAttributes: {
+    '*': ['class', 'style'],
+    a: ['href', 'target', 'rel']
+  },
+  allowedSchemes: ['http', 'https', 'mailto'],
+  allowProtocolRelative: false,
+  disallowedTagsMode: 'discard',
+  // <img>/<iframe>/<script> dibuang total dari isi tutorial dengan sengaja — lihat
+  // catatan di atas soal kenapa gambar & video tutorial punya kolom sendiri.
+  exclusiveFilter: (frame) => ['script', 'iframe', 'img', 'style'].includes(frame.tag)
+};
+
+function sanitizeTutorialContent(html) {
+  if (!html) return '';
+  const trimmed = String(html).slice(0, TUTORIAL_MAX_CONTENT_LEN);
+  return sanitizeHtml(trimmed, TUTORIAL_CONTENT_SANITIZE_OPTIONS);
+}
+
+// Thumbnail & gambar tutorial: boleh upload base64 (data URI) dari Admin Web ATAU
+// link gambar eksternal biasa — pola & validasinya sama persis dengan Banner.
+function validateTutorialImage(imageData, imageUrl, maxBytes, label) {
+  const out = { data: null, url: null };
+  if (imageData) {
+    const m = /^data:image\/(png|jpe?g|gif|webp);base64,([a-zA-Z0-9+/=]+)$/.exec(String(imageData).trim());
+    if (!m) throw new Error(`Format ${label} tidak didukung. Gunakan PNG, JPG, GIF, atau WEBP.`);
+    const approxBytes = Math.ceil((m[2].length * 3) / 4);
+    if (approxBytes > maxBytes) throw new Error(`Ukuran ${label} maksimal ${(maxBytes / 1024 / 1024).toFixed(1)}MB.`);
+    out.data = imageData;
+  } else if (imageUrl) {
+    const url = String(imageUrl).trim();
+    if (!/^https?:\/\//i.test(url)) throw new Error(`URL ${label} harus diawali http:// atau https://`);
+    out.url = url;
+  }
+  return out;
+}
+
+// Terima link YouTube dalam format apa pun (watch?v=, youtu.be/, /shorts/, /embed/)
+// dan kembalikan videoId murni (11 karakter) — App merakit sendiri <iframe embed>-nya
+// dari videoId ini, jadi tidak pernah percaya string mentah apa pun dari DB.
+function extractYoutubeId(url) {
+  if (!url) return '';
+  const s = String(url).trim();
+  const m = s.match(/(?:youtube\.com\/(?:watch\?v=|shorts\/|embed\/)|youtu\.be\/)([a-zA-Z0-9_-]{11})/);
+  return m ? m[1] : '';
+}
+
+async function broadcastPublishedTutorials() {
+  try {
+    const tutorials = await db.collection('tutorials')
+      .find({ status: 'published' })
+      .sort({ createdAt: -1 })
+      .toArray();
+    wsBroadcastAll('tutorials:update', tutorials);
+  } catch (e) { /* noop */ }
+}
+
+// ── APP: daftar tutorial published ──
+// Search & filter kategori dikerjakan di sisi client (sama seperti /api/games)
+// supaya instan tanpa fetch ulang server tiap kali ganti keyword/kategori.
+app.get('/api/tutorials', requireUser, async (req, res) => {
+  const tutorials = await db.collection('tutorials')
+    .find({ status: 'published' })
+    .sort({ createdAt: -1 })
+    .toArray();
+  res.json(tutorials);
+});
+
+// ── ADMIN: Kelola Tutorial ──
+app.get('/api/admin/tutorials', requireAdmin, async (req, res) => {
+  const tutorials = await db.collection('tutorials').find({}).sort({ createdAt: -1 }).toArray();
+  res.json(tutorials);
+});
+
+app.post('/api/admin/tutorials', requireAdmin, async (req, res) => {
+  try {
+    const {
+      title, description, content, category, youtubeUrl,
+      thumbnailData, thumbnailUrl, imageData, imageUrl, status
+    } = req.body;
+
+    if (!title?.trim()) return res.status(400).json({ error: 'Judul tutorial wajib diisi.' });
+    if (!content?.trim()) return res.status(400).json({ error: 'Isi tutorial wajib diisi.' });
+
+    const thumb = validateTutorialImage(thumbnailData, thumbnailUrl, TUTORIAL_MAX_THUMB_BYTES, 'thumbnail');
+    const img   = validateTutorialImage(imageData, imageUrl, TUTORIAL_MAX_IMAGE_BYTES, 'gambar');
+
+    const doc = {
+      title: title.trim(),
+      description: (description || '').trim(),
+      content: sanitizeTutorialContent(content),
+      category: (category || 'Umum').trim() || 'Umum',
+      youtubeId: extractYoutubeId(youtubeUrl),
+      thumbnailData: thumb.data, thumbnailUrl: thumb.url,
+      imageData: img.data, imageUrl: img.url,
+      status: status === 'draft' ? 'draft' : 'published',
+      createdAt: new Date(),
+      updatedAt: new Date()
+    };
+
+    const result = await db.collection('tutorials').insertOne(doc);
+
+    logActivity({
+      type: 'admin_add_tutorial',
+      username: req.admin?.username || 'Admin',
+      admin: req.admin?.username || 'Admin',
+      status: 'success',
+      ip: getReqIp(req),
+      description: `Admin menambahkan tutorial "${doc.title}".`,
+      meta: { tutorialId: result.insertedId, title: doc.title }
+    }).catch(() => {});
+
+    broadcastPublishedTutorials();
+    res.json({ ...doc, _id: result.insertedId });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.put('/api/admin/tutorials/:id', requireAdmin, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+    const {
+      title, description, content, category, youtubeUrl,
+      thumbnailData, thumbnailUrl, imageData, imageUrl, status
+    } = req.body;
+
+    const update = { updatedAt: new Date() };
+    if (title !== undefined) {
+      if (!title.trim()) return res.status(400).json({ error: 'Judul tutorial wajib diisi.' });
+      update.title = title.trim();
+    }
+    if (description !== undefined) update.description = (description || '').trim();
+    if (content !== undefined) {
+      if (!content.trim()) return res.status(400).json({ error: 'Isi tutorial wajib diisi.' });
+      update.content = sanitizeTutorialContent(content);
+    }
+    if (category !== undefined) update.category = (category || 'Umum').trim() || 'Umum';
+    if (youtubeUrl !== undefined) update.youtubeId = extractYoutubeId(youtubeUrl);
+    if (status !== undefined) update.status = status === 'draft' ? 'draft' : 'published';
+
+    if (thumbnailData !== undefined || thumbnailUrl !== undefined) {
+      const thumb = validateTutorialImage(thumbnailData, thumbnailUrl, TUTORIAL_MAX_THUMB_BYTES, 'thumbnail');
+      update.thumbnailData = thumb.data; update.thumbnailUrl = thumb.url;
+    }
+    if (imageData !== undefined || imageUrl !== undefined) {
+      const img = validateTutorialImage(imageData, imageUrl, TUTORIAL_MAX_IMAGE_BYTES, 'gambar');
+      update.imageData = img.data; update.imageUrl = img.url;
+    }
+
+    await db.collection('tutorials').updateOne({ _id: new ObjectId(req.params.id) }, { $set: update });
+
+    logActivity({
+      type: 'admin_edit_tutorial',
+      username: req.admin?.username || 'Admin',
+      admin: req.admin?.username || 'Admin',
+      status: 'success',
+      ip: getReqIp(req),
+      description: `Admin mengubah tutorial "${update.title || req.params.id}".`,
+      meta: { tutorialId: req.params.id }
+    }).catch(() => {});
+
+    broadcastPublishedTutorials();
+    res.json({ success: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// Toggle cepat Publish <-> Draft tanpa perlu buka form Edit lengkap.
+app.put('/api/admin/tutorials/:id/status', requireAdmin, async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+  const status = req.body.status === 'draft' ? 'draft' : 'published';
+  await db.collection('tutorials').updateOne({ _id: new ObjectId(req.params.id) }, { $set: { status, updatedAt: new Date() } });
+
+  logActivity({
+    type: 'admin_edit_tutorial',
+    username: req.admin?.username || 'Admin',
+    admin: req.admin?.username || 'Admin',
+    status: 'success',
+    ip: getReqIp(req),
+    description: `Admin mengubah status tutorial menjadi ${status === 'draft' ? 'Draft' : 'Published'}.`,
+    meta: { tutorialId: req.params.id, status }
+  }).catch(() => {});
+
+  broadcastPublishedTutorials();
+  res.json({ success: true });
+});
+
+app.delete('/api/admin/tutorials/:id', requireAdmin, async (req, res) => {
+  if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+  const tutorial = await db.collection('tutorials').findOne({ _id: new ObjectId(req.params.id) });
+  await db.collection('tutorials').deleteOne({ _id: new ObjectId(req.params.id) });
+
+  logActivity({
+    type: 'admin_delete_tutorial',
+    username: req.admin?.username || 'Admin',
+    admin: req.admin?.username || 'Admin',
+    status: 'warning',
+    ip: getReqIp(req),
+    description: `Admin menghapus tutorial "${tutorial?.title || req.params.id}".`,
+    meta: { tutorialId: req.params.id, title: tutorial?.title }
+  }).catch(() => {});
+
+  broadcastPublishedTutorials();
   res.json({ success: true });
 });
 
