@@ -77,6 +77,32 @@ function parseZip(buf) {
 
 let mainWindow;
 
+// CATATAN HISTORI DEBUG (biar gak keulang lagi kalau ada yang coba fix ini lagi):
+// 1) file:// origin gak punya Referer sama sekali -> YouTube tolak (Error 153).
+// 2) Sempat coba paksa Referer="https://www.youtube.com/" -> malah Error 152,
+//    soalnya "asal video dari YouTube sendiri" itu kontradiktif buat YouTube.
+// 3) Sempat coba load app lewat local HTTP server (127.0.0.1) supaya dapat
+//    origin HTTP asli -> video YouTube JADI JALAN, TAPI ini malah bikin semua
+//    fetch app ke backend sendiri (SERVER_URL) gagal dengan
+//    ERR_NETWORK_ACCESS_DENIED (Windows ngeblok network access dari process
+//    yang baru buka local listening server kayak gini). Jadi di-revert.
+// FINAL: tetap file:// untuk app utama (biar API ke backend tetap normal),
+// dan Referer/origin video di-set ke domain PRODUKSI KITA SENDIRI
+// (OWN_SERVER_HOST / SERVER_URL di app.js) — bukan file://, bukan juga
+// youtube.com — supaya YouTube lihat origin yang valid & make sense (situs
+// pihak ketiga yang nge-embed videonya), tanpa kontradiksi dan tanpa ganti
+// cara app di-load sama sekali.
+
+// YouTube embed player menolak User-Agent bawaan Electron (mengandung string
+// "Electron/x.x.x") dan langsung balas Error 153 "Video player configuration
+// error" — ini kejadian di SEMUA embed YouTube di app Electron manapun yang
+// belum di-override UA-nya, terlepas dari pakai <iframe> atau <webview>, dan
+// terlepas dari video itu sendiri bebas restriction atau tidak.
+// Fix: samarkan UA jadi Chrome biasa supaya YouTube menganggapnya browser normal.
+const SPOOFED_USER_AGENT =
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+app.userAgentFallback = SPOOFED_USER_AGENT;
+
 function createWindow() {
   mainWindow = new BrowserWindow({
     width: 1180,
@@ -90,16 +116,26 @@ function createWindow() {
       contextIsolation: true,
       nodeIntegration: false,
       // Video tutorial (YouTube/TikTok) di-embed pakai <webview>, bukan <iframe>.
-      // App di-load lewat file:// (loadFile di bawah), dan YouTube menolak embed
-      // <iframe> dari origin file:// (persis Error 153 "Video player configuration
-      // error"). <webview> membuka halaman embed sebagai konteks navigasi sendiri
-      // (origin youtube.com/tiktok.com yang sebenarnya), jadi lolos pengecekan itu.
       webviewTag: true
     }
   });
 
   mainWindow.loadFile(path.join(__dirname, 'app', 'index.html'));
+
+  // Pastikan webview (video tutorial) juga pakai UA yang sudah disamarkan,
+  // bukan cuma window utama — guest page webview kadang punya webContents
+  // sendiri yang gak otomatis kebawa app.userAgentFallback di semua versi Electron.
+  // Catatan: UA utama sekarang di-set langsung lewat atribut `useragent` pada
+  // tag <webview> di app/index.html supaya berlaku SEBELUM navigasi pertama ke
+  // YouTube/TikTok (menghindari race condition — did-attach-webview kadang
+  // baru jalan setelah request pertama sudah terlanjur terkirim pakai UA lama).
+  // Baris setUserAgent tetap dipertahankan sebagai jaring pengaman untuk
+  // navigasi berikutnya di dalam webview yang sama (misal ganti video).
+  mainWindow.webContents.on('did-attach-webview', (event, webContents) => {
+    webContents.setUserAgent(SPOOFED_USER_AGENT);
+  });
 }
+
 
 app.whenReady().then(() => {
   createWindow();

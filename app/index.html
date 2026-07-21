@@ -41,6 +41,7 @@
       <a href="#" data-page="tutorial"><span class="ic">📘</span> Tutorial</a>
       <a href="#" data-page="store"><span class="ic">🛒</span> Store <span class="badge update">Update</span></a>
       <a href="#" data-page="histori"><span class="ic">🕒</span> Histori</a>
+      <a href="#" data-page="voucher"><span class="ic">🎟️</span> Claim Voucher</a>
       <a href="#" data-page="setting"><span class="ic">⚙</span> Setting</a>
       <a href="#" id="navLogout"><span class="ic">⏻</span> Log Out</a>
     </nav>
@@ -194,6 +195,24 @@
       <div id="historiListPage"></div>
     </div>
 
+    <!-- ═══════════ PAGE: CLAIM VOUCHER ═══════════ -->
+    <div class="page-content" id="pageVoucher" style="display:none;">
+      <div class="voucher-claim-wrap">
+        <div class="voucher-claim-card">
+          <div class="voucher-claim-icon">🎟️</div>
+          <div class="voucher-claim-title">Claim Voucher</div>
+          <div class="voucher-claim-text">Punya kode voucher paket Gold/Platinum? Masukkan di bawah untuk langsung mengaktifkan paketmu.</div>
+
+          <div class="voucher-claim-form">
+            <input type="text" id="voucherCodeInput" class="voucher-claim-input" placeholder="Masukkan kode voucher..." autocomplete="off" maxlength="32">
+            <button class="btn-primary voucher-claim-btn" id="btnClaimVoucher">Claim</button>
+          </div>
+
+          <div id="voucherClaimResult" class="voucher-claim-result" style="display:none;"></div>
+        </div>
+      </div>
+    </div>
+
     <!-- ═══════════ PAGE: BYPASS (nampilin semua bypass yang tersedia buat role kamu) ═══════════ -->
     <div class="page-content" id="pageBypasses" style="display:none;">
       <section class="section">
@@ -255,7 +274,7 @@
 
           <div class="tutorial-reader__video" id="tutorialDetailVideoWrap" style="display:none;">
             <div class="tutorial-reader__video-inner">
-              <webview id="tutorialDetailVideo" src="" allowpopups></webview>
+              <webview id="tutorialDetailVideo" src="" allowpopups useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"></webview>
             </div>
           </div>
         </div>

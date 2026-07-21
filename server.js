@@ -142,6 +142,11 @@ const ryuKeyManager = require('./ryuKeyManager')({
   logActivity: (...args) => logActivity(...args)
 });
 
+// Voucher Paket Gold/Platinum — lihat voucherManager.js. Modul ini cuma ngurus
+// data voucher + logika klaim yang aman dari race condition; efek ke akun user
+// (ubah role/masa aktif/notifikasi) tetap di server.js (lihat POST /api/voucher/claim).
+const voucherManager = require('./voucherManager')({ getDb: () => db });
+
 // ── PROXY STREAM dari HubCap → client ──
 // PENTING: server yang men-download dari HubCap (pakai axios + Bearer key), lalu
 // meneruskan (pipe) hasilnya langsung ke client — BUKAN client yang fetch langsung
@@ -549,6 +554,12 @@ const LOG_CATALOG = {
   set_paket:             { label: 'Set Paket User',                icon: '📦', category: 'billing',    status: 'success' },
   purchase:              { label: 'Pembelian Paket',                icon: '💳', category: 'billing',    status: 'success' },
   renewal:                { label: 'Perpanjangan Paket',             icon: '🔄', category: 'billing',    status: 'success' },
+  voucher_create:          { label: 'Buat Voucher',                     icon: '🎟️', category: 'billing',    status: 'success' },
+  voucher_edit:            { label: 'Edit Voucher',                     icon: '✏️', category: 'billing',    status: 'success' },
+  voucher_delete:          { label: 'Hapus Voucher',                    icon: '🗑️', category: 'billing',    status: 'warning' },
+  voucher_toggle:          { label: 'Aktif/Nonaktifkan Voucher',        icon: '🔁', category: 'billing',    status: 'success' },
+  voucher_claim_success:   { label: 'Claim Voucher Berhasil',           icon: '🎟️', category: 'billing',    status: 'success' },
+  voucher_claim_failed:    { label: 'Claim Voucher Gagal',              icon: '⚠️', category: 'billing',    status: 'warning' },
   admin_reset_quota:      { label: 'Reset Download/Bypass Limit',     icon: '♻️', category: 'moderation', status: 'success' },
   device_reset:           { label: 'Reset Device',                    icon: '🖥️', category: 'moderation', status: 'success' },
   device_allow_change:    { label: 'Izinkan Ganti Device',             icon: '🔓', category: 'moderation', status: 'success' },
@@ -697,7 +708,8 @@ const NOTIF_META = {
   renewal:          { status: 'info',    label: 'Perpanjangan Paket' },
   announcement:     { status: 'info',    label: 'Pengumuman Admin' },
   login:            { status: 'info',    label: 'Login Akun' },
-  system_error:     { status: 'error',   label: 'Error Sistem' }
+  system_error:     { status: 'error',   label: 'Error Sistem' },
+  voucher_claim:    { status: 'success', label: 'Voucher Berhasil Diklaim' }
 };
 
 // Fungsi utama pengiriman notifikasi. Selalu simpan ke DB (in-app, muncul di lonceng
@@ -1167,7 +1179,8 @@ const WEBHOOK_CATEGORY_BY_NOTIF_TYPE = {
   renewal:           'renewal',
   announcement:      'announcement',
   login:             'login',
-  system_error:      'system_error'
+  system_error:      'system_error',
+  voucher_claim:      'purchase' // reuse channel "Pembelian Paket" — voucher juga memberi paket Gold/Platinum
 };
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1218,6 +1231,8 @@ async function connectDB() {
     await db.collection('tutorials').createIndex({ title: 'text', description: 'text' });
     await db.collection('leaderboardHistory').createIndex({ weekStart: -1 });
     await db.collection('hubcapApiKeys').createIndex({ createdAt: 1 });
+    // Voucher Paket Gold/Platinum — kode unik + cegah 1 user klaim voucher sama 2x.
+    await voucherManager.ensureIndexes();
 
     // Migrasi satu kali: kalau ada HUBCAP_API_KEY* lama di .env tapi koleksi
     // hubcapApiKeys masih kosong, import jadi entri DB (lihat hubcapKeyManager.js).
@@ -2497,6 +2512,146 @@ app.post('/api/downloads/failed', requireUser, async (req, res) => {
     res.json({ success: true });
   } catch (e) {
     res.status(500).json({ error: e.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// APP — CLAIM VOUCHER (lihat voucherManager.js buat validasi & logika klaim
+// yang aman dari race condition). Berhasil klaim -> role user berubah ke
+// Gold/Platinum, masa aktif bertambah, limit paket ikut update otomatis
+// (limit dihitung dari role, lihat accountStatusSummary), realtime ke app user
+// (WS account:update) & Admin Web (WS user:update), semua tercatat di Logs.
+// ══════════════════════════════════════════════════════════════════════════
+const VOUCHER_FAIL_MESSAGE = {
+  invalid_code:    'Kode voucher tidak ditemukan/tidak valid.',
+  inactive:        'Voucher ini sedang dinonaktifkan oleh Admin.',
+  expired:         'Voucher ini sudah kedaluwarsa (masa berlaku habis).',
+  quota_full:      'Kuota voucher ini sudah habis.',
+  already_claimed: 'Kamu sudah pernah memakai voucher ini sebelumnya.'
+};
+
+app.post('/api/voucher/claim', requireUser, async (req, res) => {
+  const discordId = req.user.discordId;
+  const username = req.user.username || discordId;
+  const rawCode = String(req.body?.code || '');
+  const normCode = voucherManager.normalizeCode(rawCode);
+
+  const logFail = (reason, voucherSnapshot) => {
+    logActivity({
+      type: 'voucher_claim_failed',
+      username, discordId, status: 'warning',
+      ip: getReqIp(req),
+      description: `Claim voucher "${normCode || rawCode}" oleh ${username} GAGAL: ${VOUCHER_FAIL_MESSAGE[reason] || reason}.`,
+      meta: { code: normCode || rawCode, reason, voucherId: voucherSnapshot ? String(voucherSnapshot._id) : null }
+    }).catch(() => {});
+  };
+
+  try {
+    if (!normCode) {
+      return res.status(400).json({ error: 'Kode voucher wajib diisi.' });
+    }
+
+    const result = await voucherManager.claimVoucher({ code: normCode, discordId, username });
+
+    if (!result.ok) {
+      logFail(result.reason, result.voucher);
+      return res.status(400).json({ error: VOUCHER_FAIL_MESSAGE[result.reason] || 'Voucher tidak bisa diklaim.', reason: result.reason });
+    }
+
+    const voucher = result.voucher;
+    const user = await db.collection('users').findOne({ discordId });
+    if (!user) {
+      // Skenario nyaris mustahil (JWT valid tapi user hilang dari DB) — tapi kalau
+      // sampai kejadian, jangan biarkan slot/kuota voucher sudah kepakai sia-sia.
+      await db.collection('vouchers').updateOne({ _id: voucher._id }, { $inc: { usedCount: -1 } }).catch(() => {});
+      await db.collection('voucherRedemptions').deleteOne({ voucherId: voucher._id, discordId }).catch(() => {});
+      return res.status(404).json({ error: 'User tidak ditemukan.' });
+    }
+
+    const oldRole = user.role;
+    const durationMs = voucher.durationAmount * voucherManager.DURATION_UNIT_MS[voucher.durationUnit];
+    // Kalau user SAAT INI sudah di role yang SAMA dengan voucher & masih aktif ->
+    // masa aktifnya DITAMBAH (extend) dari activeUntil yang ada, bukan direset dari
+    // sekarang — biar user tidak dirugikan kalau masih ada sisa waktu berjalan.
+    // Kalau role beda / belum ada masa aktif aktif -> dihitung dari sekarang.
+    const now = new Date();
+    const hasActiveSameRole = oldRole === voucher.role && user.activeUntil && new Date(user.activeUntil) > now;
+    const baseTime = hasActiveSameRole ? new Date(user.activeUntil) : now;
+    const activeUntil = new Date(baseTime.getTime() + durationMs);
+
+    await db.collection('users').updateOne(
+      { discordId },
+      { $set: { role: voucher.role, activeUntil, roleUpdatedAt: now } }
+    );
+
+    // Sinkron ke Discord + DM cuma kalau rolenya beneran berubah (sama seperti alur
+    // Admin set-role) — kalau user platinum klaim voucher platinum lagi, rolenya
+    // tidak berubah jadi tidak perlu sinkron ulang role Discord, cukup extend waktu.
+    let discordSync = null;
+    if (oldRole !== voucher.role) {
+      discordSync = await roleSync.syncAppRoleToDiscord(discordId, voucher.role).catch(() => null);
+    }
+
+    const durationLabel = `${voucher.durationAmount} ${voucherManager.DURATION_UNIT_LABEL[voucher.durationUnit]}`;
+    const voucherFields = [
+      field('👤 Username', username, true),
+      field('🎟️ Kode Voucher', voucher.code, true),
+      field('📦 Paket', voucher.role.toUpperCase(), true),
+      field('⏱️ Durasi', durationLabel, true),
+      field('⏳ Aktif Sampai', fmtDateTimeWIB(activeUntil), true)
+    ];
+
+    notifyUser(discordId, {
+      type: 'voucher_claim',
+      title: 'Voucher Berhasil Diklaim!',
+      message: `Voucher "${voucher.code}" berhasil diklaim — paket ${voucher.role.toUpperCase()} kamu ${hasActiveSameRole ? 'diperpanjang' : 'aktif'} ${durationLabel}, sampai ${fmtDateTimeWIB(activeUntil)}.`,
+      fields: voucherFields,
+      dm: true, webhook: true
+    }).catch(() => {});
+
+    logActivity({
+      type: 'voucher_claim_success',
+      username, discordId, role: voucher.role, status: 'success',
+      ip: getReqIp(req),
+      before: oldRole,
+      after: voucher.role,
+      description: `${username} berhasil claim voucher "${voucher.code}" -> paket ${voucher.role.toUpperCase()} (${durationLabel}), aktif sampai ${fmtDateTimeWIB(activeUntil)}.`,
+      meta: { code: voucher.code, voucherId: String(voucher._id), role: voucher.role, durationAmount: voucher.durationAmount, durationUnit: voucher.durationUnit, activeUntil }
+    }).catch(() => {});
+
+    webhookManager.sendCategoryWebhook('purchase', {
+      embed: buildEmbed({
+        status: 'success',
+        title: 'Voucher Diklaim',
+        description: `Seorang user berhasil claim voucher paket.`,
+        fields: voucherFields,
+        thumbnail: APP_LOGO_URL || undefined,
+        appName: APP_NAME,
+        footerNote: 'Voucher Paket'
+      })
+    }).catch(() => {});
+
+    // Realtime — role/masa aktif user langsung update di app TANPA reload/restart,
+    // dan Admin Web (kalau lagi buka halaman Users/Voucher) ikut ter-update juga.
+    pushAccountUpdate(discordId).catch(() => {});
+    db.collection('users').findOne({ discordId })
+      .then(fresh => computeUserStats(discordId).then(stats => broadcastAdmin('user:update', publicUser(fresh, stats))))
+      .catch(() => {});
+    voucherManager.listVouchers()
+      .then(list => broadcastAdmin('voucher:update', list.map(voucherPublic)))
+      .catch(() => {});
+
+    res.json({
+      success: true,
+      role: voucher.role,
+      activeUntil,
+      durationLabel,
+      extended: hasActiveSameRole
+    });
+  } catch (e) {
+    console.error('[Voucher] Gagal klaim:', e);
+    logFail('server_error');
+    res.status(500).json({ error: 'Terjadi kesalahan di server, coba lagi sebentar.' });
   }
 });
 
@@ -4278,6 +4433,127 @@ app.put('/api/admin/users/:discordId/role', requireAdmin, async (req, res) => {
     roleRemoved: discordSync?.removed ?? [],
     activeUntil: update.activeUntil !== undefined ? update.activeUntil : (user.activeUntil || null)
   });
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// ADMIN — VOUCHER PAKET GOLD/PLATINUM (lihat voucherManager.js buat CRUD/logika
+// klaim yang atomic). Halaman "Kelola Voucher" di Admin Web.
+// ══════════════════════════════════════════════════════════════════════════
+function voucherPublic(v) {
+  const now = new Date();
+  const isExpired = !!(v.expiresAt && new Date(v.expiresAt) <= now);
+  const isFull = v.usedCount >= v.quota;
+  return {
+    id: String(v._id),
+    code: v.code,
+    role: v.role,
+    durationAmount: v.durationAmount,
+    durationUnit: v.durationUnit,
+    quota: v.quota,
+    usedCount: v.usedCount,
+    remaining: Math.max(0, v.quota - v.usedCount),
+    expiresAt: v.expiresAt,
+    active: v.active !== false,
+    isExpired,
+    isFull,
+    // Status ringkas buat badge di tabel Admin Web — satu sumber kebenaran biar
+    // konsisten dgn alasan gagal klaim yang dilihat user ("kenapa nonaktif").
+    status: v.active === false ? 'inactive' : isExpired ? 'expired' : isFull ? 'full' : 'active',
+    createdAt: v.createdAt,
+    createdBy: v.createdBy,
+    updatedAt: v.updatedAt
+  };
+}
+
+app.get('/api/admin/vouchers', requireAdmin, async (req, res) => {
+  try {
+    const vouchers = await voucherManager.listVouchers();
+    res.json({ vouchers: vouchers.map(voucherPublic) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/admin/vouchers', requireAdmin, async (req, res) => {
+  try {
+    const { code, role, durationAmount, durationUnit, quota, expiresAt } = req.body || {};
+    const voucher = await voucherManager.createVoucher({
+      code, role, durationAmount, durationUnit, quota, expiresAt,
+      createdBy: req.admin?.username || 'Admin'
+    });
+
+    logActivity({
+      type: 'voucher_create',
+      admin: req.admin?.username || 'Admin',
+      status: 'success',
+      ip: getReqIp(req),
+      description: `Admin membuat voucher "${voucher.code}" (${voucher.role.toUpperCase()}, ${voucher.durationAmount} ${voucherManager.DURATION_UNIT_LABEL[voucher.durationUnit]}, kuota ${voucher.quota}).`,
+      meta: { voucherId: String(voucher._id), code: voucher.code, role: voucher.role, quota: voucher.quota }
+    }).catch(() => {});
+
+    res.json({ success: true, voucher: voucherPublic(voucher) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.put('/api/admin/vouchers/:id', requireAdmin, async (req, res) => {
+  try {
+    const { code, role, durationAmount, durationUnit, quota, expiresAt, active } = req.body || {};
+    const voucher = await voucherManager.updateVoucher(req.params.id, { code, role, durationAmount, durationUnit, quota, expiresAt, active });
+
+    logActivity({
+      type: 'voucher_edit',
+      admin: req.admin?.username || 'Admin',
+      status: 'success',
+      ip: getReqIp(req),
+      description: `Admin mengubah voucher "${voucher.code}".`,
+      meta: { voucherId: String(voucher._id), code: voucher.code }
+    }).catch(() => {});
+
+    res.json({ success: true, voucher: voucherPublic(voucher) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.put('/api/admin/vouchers/:id/toggle', requireAdmin, async (req, res) => {
+  try {
+    const { active } = req.body || {};
+    const voucher = await voucherManager.updateVoucher(req.params.id, { active: !!active });
+
+    logActivity({
+      type: 'voucher_toggle',
+      admin: req.admin?.username || 'Admin',
+      status: 'success',
+      ip: getReqIp(req),
+      description: `Admin ${voucher.active ? 'mengaktifkan' : 'menonaktifkan'} voucher "${voucher.code}".`,
+      meta: { voucherId: String(voucher._id), code: voucher.code, active: voucher.active }
+    }).catch(() => {});
+
+    res.json({ success: true, voucher: voucherPublic(voucher) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.delete('/api/admin/vouchers/:id', requireAdmin, async (req, res) => {
+  try {
+    const voucher = await voucherManager.deleteVoucher(req.params.id);
+
+    logActivity({
+      type: 'voucher_delete',
+      admin: req.admin?.username || 'Admin',
+      status: 'warning',
+      ip: getReqIp(req),
+      description: `Admin menghapus voucher "${voucher.code}".`,
+      meta: { voucherId: String(voucher._id), code: voucher.code }
+    }).catch(() => {});
+
+    res.json({ success: true });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
 });
 
 // "Atur Masa Aktif" — ubah/perpanjang masa aktif Gold/Platinum TANPA ganti paket.

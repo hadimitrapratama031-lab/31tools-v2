@@ -98,6 +98,52 @@
   }
   .blank-page-text{font-size:13px;}
 
+  /* ---------------- CLAIM VOUCHER ---------------- */
+  .voucher-claim-wrap{
+    display:flex;align-items:center;justify-content:center;
+    min-height:60vh;padding:20px;
+  }
+  .voucher-claim-card{
+    width:100%;max-width:420px;
+    background:var(--panel-solid);
+    border:1px solid rgba(255,255,255,0.08);
+    border-radius:var(--radius-lg);
+    padding:36px 30px;text-align:center;
+    box-shadow:0 24px 60px rgba(10,5,25,0.45);
+  }
+  .voucher-claim-icon{font-size:42px;margin-bottom:10px;}
+  .voucher-claim-title{
+    font-family:'Poppins',sans-serif;font-weight:700;font-size:19px;
+    color:var(--text-main);margin-bottom:8px;
+  }
+  .voucher-claim-text{
+    font-size:12.5px;color:var(--text-dim);line-height:1.5;margin-bottom:22px;
+  }
+  .voucher-claim-form{display:flex;gap:8px;}
+  .voucher-claim-input{
+    flex:1;min-width:0;padding:12px 14px;border-radius:12px;
+    background:rgba(255,255,255,0.05);border:1px solid rgba(255,255,255,0.1);
+    color:var(--text-main);font-size:13.5px;font-weight:700;letter-spacing:.04em;
+    text-transform:uppercase;text-align:center;
+    transition:border-color .15s ease, background .15s ease;
+  }
+  .voucher-claim-input::placeholder{text-transform:none;font-weight:500;letter-spacing:normal;color:var(--text-faint);}
+  .voucher-claim-input:focus{outline:none;border-color:var(--accent);background:rgba(124,92,255,0.1);}
+  .voucher-claim-btn{
+    flex-shrink:0;padding:12px 22px;border-radius:12px;border:none;cursor:pointer;
+    font-weight:700;font-size:13px;
+    background:linear-gradient(135deg,var(--accent),var(--bg-pink));color:#fff;
+    transition:transform .12s ease, opacity .15s ease;
+  }
+  .voucher-claim-btn:hover{transform:translateY(-1px);}
+  .voucher-claim-btn:disabled{opacity:.6;cursor:not-allowed;transform:none;}
+  .voucher-claim-result{
+    margin-top:18px;padding:12px 14px;border-radius:12px;
+    font-size:12.5px;line-height:1.5;text-align:left;
+  }
+  .voucher-claim-result.success{background:rgba(61,220,151,0.12);border:1px solid rgba(61,220,151,0.3);color:#3ddc97;}
+  .voucher-claim-result.error{background:rgba(255,107,129,0.12);border:1px solid rgba(255,107,129,0.3);color:#ff8fa3;}
+
   /* ---------------- GAMES ON SALE PLACEHOLDER ---------------- */
   .sale-coming-soon{
     display:flex;flex-direction:column;align-items:center;justify-content:center;

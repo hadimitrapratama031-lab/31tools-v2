@@ -114,6 +114,10 @@
           <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg></span>
           Paket
         </button>
+        <button class="nav-item" data-page="voucher">
+          <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5H7a2 2 0 00-2 2v3a2 2 0 010 4v3a2 2 0 002 2h2m6-14h2a2 2 0 012 2v3a2 2 0 000 4v3a2 2 0 01-2 2h-2M9 5v14"/></svg></span>
+          Kelola Voucher
+        </button>
       </nav>
     </div>
     <div class="sidebar-footer">
@@ -903,6 +907,29 @@
         </div>
       </div>
     </section>
+
+    <!-- VOUCHER PAGE -->
+    <section class="page" id="pageVoucher">
+      <div class="page-header">
+        <div class="page-header-left">
+          <div class="page-header-icon" style="background:rgba(167,139,250,.16);">🎟️</div>
+          <div>
+            <div class="page-header-title">Kelola Voucher</div>
+            <div class="page-header-desc">Voucher paket Gold/Platinum yang bisa diklaim user lewat menu "Claim Voucher" di App — role, masa aktif, dan limit user langsung terupdate realtime begitu voucher diklaim.</div>
+          </div>
+        </div>
+        <div class="page-header-right">
+          <button class="btn btn-primary" id="btnAddVoucher">+ Buat Voucher</button>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <div class="table-toolbar">
+          <div class="table-toolbar-title">🎟️ Daftar Voucher</div>
+        </div>
+        <table id="tableVoucher"></table>
+      </div>
+    </section>
   </main>
 </div>
 
@@ -1463,6 +1490,72 @@
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeTutorialModal()">Batal</button>
       <button class="btn btn-primary" id="btnSaveTutorial">Simpan Tutorial</button>
+    </div>
+  </div>
+</div>
+
+<!-- VOUCHER MODAL -->
+<div class="modal-backdrop" id="voucherModalBackdrop" style="display:none;" onclick="if(event.target===this)closeVoucherModal()">
+  <div class="modal">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="voucherModalTitle">Buat Voucher</div>
+        <div class="modal-subtitle">User memasukkan kode ini lewat menu "Claim Voucher" di App untuk mendapatkan paket Gold/Platinum otomatis.</div>
+      </div>
+      <button class="modal-close" onclick="closeVoucherModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="voucherId">
+
+      <div class="form-group">
+        <label class="form-label">Kode Voucher <span style="color:var(--text-faint);font-weight:400;">— huruf/angka/-/_, 3-32 karakter</span></label>
+        <input class="form-input" type="text" id="voucherCode" placeholder="Contoh: GOLD7HARI, PLATINUM2026" style="text-transform:uppercase;">
+      </div>
+
+      <div class="form-row">
+        <div class="form-group" style="flex:1;">
+          <label class="form-label">Paket yang Diberikan</label>
+          <div class="segmented" id="voucherRoleSegment" data-value="gold">
+            <button type="button" class="segmented-opt" data-role="gold">🥇 Gold</button>
+            <button type="button" class="segmented-opt" data-role="platinum">💎 Platinum</button>
+          </div>
+          <input type="hidden" id="voucherRole" value="gold">
+        </div>
+      </div>
+
+      <div class="form-row">
+        <div class="form-group" style="flex:1;">
+          <label class="form-label">Durasi Paket</label>
+          <input class="form-input" type="number" min="1" step="1" id="voucherDurationAmount" placeholder="Contoh: 7">
+        </div>
+        <div class="form-group" style="width:160px;">
+          <label class="form-label">Satuan</label>
+          <select class="form-input" id="voucherDurationUnit">
+            <option value="days" selected>Hari</option>
+            <option value="hours">Jam</option>
+            <option value="minutes">Menit</option>
+          </select>
+        </div>
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Jumlah Kuota Voucher <span style="color:var(--text-faint);font-weight:400;">— berapa kali total voucher ini boleh diklaim (oleh user berbeda-beda)</span></label>
+        <input class="form-input" type="number" min="1" step="1" id="voucherQuota" placeholder="Contoh: 50">
+      </div>
+
+      <div class="form-group">
+        <label class="form-label">Masa Berlaku Voucher <span style="color:var(--text-faint);font-weight:400;">(opsional — kosongkan kalau tidak ada batas waktu klaim)</span></label>
+        <input class="form-input" type="datetime-local" id="voucherExpiresAt">
+      </div>
+
+      <div class="form-group" style="display:flex;align-items:center;gap:10px;" id="voucherActiveRow">
+        <label class="switch"><input type="checkbox" id="voucherActive" checked><span class="switch-slider"></span></label>
+        <label class="form-label" style="margin:0;" for="voucherActive">Aktifkan voucher ini</label>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeVoucherModal()">Batal</button>
+      <button class="btn btn-primary" id="btnSaveVoucher">Simpan Voucher</button>
     </div>
   </div>
 </div>

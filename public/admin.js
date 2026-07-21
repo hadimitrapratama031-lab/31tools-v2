@@ -235,6 +235,7 @@ function loadPage(page) {
   else if (page === 'webhooks') renderWebhookSettings();
   else if (page === 'hubcap') renderHubcapPage();
   else if (page === 'paket') renderPaketSettings();
+  else if (page === 'voucher') renderVoucherPage();
 }
 
 document.getElementById('btnAddItem').addEventListener('click', () => openItemModal(currentPage, null));
@@ -467,6 +468,9 @@ function connectAdminWS() {
         if (currentPage === 'hubcap' && _hcActiveTab === 'ryu') {
           renderRyKeysList(msg.data);
         }
+      } else if (msg.event === 'voucher:update') {
+        _voucherList = msg.data;
+        if (currentPage === 'voucher') renderVoucherTable(_voucherList);
       }
       if (msg.event === 'activity' && currentPage === 'hubcap' && _hcActiveTab === 'logs' && (msg.data?.category === 'hubcap' || msg.data?.category === 'ryu')) {
         loadHcLogs();
@@ -2700,6 +2704,207 @@ function wirePaketPageOnce() {
       btn.disabled = false;
     }
   });
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// KELOLA VOUCHER — Voucher Paket Gold/Platinum (lihat voucherManager.js di server)
+// ══════════════════════════════════════════════════════════════════════════
+let _voucherWired = false;
+let _voucherList = [];
+const VOUCHER_UNIT_LABEL = { minutes: 'Menit', hours: 'Jam', days: 'Hari' };
+const VOUCHER_STATUS_LABEL = { active: 'Aktif', inactive: 'Nonaktif', expired: 'Kedaluwarsa', full: 'Kuota Habis' };
+const VOUCHER_STATUS_CLASS = { active: 'success', inactive: 'info', expired: 'error', full: 'warning' };
+
+async function renderVoucherPage() {
+  wireVoucherPageOnce();
+  await loadVoucherList();
+}
+
+function wireVoucherPageOnce() {
+  if (_voucherWired) return;
+  _voucherWired = true;
+
+  document.getElementById('btnAddVoucher').addEventListener('click', () => openVoucherModal(null));
+  document.getElementById('btnSaveVoucher').addEventListener('click', doSaveVoucher);
+
+  const roleSegmentEl = document.getElementById('voucherRoleSegment');
+  const roleHiddenEl = document.getElementById('voucherRole');
+  roleSegmentEl.querySelectorAll('.segmented-opt').forEach(btn => {
+    btn.addEventListener('click', () => setSegmentValue(roleSegmentEl, roleHiddenEl, 'role', btn.dataset.role));
+  });
+
+  document.getElementById('tableVoucher').addEventListener('click', handleVoucherTableClick);
+  document.getElementById('tableVoucher').addEventListener('change', handleVoucherTableChange);
+}
+
+async function loadVoucherList() {
+  const table = document.getElementById('tableVoucher');
+  table.innerHTML = `<tbody><tr><td style="padding:20px;text-align:center;color:var(--text-3);">⏳ Memuat voucher...</td></tr></tbody>`;
+  try {
+    const data = await api('/api/admin/vouchers');
+    _voucherList = data.vouchers || [];
+    renderVoucherTable(_voucherList);
+  } catch (e) {
+    table.innerHTML = `<tbody><tr><td style="padding:20px;text-align:center;color:var(--red);">Gagal memuat voucher: ${escapeHtml(e.message)}</td></tr></tbody>`;
+  }
+}
+
+function renderVoucherTable(list) {
+  const table = document.getElementById('tableVoucher');
+  if (!list.length) {
+    table.innerHTML = `<tbody><tr><td style="padding:24px;text-align:center;color:var(--text-3);">🎟️ Belum ada voucher. Klik "+ Buat Voucher" untuk membuat yang pertama.</td></tr></tbody>`;
+    return;
+  }
+  table.innerHTML = `
+    <thead>
+      <tr>
+        <th>Kode</th>
+        <th>Paket</th>
+        <th>Durasi</th>
+        <th>Kuota</th>
+        <th>Masa Berlaku</th>
+        <th>Status</th>
+        <th>Dibuat</th>
+        <th style="text-align:right;">Aksi</th>
+      </tr>
+    </thead>
+    <tbody>
+      ${list.map(voucherRowHtml).join('')}
+    </tbody>`;
+}
+
+function voucherRowHtml(v) {
+  const durationLabel = `${v.durationAmount} ${VOUCHER_UNIT_LABEL[v.durationUnit] || v.durationUnit}`;
+  const expiryLabel = v.expiresAt ? fmtDateShort(v.expiresAt) : 'Tidak ada batas';
+  const statusClass = VOUCHER_STATUS_CLASS[v.status] || 'info';
+  const statusLabel = VOUCHER_STATUS_LABEL[v.status] || v.status;
+  return `
+    <tr data-id="${v.id}">
+      <td><code style="font-weight:700;letter-spacing:.03em;">${escapeHtml(v.code)}</code></td>
+      <td>${roleTagHtml(v.role)}</td>
+      <td>${escapeHtml(durationLabel)}</td>
+      <td>${v.usedCount} / ${v.quota} <span style="color:var(--text-3);">(sisa ${v.remaining})</span></td>
+      <td>${escapeHtml(expiryLabel)}</td>
+      <td><span class="log-badge log-badge--${statusClass}">${escapeHtml(statusLabel)}</span></td>
+      <td>${v.createdAt ? timeAgo(v.createdAt) : '—'}${v.createdBy ? ` <span style="color:var(--text-3);">oleh ${escapeHtml(v.createdBy)}</span>` : ''}</td>
+      <td style="text-align:right;white-space:nowrap;">
+        <label class="switch" title="Aktif / Nonaktif" style="vertical-align:middle;margin-right:8px;">
+          <input type="checkbox" data-voucher-toggle="${v.id}" ${v.active ? 'checked' : ''}>
+          <span class="switch-slider"></span>
+        </label>
+        <button class="btn-icon-sm" title="Edit" data-voucher-edit="${v.id}">✏️</button>
+        <button class="btn-icon-sm" title="Hapus" data-voucher-delete="${v.id}">🗑️</button>
+      </td>
+    </tr>`;
+}
+
+function handleVoucherTableClick(e) {
+  const editBtn = e.target.closest('[data-voucher-edit]');
+  const delBtn = e.target.closest('[data-voucher-delete]');
+  if (editBtn) {
+    const v = _voucherList.find(x => x.id === editBtn.dataset.voucherEdit);
+    if (v) openVoucherModal(v);
+  } else if (delBtn) {
+    doDeleteVoucher(delBtn.dataset.voucherDelete);
+  }
+}
+
+function handleVoucherTableChange(e) {
+  const toggleEl = e.target.closest('[data-voucher-toggle]');
+  if (toggleEl) doToggleVoucher(toggleEl.dataset.voucherToggle, toggleEl.checked, toggleEl);
+}
+
+function openVoucherModal(v) {
+  document.getElementById('voucherModalTitle').textContent = v ? 'Edit Voucher' : 'Buat Voucher';
+  document.getElementById('voucherId').value = v ? v.id : '';
+  document.getElementById('voucherCode').value = v ? v.code : '';
+  document.getElementById('voucherCode').disabled = false;
+  document.getElementById('voucherDurationAmount').value = v ? v.durationAmount : '';
+  document.getElementById('voucherDurationUnit').value = v ? v.durationUnit : 'days';
+  document.getElementById('voucherQuota').value = v ? v.quota : '';
+  document.getElementById('voucherExpiresAt').value = v && v.expiresAt ? toDatetimeLocalValue(v.expiresAt) : '';
+  document.getElementById('voucherActive').checked = v ? v.active : true;
+
+  const roleSegmentEl = document.getElementById('voucherRoleSegment');
+  const roleHiddenEl = document.getElementById('voucherRole');
+  setSegmentValue(roleSegmentEl, roleHiddenEl, 'role', v ? v.role : 'gold');
+
+  document.getElementById('voucherModalBackdrop').style.display = 'flex';
+}
+function closeVoucherModal() { document.getElementById('voucherModalBackdrop').style.display = 'none'; }
+
+function toDatetimeLocalValue(dateStr) {
+  const d = new Date(dateStr);
+  const pad = n => String(n).padStart(2, '0');
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+async function doSaveVoucher() {
+  const id = document.getElementById('voucherId').value;
+  const code = document.getElementById('voucherCode').value.trim();
+  const role = document.getElementById('voucherRole').value;
+  const durationAmount = document.getElementById('voucherDurationAmount').value;
+  const durationUnit = document.getElementById('voucherDurationUnit').value;
+  const quota = document.getElementById('voucherQuota').value;
+  const expiresAtLocal = document.getElementById('voucherExpiresAt').value;
+  const active = document.getElementById('voucherActive').checked;
+
+  if (!code) { showToast('Kode voucher wajib diisi.', 'error'); return; }
+  if (!durationAmount || Number(durationAmount) <= 0) { showToast('Durasi paket harus lebih dari 0.', 'error'); return; }
+  if (!quota || Number(quota) <= 0) { showToast('Jumlah kuota voucher harus lebih dari 0.', 'error'); return; }
+
+  const body = {
+    code, role,
+    durationAmount: Number(durationAmount),
+    durationUnit,
+    quota: Number(quota),
+    expiresAt: expiresAtLocal ? new Date(expiresAtLocal).toISOString() : null,
+    active
+  };
+
+  const btn = document.getElementById('btnSaveVoucher');
+  const original = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Menyimpan...';
+  try {
+    if (id) {
+      await api(`/api/admin/vouchers/${id}`, { method: 'PUT', body: JSON.stringify(body) });
+      showToast('Voucher berhasil diperbarui.', 'success');
+    } else {
+      await api('/api/admin/vouchers', { method: 'POST', body: JSON.stringify(body) });
+      showToast('Voucher berhasil dibuat.', 'success');
+    }
+    closeVoucherModal();
+    await loadVoucherList();
+  } catch (e) {
+    showToast('Gagal menyimpan voucher: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = original;
+  }
+}
+
+async function doToggleVoucher(id, checked, checkboxEl) {
+  try {
+    await api(`/api/admin/vouchers/${id}/toggle`, { method: 'PUT', body: JSON.stringify({ active: checked }) });
+    const v = _voucherList.find(x => x.id === id);
+    if (v) { v.active = checked; v.status = checked ? (v.isExpired ? 'expired' : v.isFull ? 'full' : 'active') : 'inactive'; }
+    renderVoucherTable(_voucherList);
+    showToast(`Voucher ${checked ? 'diaktifkan' : 'dinonaktifkan'}.`, 'success');
+  } catch (e) {
+    if (checkboxEl) checkboxEl.checked = !checked;
+    showToast('Gagal mengubah status: ' + e.message, 'error');
+  }
+}
+
+async function doDeleteVoucher(id) {
+  const v = _voucherList.find(x => x.id === id);
+  if (!confirm(`Hapus voucher "${v?.code || id}"? Riwayat klaim voucher ini juga akan ikut terhapus. Tindakan ini tidak bisa dibatalkan.`)) return;
+  try {
+    await api(`/api/admin/vouchers/${id}`, { method: 'DELETE' });
+    showToast('Voucher berhasil dihapus.', 'success');
+    await loadVoucherList();
+  } catch (e) {
+    showToast('Gagal menghapus voucher: ' + e.message, 'error');
+  }
 }
 
 async function renderWebhookSettings() {

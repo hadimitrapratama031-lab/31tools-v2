@@ -262,6 +262,7 @@ const PAGE_IDS = {
   bypasses: 'pageBypasses',
   store: 'pageStore',
   histori: 'pageHistori',
+  voucher: 'pageVoucher',
   setting: 'pageSetting',
   gameDetail: 'pageGameDetail',
   tutorial: 'pageTutorial',
@@ -1400,14 +1401,29 @@ function renderTutorialDetail(tutorial) {
     const platform = tutorial.videoPlatform || (tutorial.youtubeId ? 'youtube' : '');
     const videoId = tutorial.videoId || tutorial.youtubeId || '';
 
+    // Histori debug Error 153/152 (lihat catatan lengkap di main.js):
+    // file:// = gak ada Referer sama sekali -> 153. Referer="youtube.com"
+    // -> kontradiktif, jadi 152. Load app lewat local HTTP server -> video
+    // jalan TAPI bikin fetch ke backend sendiri gagal (ERR_NETWORK_ACCESS_DENIED),
+    // jadi di-revert. Fix final: kasih Referer/origin = domain produksi kita
+    // sendiri (SERVER_URL) — origin pihak ketiga yang valid & masuk akal buat
+    // YouTube, tanpa perlu ubah cara app di-load sama sekali.
+    const EMBED_REFERER = SERVER_URL + '/';
+
     let embedSrc = '';
+    let referer = '';
     if (platform === 'youtube' && videoId) {
-      embedSrc = `https://www.youtube-nocookie.com/embed/${videoId}`;
+      referer = EMBED_REFERER;
+      embedSrc = `https://www.youtube-nocookie.com/embed/${videoId}?origin=${encodeURIComponent(SERVER_URL)}`;
     } else if (platform === 'tiktok' && videoId) {
+      referer = EMBED_REFERER;
       embedSrc = `https://www.tiktok.com/embed/v2/${videoId}`;
     }
 
     if (embedSrc) {
+      // httpreferrer WAJIB di-set sebelum src diubah supaya navigasi pertama
+      // ke YouTube/TikTok langsung bawa Referer yang benar.
+      els.tutorialDetailVideo.setAttribute('httpreferrer', referer);
       els.tutorialDetailVideo.src = embedSrc;
       els.tutorialDetailVideoWrap.style.display = '';
     } else {
@@ -2574,6 +2590,50 @@ function wirePackageCard() {
   });
 }
 
+// ── CLAIM VOUCHER ──
+// Server (POST /api/voucher/claim) yang melakukan seluruh validasi (kode valid,
+// expired, kuota, sudah pernah diklaim) + update role/masa aktif user. Di sini
+// cuma kirim kode & tampilkan hasilnya — update role/limit/paket di sidebar
+// otomatis realtime lewat WS 'account:update' yang sudah ditangani handleAccountUpdate().
+function wireVoucherClaim() {
+  const input = document.getElementById('voucherCodeInput');
+  const btn = document.getElementById('btnClaimVoucher');
+  const resultEl = document.getElementById('voucherClaimResult');
+  if (!input || !btn) return;
+
+  const doClaim = async () => {
+    const code = input.value.trim();
+    if (!code) {
+      resultEl.style.display = 'block';
+      resultEl.className = 'voucher-claim-result error';
+      resultEl.textContent = 'Masukkan kode voucher dulu.';
+      return;
+    }
+    btn.disabled = true;
+    const originalText = btn.textContent;
+    btn.textContent = 'Memproses...';
+    resultEl.style.display = 'none';
+    try {
+      const data = await api('/api/voucher/claim', { method: 'POST', body: JSON.stringify({ code }) });
+      resultEl.style.display = 'block';
+      resultEl.className = 'voucher-claim-result success';
+      resultEl.textContent = `🎉 Voucher berhasil diklaim! Paket ${data.role.toUpperCase()} kamu ${data.extended ? 'diperpanjang' : 'aktif'} ${data.durationLabel}.`;
+      input.value = '';
+    } catch (e) {
+      resultEl.style.display = 'block';
+      resultEl.className = 'voucher-claim-result error';
+      resultEl.textContent = '⚠️ ' + (e.message || 'Gagal claim voucher, coba lagi.');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = originalText;
+    }
+  };
+
+  btn.addEventListener('click', doClaim);
+  input.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); doClaim(); } });
+  input.addEventListener('input', () => { input.value = input.value.toUpperCase(); });
+}
+
 // ── NOTIFICATION BELL ──
 let _notifUnread = 0;
 function setNotifUnreadCount(n) {
@@ -2746,6 +2806,7 @@ document.addEventListener('DOMContentLoaded', () => {
   wireHistoriTabs();
   wirePackageCard();
   wireNotifBell();
+  wireVoucherClaim();
   loadConfig();
   tryAutoLogin();
 });

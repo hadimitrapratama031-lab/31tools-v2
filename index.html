@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>GameDash — Dashboard</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Manrope:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- CUSTOM TITLEBAR (window frameless, jadi minimize/fullscreen/close dibikin sendiri) -->
+  <div class="titlebar">
+    <div class="titlebar-title">GameDash</div>
+    <div class="titlebar-controls">
+      <button id="btnMinimize" class="tb-btn" title="Minimize">&#8211;</button>
+      <button id="btnMaximize" class="tb-btn" title="Fullscreen">&#9723;</button>
+      <button id="btnClose" class="tb-btn tb-close" title="Close">&#10005;</button>
+    </div>
+  </div>
+
+  <div class="app-wrap">
+  <div class="app" style="display:none;">
+
+  <!-- SIDEBAR -->
+  <aside class="sidebar">
+    <div class="profile">
+      <img src="https://i.pravatar.cc/80?img=12" alt="avatar">
+      <div>
+        <div class="name">Behzad9574</div>
+        <div class="role">Gamer</div>
+      </div>
+      <span class="chev">⌄</span>
+    </div>
+
+    <nav class="menu">
+      <a href="#" class="active" data-page="dashboard"><span class="ic">▦</span> Dashboard</a>
+      <a href="#" data-page="games"><span class="ic">🎮</span> Games <span class="badge">10</span></a>
+      <a href="#" data-page="bypasses"><span class="ic">🛡️</span> Bypass <span class="badge" id="bypassesNavBadge">0</span></a>
+      <a href="#" data-page="tutorial"><span class="ic">📘</span> Tutorial</a>
+      <a href="#" data-page="store"><span class="ic">🛒</span> Store <span class="badge update">Update</span></a>
+      <a href="#" data-page="histori"><span class="ic">🕒</span> Histori</a>
+      <a href="#" data-page="setting"><span class="ic">⚙</span> Setting</a>
+      <a href="#" id="navLogout"><span class="ic">⏻</span> Log Out</a>
+    </nav>
+
+    <!-- PAKET / MASA AKTIF (realtime) -->
+    <div class="package-card" id="packageCard">
+      <div class="pkg-badge" id="pkgBadge"><span class="pkg-star">★</span><span id="pkgBadgeText">Public</span></div>
+
+      <div class="pkg-period" id="pkgPeriodBlock">
+        <div class="pkg-period-value"><span id="pkgPeriodNumber">—</span><span class="pkg-period-unit" id="pkgPeriodUnit"></span></div>
+        <div class="pkg-period-label">Sisa masa aktif</div>
+        <div class="pkg-progress"><div class="pkg-progress-fill" id="pkgProgressFill" style="width:0%"></div></div>
+        <div class="pkg-period-until" id="pkgPeriodUntil"></div>
+      </div>
+
+      <div class="pkg-quota" id="pkgQuotaBlock">
+        <div class="pkg-quota-row">
+          <span class="pkg-quota-label">🎮 Limit Game</span>
+          <span class="pkg-quota-value" id="pkgQuotaGame">—</span>
+        </div>
+        <div class="pkg-quota-row">
+          <span class="pkg-quota-label">🛡️ Limit Bypass</span>
+          <span class="pkg-quota-value" id="pkgQuotaBypass">—</span>
+        </div>
+      </div>
+
+      <button class="pkg-upgrade-btn" id="pkgUpgradeBtn">🛒 Beli Paket</button>
+    </div>
+
+    <div class="dark-mode-row">
+      🌙 Dark Mode
+      <div class="toggle"></div>
+    </div>
+  </aside>
+
+  <!-- MAIN -->
+  <main class="main">
+
+    <div class="topbar">
+      <h2>Have a good time Behzad!</h2>
+      <div class="search">
+        <span class="icon">🔍</span>
+        <input type="text" placeholder="Search Game...">
+      </div>
+      <div class="icon-btn">🛍</div>
+      <div class="icon-btn notif-bell" id="notifBell">🔔<span class="dot" id="notifDot" style="display:none;"></span>
+        <div class="notif-dropdown" id="notifDropdown">
+          <div class="notif-dropdown-head">
+            <span>Notifikasi</span>
+            <button id="notifMarkAllRead">Tandai semua dibaca</button>
+          </div>
+          <div class="notif-list" id="notifList"><div class="notif-empty">Belum ada notifikasi.</div></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ═══════════ PAGE: DASHBOARD ═══════════ -->
+    <div class="page-content" id="pageDashboard">
+
+      <div class="hero-row">
+        <!-- BANNER CAROUSEL — 100% code-driven (tanpa gambar statis), data dari
+             /api/banners (dikelola dari Admin Web), auto-slide + realtime update
+             lewat WebSocket ('banners:update'). -->
+        <div class="hero hero-carousel" id="bannerCarousel">
+          <div class="hc-track" id="hcTrack">
+            <div class="hc-slide hc-skeleton">
+              <div class="hc-skel-title"></div>
+              <div class="hc-skel-text"></div>
+              <div class="hc-skel-btn"></div>
+            </div>
+          </div>
+          <button class="hc-nav hc-prev" id="hcPrev" aria-label="Sebelumnya">‹</button>
+          <button class="hc-nav hc-next" id="hcNext" aria-label="Berikutnya">›</button>
+          <div class="hc-dots" id="hcDots"></div>
+        </div>
+
+        <!-- TOP INSTALLER MINGGUAN — leaderboard realtime dari /api/leaderboard,
+             update otomatis lewat WebSocket ('leaderboard:update'). -->
+        <div class="leaderboard" id="leaderboard">
+          <div class="lb-head">
+            <span class="lb-head-title">🏆 Top Installer Mingguan</span>
+          </div>
+          <div class="lb-list" id="lbList">
+            <div class="lb-row lb-skel"><div class="lb-skel-avatar"></div><div class="lb-skel-name"></div><div class="lb-skel-score"></div></div>
+            <div class="lb-row lb-skel"><div class="lb-skel-avatar"></div><div class="lb-skel-name"></div><div class="lb-skel-score"></div></div>
+            <div class="lb-row lb-skel"><div class="lb-skel-avatar"></div><div class="lb-skel-name"></div><div class="lb-skel-score"></div></div>
+            <div class="lb-row lb-skel"><div class="lb-skel-avatar"></div><div class="lb-skel-name"></div><div class="lb-skel-score"></div></div>
+          </div>
+        </div>
+      </div>
+
+      <!-- GAMES ON SALE -->
+      <section class="section">
+        <div class="section-head">
+          <h3><span class="emoji">🏷️</span> Games On Sale</h3>
+          <div class="nav-arrows">
+            <button>‹</button>
+            <button>›</button>
+          </div>
+        </div>
+        <div class="cards-row" id="dashSaleGrid"></div>
+      </section>
+
+      <!-- NEW GAMES -->
+      <section class="section">
+        <div class="section-head">
+          <h3><span class="emoji">✨</span> New Games</h3>
+          <div class="filters" id="dashCategoryFilters">
+            <span class="active" data-category="all">All Games</span>
+          </div>
+          <div class="grid-toggle">▦</div>
+        </div>
+        <div class="cards-row" id="dashNewGrid"></div>
+      </section>
+
+    </div>
+
+    <!-- ═══════════ PAGE: GAMES (game doang) ═══════════ -->
+    <div class="page-content" id="pageGames" style="display:none;">
+      <section class="section">
+        <div class="section-head">
+          <h3><span class="emoji">🎮</span> Games</h3>
+          <div class="role-filter-tabs" id="gamesRoleFilter">
+            <button class="role-filter-tab active" data-role="all">Semua</button>
+            <button class="role-filter-tab" data-role="public">🌐 Public</button>
+            <button class="role-filter-tab" data-role="gold">🥇 Gold</button>
+            <button class="role-filter-tab" data-role="platinum">💎 Platinum</button>
+          </div>
+        </div>
+        <div class="cards-row" id="gamesOnlyGrid"></div>
+      </section>
+    </div>
+
+    <!-- ═══════════ PAGE: HISTORI ═══════════ -->
+    <div class="page-content" id="pageHistori" style="display:none;">
+      <!-- Stats row -->
+      <div class="histori-stats" id="historiStats"></div>
+      <!-- Filter tabs -->
+      <div class="histori-tabs" id="historiTabs">
+        <button class="htab active" data-filter="all">
+          <span>📋</span> Semua <span class="htab-count" id="htabCountAll">0</span>
+        </button>
+        <button class="htab" data-filter="game">
+          <span>🎮</span> Game <span class="htab-count" id="htabCountGame">0</span>
+        </button>
+        <button class="htab" data-filter="bypass">
+          <span>🛡️</span> Bypass <span class="htab-count" id="htabCountBypass">0</span>
+        </button>
+      </div>
+      <!-- List container -->
+      <div id="historiListPage"></div>
+    </div>
+
+    <!-- ═══════════ PAGE: BYPASS (nampilin semua bypass yang tersedia buat role kamu) ═══════════ -->
+    <div class="page-content" id="pageBypasses" style="display:none;">
+      <section class="section">
+        <div class="section-head">
+          <h3><span class="emoji">🛡️</span> Bypass</h3>
+          <div class="role-filter-tabs" id="bypassesRoleFilter">
+            <button class="role-filter-tab active" data-role="all">Semua</button>
+            <button class="role-filter-tab" data-role="public">🌐 Public</button>
+            <button class="role-filter-tab" data-role="gold">🥇 Gold</button>
+            <button class="role-filter-tab" data-role="platinum">💎 Platinum</button>
+          </div>
+        </div>
+        <div class="cards-row" id="bypassesGrid"></div>
+      </section>
+    </div>
+
+    <!-- ═══════════ PAGE: TUTORIAL (daftar tutorial, 100% dari /api/tutorials,
+         update realtime lewat WebSocket 'tutorials:update' — tanpa perlu update
+         launcher) ═══════════ -->
+    <div class="page-content" id="pageTutorial" style="display:none;">
+
+      <section class="section">
+        <div class="section-head">
+          <h3><span class="emoji">🆕</span> Tutorial Terbaru</h3>
+        </div>
+        <div class="cards-row" id="tutorialLatestGrid"></div>
+      </section>
+
+      <section class="section">
+        <div class="section-head">
+          <h3><span class="emoji">📘</span> Semua Tutorial</h3>
+          <div class="search" style="max-width:220px;">
+            <span class="icon">🔍</span>
+            <input type="text" id="tutorialSearchInput" placeholder="Cari tutorial...">
+          </div>
+        </div>
+        <div class="role-filter-tabs" id="tutorialCategoryFilter">
+          <button class="role-filter-tab active" data-category="all">Semua Kategori</button>
+        </div>
+        <div class="cards-row" id="tutorialGrid"></div>
+      </section>
+
+    </div>
+
+    <!-- ═══════════ PAGE: TUTORIAL DETAIL (baca isi tutorial + Next/Previous) ═══════════ -->
+    <div class="page-content detail-page" id="pageTutorialDetail" style="display:none;">
+      <div class="detail-scroll">
+        <button class="detail-back" id="tutorialDetailBackBtn"><span>←</span> Kembali ke Tutorial</button>
+
+        <div class="tutorial-reader">
+          <div class="tutorial-reader__category" id="tutorialDetailCategory">—</div>
+          <h1 class="detail-title" id="tutorialDetailTitle">—</h1>
+
+          <div class="tutorial-reader__image" id="tutorialDetailImageWrap" style="display:none;">
+            <img id="tutorialDetailImage" alt="">
+          </div>
+
+          <div class="tutorial-reader__content" id="tutorialDetailContent"></div>
+
+          <div class="tutorial-reader__video" id="tutorialDetailVideoWrap" style="display:none;">
+            <div class="tutorial-reader__video-inner">
+              <webview id="tutorialDetailVideo" src="" allowpopups useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"></webview>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <div class="detail-action-bar tutorial-reader__nav">
+        <button class="detail-install-btn" id="tutorialPrevBtn">‹ Sebelumnya</button>
+        <button class="detail-install-btn" id="tutorialNextBtn">Selanjutnya ›</button>
+      </div>
+    </div>
+
+    <!-- ═══════════ PAGE: STORE (polos, belum ada fitur) ═══════════ -->
+    <div class="page-content" id="pageStore" style="display:none;">
+      <div class="blank-page">
+        <div class="blank-page-emoji">🛒</div>
+        <div class="blank-page-title">Store</div>
+        <div class="blank-page-text">Halaman ini belum ada fiturnya.</div>
+      </div>
+    </div>
+
+    <!-- ═══════════ PAGE: SETTING (polos, belum ada fitur) ═══════════ -->
+    <div class="page-content" id="pageSetting" style="display:none;">
+      <div class="blank-page">
+        <div class="blank-page-emoji">⚙</div>
+        <div class="blank-page-title">Setting</div>
+        <div class="blank-page-text">Halaman ini belum ada fiturnya.</div>
+      </div>
+    </div>
+
+    <!-- ═══════════ PAGE: DETAIL GAME/BYPASS (dibuka saat klik kartu) ═══════════ -->
+    <div class="page-content detail-page" id="pageGameDetail" style="display:none;">
+
+      <div class="detail-scroll">
+        <button class="detail-back" id="detailBackBtn"><span>←</span> Back to Games</button>
+
+        <div class="detail-grid">
+
+          <!-- KOLOM KIRI: cover besar + info grid (Release Date / Metacritic / Developer / Publisher) -->
+          <div class="detail-col-left">
+            <div class="detail-cover" id="detailCover"></div>
+
+            <div class="detail-info-grid" id="detailInfoGrid">
+              <div class="detail-info-box">
+                <div class="dib-label">Release Date</div>
+                <div class="dib-value" id="dibRelease">—</div>
+              </div>
+              <div class="detail-info-box">
+                <div class="dib-label">Metacritic</div>
+                <div class="dib-value" id="dibMetacritic">—</div>
+              </div>
+              <div class="detail-info-box">
+                <div class="dib-label">Developer</div>
+                <div class="dib-value" id="dibDeveloper">—</div>
+              </div>
+              <div class="detail-info-box">
+                <div class="dib-label">Publisher</div>
+                <div class="dib-value" id="dibPublisher">—</div>
+              </div>
+            </div>
+
+            <!-- Banner Online Multiplayer / Offline — muncul sesuai tipe game yang admin set.
+                 Ditaruh di bawah Developer/Publisher (bukan di kolom kanan) sesuai permintaan. -->
+            <div class="detail-online-banner" id="detailOnlineBanner" style="display:none;">
+              <div class="detail-online-banner__icon" id="detailOnlineBannerIcon">🌐</div>
+              <div class="detail-online-banner__body">
+                <div class="detail-online-banner__title" id="detailOnlineBannerTitle">Online Multiplayer</div>
+                <div class="detail-online-banner__text" id="detailOnlineBannerText">—</div>
+              </div>
+            </div>
+          </div>
+
+          <!-- KOLOM KANAN: judul, steam id, deskripsi, tag, system requirements -->
+          <div class="detail-col-right">
+            <h1 class="detail-title" id="detailTitle">—</h1>
+            <div class="detail-steamid" id="detailSteamId" style="display:none;">STEAM ID: <span id="detailSteamIdVal">—</span></div>
+
+            <p class="detail-description" id="detailDescription">—</p>
+
+            <div class="detail-tags" id="detailTags"></div>
+
+            <div class="detail-reqs-wrap" id="detailReqsWrap" style="display:none;">
+              <h3 class="detail-reqs-title">System Requirements</h3>
+              <div class="detail-reqs-grid">
+                <div class="detail-reqs-box">
+                  <div class="drb-label">Minimum</div>
+                  <div class="drb-body" id="detailReqsMin"></div>
+                </div>
+                <div class="detail-reqs-box">
+                  <div class="drb-label">Recommended</div>
+                  <div class="drb-body" id="detailReqsRec"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Selalu nempel di paling bawah halaman (gak ikut kescroll bareng konten) -->
+      <div class="detail-action-bar">
+        <button class="detail-install-btn" id="detailInstallBtn">Install</button>
+        <button class="detail-install-bypass-btn" id="detailInstallBypassBtn" style="display:none;">🛡️ Install Bypass</button>
+      </div>
+    </div>
+
+  </main>
+  </div>
+  </div>
+
+  <!-- AUTO REMOVE INSTALLED PREMIUM CONTENT — overlay diisi dinamis oleh
+       showPremiumCleanupModal() di app.js. Tidak ada tombol close di state 'start'
+       (proses tidak bisa dibatalkan user biasa). -->
+  <div class="pcm-overlay" id="premiumCleanupOverlay" style="display:none;"></div>
+
+<script src="app.js"></script>
+</body>
+</html>
