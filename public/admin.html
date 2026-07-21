@@ -97,6 +97,10 @@
           <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg></span>
           Webhook Settings
         </button>
+        <button class="nav-item" data-page="hubcap">
+          <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M15 7a2 2 0 012 2m4 0a6 6 0 01-7.743 5.743L11 17H9v2H7v2H4a1 1 0 01-1-1v-2.586a1 1 0 01.293-.707l5.964-5.964A6 6 0 1121 9z"/></svg></span>
+          Hubcap API
+        </button>
         <button class="nav-item" data-page="paket">
           <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M20 7l-8-4-8 4m16 0l-8 4m8-4v10l-8 4m0-10L4 7m8 4v10M4 7v10l8 4"/></svg></span>
           Paket
@@ -702,6 +706,89 @@
       </div>
     </section>
 
+    <!-- HUBCAP API PAGE -->
+    <section class="page" id="pageHubcap">
+      <div class="page-header">
+        <div class="page-header-left">
+          <div class="page-header-icon" style="background:rgba(61,217,245,.16);">🧩</div>
+          <div>
+            <div class="page-header-title">Hubcap API</div>
+            <div class="page-header-desc">Dokumentasi API, kelola API Key, auto rotation realtime, dan monitoring pemakaian hubcapmanifest.com — semuanya dari Admin Web, tanpa restart server.</div>
+          </div>
+        </div>
+        <div class="page-header-right">
+          <span class="hc-global-badge" id="hcGlobalBadge">⏳ Memuat status...</span>
+        </div>
+      </div>
+
+      <div class="hc-tabs">
+        <button class="hc-tab active" data-hctab="docs">📘 Dokumentasi API</button>
+        <button class="hc-tab" data-hctab="keys">🔑 API Key</button>
+        <button class="hc-tab" data-hctab="monitor">📊 Monitoring</button>
+        <button class="hc-tab" data-hctab="logs">🧾 Logs</button>
+      </div>
+
+      <!-- Dokumentasi API (ala Swagger) -->
+      <div class="hc-panel active" id="hcPanelDocs">
+        <div id="hcDocsList" class="hc-docs-list">
+          <div class="empty-cell"><span class="empty-icon">⏳</span>Memuat dokumentasi API...</div>
+        </div>
+      </div>
+
+      <!-- API Key Management -->
+      <div class="hc-panel" id="hcPanelKeys">
+        <div class="card">
+          <div class="card-header hc-card-header-row">
+            <div>
+              <div class="card-title">🔑 Daftar API Key HubCap</div>
+              <div class="card-sub">Tambah, edit, hapus, atau aktifkan/nonaktifkan API Key. Sistem otomatis memakai key aktif secara bergilir — tidak perlu ubah kode atau restart server.</div>
+            </div>
+            <button class="btn btn-primary btn-sm" id="btnHcAddKey">+ Tambah API Key</button>
+          </div>
+          <div class="card-body" id="hcKeysList">
+            <div class="empty-cell"><span class="empty-icon">⏳</span>Memuat API Key...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Monitoring -->
+      <div class="hc-panel" id="hcPanelMonitor">
+        <div class="hc-monitor-summary" id="hcMonitorSummary"></div>
+        <div class="card">
+          <div class="card-header hc-card-header-row">
+            <div>
+              <div class="card-title">📊 Status &amp; Pemakaian Tiap API Key</div>
+              <div class="card-sub">Data usage/limit diambil langsung dari hubcapmanifest.com (di-cache singkat), diperbarui realtime saat ada rotasi/limit.</div>
+            </div>
+            <button class="btn btn-secondary btn-sm" id="btnHcMonitorRefresh">🔄 Refresh</button>
+          </div>
+          <div class="card-body" id="hcMonitorList">
+            <div class="empty-cell"><span class="empty-icon">⏳</span>Memuat monitoring...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Logs -->
+      <div class="hc-panel" id="hcPanelLogs">
+        <div class="table-wrap">
+          <div class="table-toolbar">
+            <div class="table-toolbar-title">🧾 Log Aktivitas Hubcap API</div>
+            <button class="btn btn-secondary btn-sm" id="btnHcLogsRefresh">🔄 Refresh</button>
+          </div>
+          <div class="hist-table-scroll">
+            <table class="hist-table log-table">
+              <thead>
+                <tr><th>Jenis Aktivitas</th><th>Deskripsi</th><th>Admin</th><th>Status</th><th>Waktu</th></tr>
+              </thead>
+              <tbody id="hcLogsTable">
+                <tr><td colspan="5"><div class="empty-cell"><span class="empty-icon">⏳</span>Memuat log...</div></td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- PAKET PAGE -->
     <section class="page" id="pagePaket">
       <div class="page-header">
@@ -1221,6 +1308,38 @@
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeBannerModal()">Batal</button>
       <button class="btn btn-primary" id="btnSaveBanner">Simpan Banner</button>
+    </div>
+  </div>
+</div>
+
+<!-- HUBCAP API KEY MODAL -->
+<div class="modal-backdrop" id="hcKeyModalBackdrop" style="display:none;" onclick="if(event.target===this)closeHcKeyModal()">
+  <div class="modal" style="max-width:440px;">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="hcKeyModalTitle">Tambah API Key</div>
+        <div class="modal-subtitle">API Key HubCap dipakai server untuk request ke hubcapmanifest.com, tidak pernah dikirim ke client.</div>
+      </div>
+      <button class="modal-close" onclick="closeHcKeyModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="hcKeyId">
+      <div class="form-group">
+        <label class="form-label">Nama API Key</label>
+        <input class="form-input" type="text" id="hcKeyName" placeholder="Contoh: Key Utama, Key Cadangan 1">
+      </div>
+      <div class="form-group">
+        <label class="form-label">API Key <span id="hcKeyValueHint" style="opacity:.6;font-weight:400;"></span></label>
+        <input class="form-input" type="text" id="hcKeyValue" placeholder="Tempel API Key HubCap di sini" autocomplete="off">
+      </div>
+      <div class="form-group" style="display:flex;align-items:center;gap:10px;">
+        <label class="switch"><input type="checkbox" id="hcKeyActive" checked><span class="switch-slider"></span></label>
+        <label class="form-label" style="margin:0;" for="hcKeyActive">Aktifkan API Key ini</label>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeHcKeyModal()">Batal</button>
+      <button class="btn btn-primary" id="btnHcSaveKey">Simpan API Key</button>
     </div>
   </div>
 </div>

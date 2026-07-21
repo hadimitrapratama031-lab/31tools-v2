@@ -101,39 +101,25 @@ const APP_NAME = process.env.APP_NAME || 'Nova Launcher';
 // pas nambah Game, cukup dari App ID Steam-nya.
 const HUBCAP_BASE_URL = (process.env.HUBCAP_BASE_URL || 'https://hubcapmanifest.com').replace(/\/+$/, '');
 
-// Rotasi API key HubCap — dukung sampai 4 key sekaligus (opsional, isi kalau ada lebih dari 1).
-// Kalau salah satu key kena rate limit (429) atau ditolak (401/403), otomatis pindah ke key berikutnya.
-let HUBCAP_API_KEYS = [
-  process.env.HUBCAP_API_KEY,
-  process.env.HUBCAP_API_KEY_2,
-  process.env.HUBCAP_API_KEY_3,
-  process.env.HUBCAP_API_KEY_4,
-].filter(Boolean);
-const HUBCAP_API_KEY = HUBCAP_API_KEYS[0] || ''; // dipertahankan untuk kompatibilitas kode lama
-
 // Ryuu Generator (generator.ryuu.lol) — dipakai kalau bypass pakai link Ryuu. Ambil dari
 // generator.ryuu.lol/api > "Your Auth Key" (butuh akun Ryuu, gratis/premium tergantung kuota).
 const RYUU_API_KEY = process.env.RYUU_API_KEY || '';
 
-let hubcapKeyIndex = 0;
-const HUBCAP_COOLDOWN_MS = 60 * 1000; // 1 menit cooldown per key yang kena limit
-const hubcapKeyCooldown = {}; // { index: timestampMs kapan boleh dipakai lagi }
-
-function getHubcapApiKey() {
-  const total = HUBCAP_API_KEYS.length;
-  if (total === 0) return '';
-  for (let i = 0; i < total; i++) {
-    const idx = (hubcapKeyIndex + i) % total;
-    const cooldownUntil = hubcapKeyCooldown[idx] || 0;
-    if (Date.now() >= cooldownUntil) { hubcapKeyIndex = idx; return HUBCAP_API_KEYS[idx]; }
-  }
-  return HUBCAP_API_KEYS[0]; // semua lagi cooldown, tetap coba key pertama sebagai fallback
-}
-function markHubcapKeyLimited() {
-  if (HUBCAP_API_KEYS.length === 0) return;
-  hubcapKeyCooldown[hubcapKeyIndex] = Date.now() + HUBCAP_COOLDOWN_MS;
-  hubcapKeyIndex = (hubcapKeyIndex + 1) % HUBCAP_API_KEYS.length;
-}
+// ══════════════════════════════════════════════════════════════════════════
+// HUBCAP API KEY MANAGER — API Key HubCap sekarang dikelola dari Admin Web
+// (halaman "Hubcap API" > API Key Management), disimpan di database, BUKAN
+// lagi cuma dari .env. Admin bisa Tambah/Edit/Hapus/Aktifkan/Nonaktifkan key
+// kapan saja tanpa restart server — lihat hubcapKeyManager.js untuk detail
+// auto rotation & monitoring-nya. `db` & broadcastAdmin/logActivity dirujuk
+// lewat closure/hoisting jadi aman dipanggil di sini walau didefinisikan
+// belakangan di file ini (function declaration di-hoist penuh oleh JS).
+// ══════════════════════════════════════════════════════════════════════════
+const hubcapKeyManager = require('./hubcapKeyManager')({
+  getDb: () => db,
+  HUBCAP_BASE_URL,
+  broadcastAdmin: (...args) => broadcastAdmin(...args),
+  logActivity: (...args) => logActivity(...args)
+});
 
 // ── PROXY STREAM dari HubCap → client ──
 // PENTING: server yang men-download dari HubCap (pakai axios + Bearer key), lalu
@@ -146,31 +132,45 @@ function markHubcapKeyLimited() {
 // Endpoint yang dipakai WAJIB /api/v1/manifest/{appId} (ZIP berisi .lua + .manifest),
 // BUKAN /api/v1/lua/{appId} (cuma file .lua mentah, bakal gagal validasi ZIP di client).
 async function streamHubcapManifest(appId, res, filenameHint) {
-  if (HUBCAP_API_KEYS.length === 0) {
-    return res.status(500).json({ error: 'HUBCAP_API_KEY belum diisi di server (.env). Hubungi admin.' });
+  const hasKey = await hubcapKeyManager.hasActiveKey();
+  if (!hasKey) {
+    return res.status(500).json({ error: 'Belum ada API Key HubCap yang aktif. Tambahkan di Admin Web > Hubcap API > API Key Management.' });
   }
   const url = `${HUBCAP_BASE_URL}/api/v1/manifest/${appId}`;
   let hubcapRes = null;
   let lastError = null;
+  let usedKey = null;
 
-  for (let attempt = 0; attempt < HUBCAP_API_KEYS.length; attempt++) {
-    const apiKey = getHubcapApiKey();
+  // Maksimal percobaan = jumlah key aktif (dilonggarkan sedikit lewat snapshot),
+  // supaya auto rotation sempat mencoba semua key sebelum benar-benar menyerah.
+  const snapshot = await hubcapKeyManager.getMonitorSnapshot();
+  const maxAttempts = Math.max(1, snapshot.activeCount || 1);
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const keyDoc = await hubcapKeyManager.getActiveKey();
+    if (!keyDoc) break;
+    usedKey = keyDoc;
     try {
       hubcapRes = await axios.get(url, {
-        headers: { Authorization: `Bearer ${apiKey}` },
+        headers: { Authorization: `Bearer ${keyDoc.key}` },
         responseType: 'stream',
         timeout: 0, // file bisa besar, jangan timeout
         maxRedirects: 10
       });
+      await hubcapKeyManager.markSuccess(keyDoc);
       break; // sukses
     } catch (e) {
       lastError = e;
       if (e.response) {
         const s = e.response.status;
         if (s === 429 || s === 401 || s === 403) {
-          markHubcapKeyLimited();
-          if (attempt < HUBCAP_API_KEYS.length - 1) continue; // coba key berikutnya
+          await hubcapKeyManager.markLimited(keyDoc, `HTTP ${s} saat GET /api/v1/manifest/${appId}`);
+          if (attempt < maxAttempts - 1) continue; // coba key berikutnya (auto rotation)
+        } else {
+          await hubcapKeyManager.markError(keyDoc, `HTTP ${s} saat GET /api/v1/manifest/${appId}`);
         }
+      } else {
+        await hubcapKeyManager.markError(keyDoc, e.message || 'Gagal terhubung ke HubCap');
       }
       break; // error lain, atau sudah habis semua key
     }
@@ -484,6 +484,13 @@ const LOG_CATALOG = {
   admin_add_package:       { label: 'Tambah Paket',                        icon: '➕', category: 'catalog', status: 'success', reserved: true },
   admin_edit_package:      { label: 'Edit Paket',                          icon: '✏️', category: 'catalog', status: 'success', reserved: true },
   admin_delete_package:    { label: 'Hapus Paket',                         icon: '🗑️', category: 'catalog', status: 'warning', reserved: true },
+  hubcap_key_add:          { label: 'Tambah API Key HubCap',               icon: '🔑', category: 'hubcap', status: 'success' },
+  hubcap_key_edit:         { label: 'Edit API Key HubCap',                 icon: '✏️', category: 'hubcap', status: 'success' },
+  hubcap_key_delete:       { label: 'Hapus API Key HubCap',                icon: '🗑️', category: 'hubcap', status: 'warning' },
+  hubcap_key_limit:        { label: 'API Key HubCap Mencapai Limit',       icon: '⛔', category: 'hubcap', status: 'warning' },
+  hubcap_auto_rotation:    { label: 'Auto Rotation API Key HubCap',        icon: '🔄', category: 'hubcap', status: 'warning' },
+  hubcap_all_limited:      { label: 'Semua API Key HubCap Limit',          icon: '🚨', category: 'hubcap', status: 'error' },
+  hubcap_api_error:        { label: 'Error API HubCap',                    icon: '⚠️', category: 'hubcap', status: 'error' },
   settings_change:         { label: 'Perubahan Pengaturan',                icon: '⚙️', category: 'system', status: 'info' },
   premium_expired:         { label: 'Paket Premium Berakhir',              icon: '⏰', category: 'billing', status: 'warning' },
   premium_cleanup_start:   { label: 'Penghapusan Konten Premium Dimulai',  icon: '🧹', category: 'moderation', status: 'info' },
@@ -1108,6 +1115,11 @@ async function connectDB() {
     await db.collection('banners').createIndex({ order: 1 });
     await db.collection('banners').createIndex({ isActive: 1 });
     await db.collection('leaderboardHistory').createIndex({ weekStart: -1 });
+    await db.collection('hubcapApiKeys').createIndex({ createdAt: 1 });
+
+    // Migrasi satu kali: kalau ada HUBCAP_API_KEY* lama di .env tapi koleksi
+    // hubcapApiKeys masih kosong, import jadi entri DB (lihat hubcapKeyManager.js).
+    hubcapKeyManager.migrateLegacyEnvKeys().catch(e => console.warn('[HubcapKeyManager] Gagal migrasi:', e.message));
 
     // Seed 3 banner default (Code Banner) — HANYA jalan kalau koleksi `banners`
     // masih kosong sama sekali (deploy pertama kali / DB baru), supaya banner
@@ -4384,6 +4396,152 @@ app.post('/api/admin/webhooks/:category/test', requireAdmin, async (req, res) =>
 });
 
 // ══════════════════════════════════════════════════════════════════════════
+// ADMIN — HUBCAP API (Dokumentasi + API Key Management + Monitoring)
+// ══════════════════════════════════════════════════════════════════════════
+// Dokumentasi endpoint publik hubcapmanifest.com yang dipakai server ini —
+// SATU-SATUNYA sumber kebenaran buat halaman "Dokumentasi API" (tampilan ala
+// Swagger) di Admin Web. Contoh request/response di sini murni referensi,
+// TIDAK memanggil hubcapmanifest.com — pemanggilan sungguhan (Try it) lewat
+// endpoint /live/* di bawah, supaya API Key HubCap tidak pernah dikirim ke
+// browser admin.
+const HUBCAP_API_DOCS = [
+  {
+    method: 'GET',
+    path: '/api/v1/health',
+    summary: 'Cek kesehatan sistem HubCap',
+    description: 'Mengecek status API HubCap (Redis, database, dan manifest storage). Mengembalikan "healthy" atau "degraded". Endpoint publik, tidak butuh API Key.',
+    auth: false,
+    curl: `curl ${HUBCAP_BASE_URL}/api/v1/health`,
+    exampleResponse: {
+      status: 'healthy',
+      timestamp: '2026-04-09T12:00:00Z',
+      api_version: 'v1',
+      components: {
+        redis: { status: 'healthy' },
+        database: { status: 'healthy' },
+        manifest_storage: { status: 'healthy', path: '/opt/solus/data/manifests', exists: true }
+      }
+    },
+    liveEndpoint: '/api/admin/hubcap/live/health'
+  },
+  {
+    method: 'GET',
+    path: '/api/v1/user/stats',
+    summary: 'Statistik penggunaan API Key',
+    description: 'Mengambil statistik penggunaan API, limit harian, dan info akun untuk API Key yang dipakai. Butuh header Authorization Bearer.',
+    auth: true,
+    curl: `curl -H "Authorization: Bearer YOUR_API_KEY" ${HUBCAP_BASE_URL}/api/v1/user/stats`,
+    exampleResponse: {
+      user_id: '790269110008676464',
+      username: 'example_user',
+      api_key_usage_count: 15,
+      api_key_expires_at: '2026-05-09T12:00:00Z',
+      daily_usage: 42,
+      daily_limit: 250,
+      role_daily_limit: 50,
+      custom_api_limit: 250,
+      using_custom_api_limit: true,
+      auto_update_enabled: null,
+      can_make_requests: true,
+      timestamp: '2026-04-09T12:00:00Z'
+    },
+    liveEndpoint: '/api/admin/hubcap/live/stats'
+  }
+];
+
+app.get('/api/admin/hubcap/docs', requireAdmin, (req, res) => {
+  res.json({ baseUrl: HUBCAP_BASE_URL, endpoints: HUBCAP_API_DOCS });
+});
+
+// "Try it" — proxy asli ke hubcapmanifest.com, TAPI API Key tidak pernah dikirim
+// ke browser. /live/health tidak butuh key sama sekali (endpoint publik).
+app.get('/api/admin/hubcap/live/health', requireAdmin, async (req, res) => {
+  try {
+    const r = await axios.get(`${HUBCAP_BASE_URL}/api/v1/health`, { timeout: 10000, validateStatus: () => true });
+    res.status(r.status).json(r.data);
+  } catch (e) {
+    res.status(502).json({ error: 'Gagal menghubungi hubcapmanifest.com: ' + e.message });
+  }
+});
+
+// /live/stats pakai API Key yang SEDANG aktif di rotasi (kalau ada), biar admin
+// bisa lihat contoh response asli tanpa harus tempel key manual di UI.
+app.get('/api/admin/hubcap/live/stats', requireAdmin, async (req, res) => {
+  try {
+    const keyDoc = await hubcapKeyManager.getActiveKey();
+    if (!keyDoc) return res.status(400).json({ error: 'Belum ada API Key HubCap yang aktif untuk dicoba.' });
+    const r = await axios.get(`${HUBCAP_BASE_URL}/api/v1/user/stats`, {
+      headers: { Authorization: `Bearer ${keyDoc.key}` }, timeout: 10000, validateStatus: () => true
+    });
+    if (r.status === 200) await hubcapKeyManager.markSuccess(keyDoc);
+    else if (r.status === 429 || r.status === 401 || r.status === 403) await hubcapKeyManager.markLimited(keyDoc, `HTTP ${r.status} (Try it /user/stats)`);
+    res.status(r.status).json(r.data);
+  } catch (e) {
+    res.status(502).json({ error: 'Gagal menghubungi hubcapmanifest.com: ' + e.message });
+  }
+});
+
+// ── API Key Management (CRUD) + Monitoring ──
+// GET dipakai buat 2 hal sekaligus (daftar API Key & data Monitoring), karena
+// keduanya sama-sama butuh snapshot yang sama persis (status realtime tiap key).
+app.get('/api/admin/hubcap/keys', requireAdmin, async (req, res) => {
+  try {
+    const snapshot = await hubcapKeyManager.getMonitorSnapshot(req.query.force === '1' || req.query.force === 'true');
+    res.json(snapshot);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/api/admin/hubcap/monitor', requireAdmin, async (req, res) => {
+  try {
+    const snapshot = await hubcapKeyManager.getMonitorSnapshot(req.query.force === '1' || req.query.force === 'true');
+    res.json(snapshot);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/admin/hubcap/keys', requireAdmin, async (req, res) => {
+  try {
+    const { name, key } = req.body || {};
+    const snapshot = await hubcapKeyManager.addKey({ name, key });
+    res.json(snapshot);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.put('/api/admin/hubcap/keys/:id', requireAdmin, async (req, res) => {
+  try {
+    const { name, key, active } = req.body || {};
+    const snapshot = await hubcapKeyManager.updateKey(req.params.id, { name, key, active });
+    res.json(snapshot);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.put('/api/admin/hubcap/keys/:id/toggle', requireAdmin, async (req, res) => {
+  try {
+    const { active } = req.body || {};
+    const snapshot = await hubcapKeyManager.toggleKey(req.params.id, active);
+    res.json(snapshot);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.delete('/api/admin/hubcap/keys/:id', requireAdmin, async (req, res) => {
+  try {
+    const snapshot = await hubcapKeyManager.deleteKey(req.params.id);
+    res.json(snapshot);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
 // ADMIN — VERIFY ROLE (sinkron role App ⇄ Discord, webhook, resync, log)
 // ══════════════════════════════════════════════════════════════════════════
 
@@ -4494,18 +4652,20 @@ function formatBytes(bytes) {
 // GET-stream-lalu-di-stop harus jalan setiap kali HEAD BUKAN 200/404, bukan cuma
 // pas HEAD gagal total (network error).
 async function checkHubcapManifest(appId) {
-  if (!HUBCAP_API_KEY) return { configured: false, hasManifest: null, sizeBytes: null };
+  const keyDoc = await hubcapKeyManager.getActiveKey();
+  if (!keyDoc) return { configured: false, hasManifest: null, sizeBytes: null };
   const url = `${HUBCAP_BASE_URL}/api/v1/lua/${encodeURIComponent(appId)}`;
-  const headers = { Authorization: `Bearer ${HUBCAP_API_KEY}` };
+  const headers = { Authorization: `Bearer ${keyDoc.key}` };
 
   // 1) Coba HEAD dulu (paling hemat kuota kalau didukung)
   try {
     const headRes = await axios.head(url, { headers, timeout: 10000, validateStatus: () => true });
     if (headRes.status === 200) {
+      await hubcapKeyManager.markSuccess(keyDoc);
       const len = headRes.headers['content-length'];
       return { configured: true, hasManifest: true, sizeBytes: len ? Number(len) : null };
     }
-    if (headRes.status === 404) return { configured: true, hasManifest: false, sizeBytes: null };
+    if (headRes.status === 404) { await hubcapKeyManager.markSuccess(keyDoc); return { configured: true, hasManifest: false, sizeBytes: null }; }
     // 401/403/429/405/dll -> lanjut coba metode GET-stream di bawah, JANGAN langsung nyerah
   } catch (e) {
     // HEAD error jaringan -> lanjut ke fallback GET-stream juga
@@ -4518,12 +4678,20 @@ async function checkHubcapManifest(appId) {
     const status = getRes.status;
     const len = getRes.headers['content-length'];
     getRes.data.destroy();
-    if (status === 200) return { configured: true, hasManifest: true, sizeBytes: len ? Number(len) : null };
-    if (status === 404) return { configured: true, hasManifest: false, sizeBytes: null };
-    if (status === 401 || status === 403) return { configured: true, hasManifest: null, sizeBytes: null, error: 'hubcapmanifest: API key tidak valid/ditolak (401/403).' };
-    if (status === 429) return { configured: true, hasManifest: null, sizeBytes: null, error: 'hubcapmanifest: kuota harian API key habis (429).' };
+    if (status === 200) { await hubcapKeyManager.markSuccess(keyDoc); return { configured: true, hasManifest: true, sizeBytes: len ? Number(len) : null }; }
+    if (status === 404) { await hubcapKeyManager.markSuccess(keyDoc); return { configured: true, hasManifest: false, sizeBytes: null }; }
+    if (status === 401 || status === 403) {
+      await hubcapKeyManager.markLimited(keyDoc, `HTTP ${status} saat cek manifest App ID ${appId}`);
+      return { configured: true, hasManifest: null, sizeBytes: null, error: 'hubcapmanifest: API key tidak valid/ditolak (401/403).' };
+    }
+    if (status === 429) {
+      await hubcapKeyManager.markLimited(keyDoc, `HTTP 429 saat cek manifest App ID ${appId}`);
+      return { configured: true, hasManifest: null, sizeBytes: null, error: 'hubcapmanifest: kuota harian API key habis (429).' };
+    }
+    await hubcapKeyManager.markError(keyDoc, `HTTP ${status} saat cek manifest App ID ${appId}`);
     return { configured: true, hasManifest: null, sizeBytes: null, error: `hubcapmanifest: HTTP ${status}` };
   } catch (e2) {
+    await hubcapKeyManager.markError(keyDoc, e2.message || 'Gagal dihubungi');
     return { configured: true, hasManifest: null, sizeBytes: null, error: 'hubcapmanifest: gagal dihubungi.' };
   }
 }
@@ -4542,7 +4710,7 @@ app.get('/api/admin/appid-lookup/:appId', requireAdmin, async (req, res) => {
     sizeBytes: null,
     sizeLabel: null,
     hasManifest: null,
-    hubcapConfigured: !!HUBCAP_API_KEY,
+    hubcapConfigured: false, // diisi ulang di bawah setelah cek key aktif
     // Deteksi otomatis tipe game (Online/Offline) dari kategori Steam-nya, biar toggle
     // di form admin bisa langsung ke-set default sesuai game aslinya — admin tetap bisa
     // ubah manual kalau deteksinya kurang pas.
@@ -4593,7 +4761,7 @@ app.get('/api/admin/appid-lookup/:appId', requireAdmin, async (req, res) => {
     if (hc.hasManifest === true) result.manifestUrl = `${HUBCAP_BASE_URL}/api/v1/manifest/${appId}`;
     if (hc.error) result.warnings.push(hc.error);
     if (hc.configured && hc.hasManifest === false) result.warnings.push('Manifest untuk App ID ini belum tersedia di hubcapmanifest.');
-    if (!hc.configured) result.warnings.push('HUBCAP_API_KEY belum diisi di .env — cek ketersediaan manifest & ukuran file dilewati.');
+    if (!hc.configured) result.warnings.push('Belum ada API Key HubCap yang aktif (Admin Web > Hubcap API) — cek ketersediaan manifest & ukuran file dilewati.');
   } catch (e) {
     result.warnings.push('Gagal mengecek hubcapmanifest.');
   }

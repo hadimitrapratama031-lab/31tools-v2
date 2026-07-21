@@ -191,6 +191,7 @@ const PAGE_META = {
   logs:      { title: 'Logs',       breadcrumb: 'Pages / Logs' },
   verifyrole:{ title: 'Verify Role',breadcrumb: 'Pages / Verify Role' },
   webhooks:  { title: 'Webhook Settings', breadcrumb: 'Pages / Webhook Settings' },
+  hubcap:    { title: 'Hubcap API', breadcrumb: 'Pages / Hubcap API' },
   paket:     { title: 'Paket', breadcrumb: 'Pages / Paket' },
 };
 let currentPage = 'games';
@@ -230,6 +231,7 @@ function loadPage(page) {
   else if (page === 'logs') renderLogs();
   else if (page === 'verifyrole') renderVerifyRole();
   else if (page === 'webhooks') renderWebhookSettings();
+  else if (page === 'hubcap') renderHubcapPage();
   else if (page === 'paket') renderPaketSettings();
 }
 
@@ -451,6 +453,16 @@ function connectAdminWS() {
         }
       } else if (msg.event === 'user:update') {
         if (typeof mergeUserUpdate === 'function') mergeUserUpdate(msg.data);
+      } else if (msg.event === 'hubcap:update') {
+        _hcSnapshot = msg.data;
+        if (currentPage === 'hubcap') {
+          renderHcGlobalBadge(msg.data);
+          renderHcKeysList(msg.data);
+          renderHcMonitor(msg.data);
+        }
+      }
+      if (msg.event === 'activity' && currentPage === 'hubcap' && _hcActiveTab === 'logs' && msg.data?.category === 'hubcap') {
+        loadHcLogs();
       }
     };
     _adminWs.onclose = () => {
@@ -3468,3 +3480,342 @@ async function renderLeaderboardHistoryTable() {
 }
 
 document.getElementById('btnRefreshLeaderboard')?.addEventListener('click', renderLeaderboardAdmin);
+
+// ══════════════════════════════════════════════════════════════════════════
+// HUBCAP API — Dokumentasi (Swagger-style), API Key Management, Monitoring, Logs
+// ══════════════════════════════════════════════════════════════════════════
+let _hcWired = false;
+let _hcSnapshot = null;
+let _hcDocsCache = null;
+let _hcActiveTab = 'docs';
+
+async function renderHubcapPage() {
+  wireHubcapOnce();
+  await Promise.all([loadHcDocs(), loadHcKeysAndMonitor()]);
+  if (_hcActiveTab === 'logs') loadHcLogs();
+}
+
+function wireHubcapOnce() {
+  if (_hcWired) return;
+  _hcWired = true;
+
+  document.querySelectorAll('.hc-tab').forEach(btn => {
+    btn.addEventListener('click', () => {
+      document.querySelectorAll('.hc-tab').forEach(b => b.classList.remove('active'));
+      btn.classList.add('active');
+      const tab = btn.dataset.hctab;
+      _hcActiveTab = tab;
+      document.querySelectorAll('.hc-panel').forEach(p => p.classList.remove('active'));
+      const panel = document.getElementById('hcPanel' + tab.charAt(0).toUpperCase() + tab.slice(1));
+      if (panel) panel.classList.add('active');
+      if (tab === 'logs') loadHcLogs();
+      if (tab === 'monitor' && _hcSnapshot) renderHcMonitor(_hcSnapshot);
+    });
+  });
+
+  document.getElementById('btnHcAddKey').addEventListener('click', () => openHcKeyModal(null));
+  document.getElementById('btnHcMonitorRefresh').addEventListener('click', () => loadHcKeysAndMonitor(true));
+  document.getElementById('btnHcLogsRefresh').addEventListener('click', () => loadHcLogs());
+  document.getElementById('btnHcSaveKey').addEventListener('click', doSaveHcKey);
+  document.getElementById('hcKeysList').addEventListener('click', handleHcKeysListClick);
+  document.getElementById('hcKeysList').addEventListener('change', handleHcKeysListChange);
+}
+
+// ─── Dokumentasi API (ala Swagger) ───
+async function loadHcDocs() {
+  const container = document.getElementById('hcDocsList');
+  try {
+    if (!_hcDocsCache) _hcDocsCache = await api('/api/admin/hubcap/docs');
+    container.innerHTML = _hcDocsCache.endpoints.map(hcDocCardHtml).join('');
+    wireHcDocButtons();
+  } catch (e) {
+    container.innerHTML = `<div class="empty-cell"><span class="empty-icon">⚠️</span>Gagal memuat dokumentasi: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function hcDocCardHtml(ep, idx) {
+  const authBadge = ep.auth
+    ? `<span class="hc-doc-auth">🔒 Butuh API Key</span>`
+    : `<span class="hc-doc-free">Free · No usage count</span>`;
+  const respJson = escapeHtml(JSON.stringify(ep.exampleResponse, null, 2));
+  return `
+  <div class="hc-doc-card">
+    <div class="hc-doc-head">
+      <span class="hc-doc-method">${escapeHtml(ep.method)}</span>
+      <span class="hc-doc-path">${escapeHtml(ep.path)}</span>
+      ${authBadge}
+    </div>
+    <div class="hc-doc-body">
+      <div class="hc-doc-desc">${escapeHtml(ep.description)}</div>
+
+      <div class="hc-doc-section-label">Contoh Request (curl)</div>
+      <div class="hc-code-block">
+        <button class="hc-copy-btn" data-hc-copy="${idx}">📋 Copy Request</button>
+        <pre>${escapeHtml(ep.curl)}</pre>
+      </div>
+
+      <div class="hc-doc-section-label">Contoh Response</div>
+      <div class="hc-code-block response">
+        <pre>${respJson}</pre>
+      </div>
+
+      <div class="hc-doc-tryrow">
+        <button class="btn btn-secondary btn-sm" data-hc-try="${idx}">▶ Coba Sekarang (Try it)</button>
+      </div>
+      <div class="hc-try-result" data-hc-tryresult="${idx}"></div>
+    </div>
+  </div>`;
+}
+
+function wireHcDocButtons() {
+  document.querySelectorAll('[data-hc-copy]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      const ep = _hcDocsCache.endpoints[btn.dataset.hcCopy];
+      navigator.clipboard.writeText(ep.curl).then(() => {
+        const original = btn.textContent;
+        btn.textContent = '✓ Disalin'; btn.classList.add('copied');
+        setTimeout(() => { btn.textContent = original; btn.classList.remove('copied'); }, 1600);
+      }).catch(() => showToast('Gagal menyalin ke clipboard.', 'error'));
+    });
+  });
+  document.querySelectorAll('[data-hc-try]').forEach(btn => {
+    btn.addEventListener('click', () => doHcTryIt(btn));
+  });
+}
+
+async function doHcTryIt(btn) {
+  const idx = btn.dataset.hcTry;
+  const ep = _hcDocsCache.endpoints[idx];
+  const resultEl = document.querySelector(`[data-hc-tryresult="${idx}"]`);
+  const original = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Memanggil...';
+  resultEl.classList.remove('show');
+  try {
+    const token = localStorage.getItem('adminToken');
+    const res = await fetch(SERVER_URL + ep.liveEndpoint, { headers: token ? { Authorization: `Bearer ${token}` } : {} });
+    const data = await res.json().catch(() => ({}));
+    resultEl.textContent = JSON.stringify(data, null, 2);
+    resultEl.classList.add('show');
+    if (!res.ok) showToast('Try it: ' + (data.error || `HTTP ${res.status}`), 'error');
+  } catch (e) {
+    resultEl.textContent = 'Gagal memanggil endpoint: ' + e.message;
+    resultEl.classList.add('show');
+  } finally {
+    btn.disabled = false; btn.textContent = original;
+  }
+}
+
+// ─── Status global (badge di header halaman) ───
+function renderHcGlobalBadge(snapshot) {
+  const el = document.getElementById('hcGlobalBadge');
+  if (!el) return;
+  if (!snapshot.totalKeys) {
+    el.className = 'hc-global-badge warn';
+    el.textContent = '⚠️ Belum ada API Key';
+  } else if (snapshot.allLimited) {
+    el.className = 'hc-global-badge error';
+    el.textContent = '🚨 Seluruh API Key telah mencapai batas harian';
+  } else {
+    const cur = snapshot.keys.find(k => k.id === snapshot.currentKeyId);
+    el.className = 'hc-global-badge';
+    el.textContent = `🟢 Dipakai: ${cur ? cur.name : '-'} · ${snapshot.activeCount} key aktif`;
+  }
+}
+
+// ─── API Key Management ───
+async function loadHcKeysAndMonitor(force = false) {
+  try {
+    const snapshot = await api('/api/admin/hubcap/keys' + (force ? '?force=1' : ''));
+    _hcSnapshot = snapshot;
+    renderHcGlobalBadge(snapshot);
+    renderHcKeysList(snapshot);
+    renderHcMonitor(snapshot);
+  } catch (e) {
+    document.getElementById('hcKeysList').innerHTML = `<div class="empty-cell"><span class="empty-icon">⚠️</span>Gagal memuat API Key: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+const HC_STATUS_LABEL = { active: '🟢 Active', limited: '🟡 Limit', error: '🔴 Error', inactive: '⚪ Nonaktif' };
+
+function hcKeyRowHtml(k) {
+  return `
+  <div class="hc-key-row ${k.isCurrent ? 'is-current' : ''}" data-id="${k.id}">
+    <div class="hc-key-main">
+      <div class="hc-key-name">${escapeHtml(k.name)} ${k.isCurrent ? '<span class="hc-key-current-pill">Sedang Dipakai</span>' : ''}</div>
+      <div class="hc-key-masked">${escapeHtml(k.maskedKey)}</div>
+    </div>
+    <span class="hc-status-pill ${k.status}">${HC_STATUS_LABEL[k.status] || k.status}</span>
+    <div class="hc-key-actions">
+      <label class="switch" title="Aktif / Nonaktif">
+        <input type="checkbox" data-hc-toggle="${k.id}" ${k.active ? 'checked' : ''}>
+        <span class="switch-slider"></span>
+      </label>
+      <button class="btn-icon-sm" title="Edit" data-hc-edit="${k.id}">✏️</button>
+      <button class="btn-icon-sm" title="Hapus" data-hc-delete="${k.id}">🗑️</button>
+    </div>
+  </div>`;
+}
+
+function renderHcKeysList(snapshot) {
+  const container = document.getElementById('hcKeysList');
+  if (!container) return;
+  if (!snapshot.keys.length) {
+    container.innerHTML = `<div class="empty-cell"><span class="empty-icon">🔑</span>Belum ada API Key. Klik "+ Tambah API Key" untuk mulai.</div>`;
+    return;
+  }
+  container.innerHTML = snapshot.keys.map(hcKeyRowHtml).join('');
+}
+
+function handleHcKeysListClick(e) {
+  const editBtn = e.target.closest('[data-hc-edit]');
+  const delBtn = e.target.closest('[data-hc-delete]');
+  if (editBtn) {
+    const k = _hcSnapshot?.keys.find(x => x.id === editBtn.dataset.hcEdit);
+    openHcKeyModal(k || null);
+  } else if (delBtn) {
+    doDeleteHcKey(delBtn.dataset.hcDelete);
+  }
+}
+
+function handleHcKeysListChange(e) {
+  const toggleEl = e.target.closest('[data-hc-toggle]');
+  if (toggleEl) doToggleHcKey(toggleEl.dataset.hcToggle, toggleEl.checked, toggleEl);
+}
+
+function openHcKeyModal(k) {
+  document.getElementById('hcKeyModalTitle').textContent = k ? 'Edit API Key' : 'Tambah API Key';
+  document.getElementById('hcKeyId').value = k ? k.id : '';
+  document.getElementById('hcKeyName').value = k ? k.name : '';
+  document.getElementById('hcKeyValue').value = '';
+  document.getElementById('hcKeyValue').placeholder = k ? 'Kosongkan kalau tidak ingin mengubah API Key' : 'Tempel API Key HubCap di sini';
+  document.getElementById('hcKeyValueHint').textContent = k ? `(saat ini: ${k.maskedKey})` : '';
+  document.getElementById('hcKeyActive').checked = k ? k.active : true;
+  document.getElementById('hcKeyModalBackdrop').style.display = 'flex';
+}
+function closeHcKeyModal() { document.getElementById('hcKeyModalBackdrop').style.display = 'none'; }
+
+async function doSaveHcKey() {
+  const id = document.getElementById('hcKeyId').value;
+  const name = document.getElementById('hcKeyName').value.trim();
+  const key = document.getElementById('hcKeyValue').value.trim();
+  const active = document.getElementById('hcKeyActive').checked;
+  if (!id && !key) { showToast('API Key wajib diisi.', 'error'); return; }
+
+  const btn = document.getElementById('btnHcSaveKey');
+  const original = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Menyimpan...';
+  try {
+    const body = { name, active };
+    if (key) body.key = key;
+    const snapshot = id
+      ? await api(`/api/admin/hubcap/keys/${id}`, { method: 'PUT', body: JSON.stringify(body) })
+      : await api('/api/admin/hubcap/keys', { method: 'POST', body: JSON.stringify(body) });
+    _hcSnapshot = snapshot;
+    renderHcGlobalBadge(snapshot); renderHcKeysList(snapshot); renderHcMonitor(snapshot);
+    showToast(id ? 'API Key berhasil diperbarui.' : 'API Key berhasil ditambahkan.', 'success');
+    closeHcKeyModal();
+  } catch (e) {
+    showToast('Gagal menyimpan: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = original;
+  }
+}
+
+async function doDeleteHcKey(id) {
+  const k = _hcSnapshot?.keys.find(x => x.id === id);
+  if (!confirm(`Hapus API Key "${k?.name || id}"? Tindakan ini tidak bisa dibatalkan.`)) return;
+  try {
+    const snapshot = await api(`/api/admin/hubcap/keys/${id}`, { method: 'DELETE' });
+    _hcSnapshot = snapshot;
+    renderHcGlobalBadge(snapshot); renderHcKeysList(snapshot); renderHcMonitor(snapshot);
+    showToast('API Key berhasil dihapus.', 'success');
+  } catch (e) {
+    showToast('Gagal menghapus: ' + e.message, 'error');
+  }
+}
+
+async function doToggleHcKey(id, checked, checkboxEl) {
+  try {
+    const snapshot = await api(`/api/admin/hubcap/keys/${id}/toggle`, { method: 'PUT', body: JSON.stringify({ active: checked }) });
+    _hcSnapshot = snapshot;
+    renderHcGlobalBadge(snapshot); renderHcKeysList(snapshot); renderHcMonitor(snapshot);
+    showToast(`API Key ${checked ? 'diaktifkan' : 'dinonaktifkan'}.`, 'success');
+  } catch (e) {
+    if (checkboxEl) checkboxEl.checked = !checked;
+    showToast('Gagal mengubah status: ' + e.message, 'error');
+  }
+}
+
+// ─── Monitoring ───
+function renderHcMonitor(snapshot) {
+  const summaryEl = document.getElementById('hcMonitorSummary');
+  const listEl = document.getElementById('hcMonitorList');
+  if (!summaryEl || !listEl) return;
+
+  const activeCount = snapshot.activeCount || 0;
+  const limitedCount = snapshot.keys.filter(k => k.status === 'limited').length;
+  const errorCount = snapshot.keys.filter(k => k.status === 'error').length;
+
+  summaryEl.innerHTML = `
+    <div class="hc-summary-card"><div class="hc-summary-label">Total API Key</div><div class="hc-summary-value">${snapshot.totalKeys}</div></div>
+    <div class="hc-summary-card"><div class="hc-summary-label">Key Aktif</div><div class="hc-summary-value" style="color:var(--green);">${activeCount}</div></div>
+    <div class="hc-summary-card"><div class="hc-summary-label">Kena Limit</div><div class="hc-summary-value" style="color:var(--gold);">${limitedCount}</div></div>
+    <div class="hc-summary-card"><div class="hc-summary-label">Error</div><div class="hc-summary-value" style="color:var(--red);">${errorCount}</div></div>`;
+
+  if (!snapshot.keys.length) {
+    listEl.innerHTML = `<div class="empty-cell"><span class="empty-icon">📊</span>Belum ada API Key untuk dipantau.</div>`;
+    return;
+  }
+
+  const allLimitedNotice = snapshot.allLimited
+    ? `<div class="empty-cell"><span class="empty-icon">🚨</span>Seluruh API Key telah mencapai batas harian. Sistem akan otomatis mencoba lagi setelah cooldown selesai.</div>`
+    : '';
+  listEl.innerHTML = allLimitedNotice + snapshot.keys.map(hcMonitorCardHtml).join('');
+}
+
+function hcMonitorCardHtml(k) {
+  const pct = (k.dailyLimit != null && k.dailyUsage != null && k.dailyLimit > 0)
+    ? Math.min(100, Math.round((k.dailyUsage / k.dailyLimit) * 100)) : null;
+  const barClass = pct == null ? '' : pct >= 90 ? 'danger' : pct >= 70 ? 'warn' : '';
+  return `
+  <div class="hc-monitor-card ${k.isCurrent ? 'is-current' : ''}">
+    <div class="hc-monitor-top">
+      <div class="hc-monitor-title">${escapeHtml(k.name)} ${k.isCurrent ? '<span class="hc-key-current-pill">Sedang Dipakai</span>' : ''}</div>
+      <span class="hc-status-pill ${k.status}">${HC_STATUS_LABEL[k.status] || k.status}</span>
+    </div>
+    <div class="hc-monitor-nums">
+      <span>Daily Usage: <b>${k.dailyUsage ?? '—'}</b></span>
+      <span>Daily Limit: <b>${k.dailyLimit ?? '—'}</b></span>
+      <span>Remaining Request: <b>${k.remaining ?? '—'}</b></span>
+    </div>
+    ${pct != null ? `<div class="hc-progress-track"><div class="hc-progress-fill ${barClass}" style="width:${pct}%;"></div></div>` : ''}
+    ${k.error ? `<div class="hc-monitor-error">⚠️ ${escapeHtml(k.error)}</div>` : ''}
+  </div>`;
+}
+
+// ─── Logs ───
+async function loadHcLogs() {
+  const tbody = document.getElementById('hcLogsTable');
+  if (!tbody) return;
+  tbody.innerHTML = `<tr><td colspan="5"><div class="empty-cell"><span class="empty-icon">⏳</span>Memuat log...</div></td></tr>`;
+  try {
+    const data = await api('/api/admin/logs?category=hubcap&perPage=50&sort=newest');
+    if (!data.rows.length) {
+      tbody.innerHTML = `<tr><td colspan="5"><div class="empty-cell"><span class="empty-icon">🧾</span>Belum ada aktivitas Hubcap API.</div></td></tr>`;
+      return;
+    }
+    tbody.innerHTML = data.rows.map(hcLogRowHtml).join('');
+  } catch (e) {
+    tbody.innerHTML = `<tr><td colspan="5"><div class="empty-cell"><span class="empty-icon">⚠️</span>Gagal memuat log: ${escapeHtml(e.message)}</div></td></tr>`;
+  }
+}
+
+function hcLogRowHtml(item) {
+  return `<tr>
+    <td>${item.icon || ''} ${escapeHtml(item.label || item.type)}</td>
+    <td>${escapeHtml(item.description || '')}</td>
+    <td>${escapeHtml(item.admin || '—')}</td>
+    <td>${logBadgeHtml(item.status)}</td>
+    <td>${timeAgo(item.createdAt)}</td>
+  </tr>`;
+}
