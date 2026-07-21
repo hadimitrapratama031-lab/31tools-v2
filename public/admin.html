@@ -725,6 +725,7 @@
         <button class="hc-tab active" data-hctab="docs">📘 Dokumentasi API</button>
         <button class="hc-tab" data-hctab="keys">🔑 API Key</button>
         <button class="hc-tab" data-hctab="monitor">📊 Monitoring</button>
+        <button class="hc-tab" data-hctab="ryu">🐉 Ryu API</button>
         <button class="hc-tab" data-hctab="logs">🧾 Logs</button>
       </div>
 
@@ -764,6 +765,26 @@
           </div>
           <div class="card-body" id="hcMonitorList">
             <div class="empty-cell"><span class="empty-icon">⏳</span>Memuat monitoring...</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Ryu API — key management, TERPISAH dari HubCap (provider beda: generator.ryuu.lol,
+           khusus buat download Game, dipakai sebagai alternatif/fallback saat HubCap habis kuota) -->
+      <div class="hc-panel" id="hcPanelRyu">
+        <div class="ry-intro-banner">
+          🐉 <b>Ryu API</b> — provider alternatif/fallback khusus untuk <b>download Game</b> (bukan bypass), dipakai kalau HubCap kehabisan kuota harian. Kelola API Key-nya di sini, lalu pilih provider "Ryu" saat mencari App ID di halaman Games.
+        </div>
+        <div class="card">
+          <div class="card-header hc-card-header-row">
+            <div>
+              <div class="card-title">🐉 Daftar API Key Ryu</div>
+              <div class="card-sub">Tambah, edit, hapus, atau aktifkan/nonaktifkan API Key Ryu. Auto rotation berlaku sama seperti HubCap — realtime, tanpa restart server.</div>
+            </div>
+            <button class="btn btn-primary btn-sm" id="btnRyAddKey">+ Tambah API Key</button>
+          </div>
+          <div class="card-body" id="ryKeysList">
+            <div class="empty-cell"><span class="empty-icon">⏳</span>Memuat API Key Ryu...</div>
           </div>
         </div>
       </div>
@@ -855,9 +876,15 @@
     </div>
     <div class="modal-body">
 
-      <!-- APP ID LOOKUP (hubcapmanifest + Steam) -->
+      <!-- APP ID LOOKUP (hubcapmanifest + Ryu + Steam) -->
       <div class="form-group" id="appIdSection">
         <label class="form-label">App ID Steam <span style="color:var(--text-faint);font-weight:400;">(opsional — biar auto keisi)</span></label>
+
+        <div class="provider-toggle" id="providerToggle">
+          <button type="button" class="provider-toggle-btn active" data-provider="hubcap">🧩 HubCap</button>
+          <button type="button" class="provider-toggle-btn" data-provider="ryu">🐉 Ryu</button>
+        </div>
+
         <div class="cover-row">
           <input class="form-input" type="text" inputmode="numeric" id="itemAppId" placeholder="Contoh: 400" style="margin:0;">
           <button class="btn btn-primary" id="btnLookupAppId" style="flex-shrink:0;">🔎 Search</button>
@@ -878,7 +905,7 @@
         </div>
 
         <div class="form-group" id="manifestUrlRow" style="display:none;margin-top:12px;margin-bottom:0;">
-          <label class="form-label">Link Manifest (hubcapmanifest) <span style="color:var(--text-faint);font-weight:400;">— otomatis terisi kalau tersedia</span></label>
+          <label class="form-label">Link Manifest <span id="manifestUrlProviderLabel" style="color:var(--text-faint);font-weight:400;">(hubcapmanifest)</span> <span style="color:var(--text-faint);font-weight:400;">— otomatis terisi kalau tersedia</span></label>
           <div class="cover-row">
             <input class="form-input" type="text" id="itemManifestUrl" placeholder="Belum tersedia" readonly style="margin:0;cursor:text;">
             <a class="btn btn-secondary" id="btnOpenManifestUrl" href="#" target="_blank" rel="noopener" style="flex-shrink:0;text-decoration:none;">↗ Buka</a>
@@ -1340,6 +1367,37 @@
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeHcKeyModal()">Batal</button>
       <button class="btn btn-primary" id="btnHcSaveKey">Simpan API Key</button>
+    </div>
+  </div>
+</div>
+
+<div class="modal-backdrop" id="ryKeyModalBackdrop" style="display:none;" onclick="if(event.target===this)closeRyKeyModal()">
+  <div class="modal" style="max-width:440px;">
+    <div class="modal-header">
+      <div>
+        <div class="modal-title" id="ryKeyModalTitle">Tambah API Key Ryu</div>
+        <div class="modal-subtitle">API Key Ryu dipakai server untuk request ke generator.ryuu.lol, tidak pernah dikirim ke client.</div>
+      </div>
+      <button class="modal-close" onclick="closeRyKeyModal()">✕</button>
+    </div>
+    <div class="modal-body">
+      <input type="hidden" id="ryKeyId">
+      <div class="form-group">
+        <label class="form-label">Nama API Key</label>
+        <input class="form-input" type="text" id="ryKeyName" placeholder="Contoh: Ryu Key Utama, Ryu Cadangan 1">
+      </div>
+      <div class="form-group">
+        <label class="form-label">API Key <span id="ryKeyValueHint" style="opacity:.6;font-weight:400;"></span></label>
+        <input class="form-input" type="text" id="ryKeyValue" placeholder="Tempel API Key Ryu (X-Auth-Key) di sini" autocomplete="off">
+      </div>
+      <div class="form-group" style="display:flex;align-items:center;gap:10px;">
+        <label class="switch"><input type="checkbox" id="ryKeyActive" checked><span class="switch-slider"></span></label>
+        <label class="form-label" style="margin:0;" for="ryKeyActive">Aktifkan API Key ini</label>
+      </div>
+    </div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" onclick="closeRyKeyModal()">Batal</button>
+      <button class="btn btn-primary" id="btnRySaveKey">Simpan API Key</button>
     </div>
   </div>
 </div>

@@ -460,8 +460,13 @@ function connectAdminWS() {
           renderHcKeysList(msg.data);
           renderHcMonitor(msg.data);
         }
+      } else if (msg.event === 'ryu:update') {
+        _rySnapshot = msg.data;
+        if (currentPage === 'hubcap' && _hcActiveTab === 'ryu') {
+          renderRyKeysList(msg.data);
+        }
       }
-      if (msg.event === 'activity' && currentPage === 'hubcap' && _hcActiveTab === 'logs' && msg.data?.category === 'hubcap') {
+      if (msg.event === 'activity' && currentPage === 'hubcap' && _hcActiveTab === 'logs' && (msg.data?.category === 'hubcap' || msg.data?.category === 'ryu')) {
         loadHcLogs();
       }
     };
@@ -902,6 +907,7 @@ document.getElementById('btnDeleteCategory').addEventListener('click', async () 
 let editingContext = null;
 
 let lookupData = null; // hasil terakhir dari /api/admin/appid-lookup, dipakai pas Simpan
+let selectedProvider = 'hubcap'; // provider yang lagi dipilih di App ID lookup (Game): 'hubcap' | 'ryu'
 
 function openItemModal(type, item) {
   editingContext = item ? { type, id: item._id } : { type, id: null };
@@ -925,6 +931,7 @@ function openItemModal(type, item) {
   document.getElementById('coverResults').innerHTML = '';
   document.getElementById('appIdStatus').innerHTML = '';
   document.getElementById('appIdPreview').style.display = 'none';
+  setProviderToggle(item?.provider === 'ryu' ? 'ryu' : 'hubcap');
 
   // hubcapmanifest (App ID search + link manifest) CUMA relevan di halaman Game — di Bypass, link selalu manual.
   const appIdSection = document.getElementById('appIdSection');
@@ -1008,7 +1015,19 @@ document.getElementById('itemModalBackdrop').addEventListener('click', e => {
   if (e.target === document.getElementById('itemModalBackdrop')) closeModal();
 });
 
-// ─── APP ID LOOKUP (hubcapmanifest + Steam) — HANYA dipakai di halaman Game ───
+// ─── APP ID LOOKUP (hubcapmanifest + Ryu + Steam) — HANYA dipakai di halaman Game ───
+function setProviderToggle(provider) {
+  selectedProvider = provider === 'ryu' ? 'ryu' : 'hubcap';
+  document.querySelectorAll('#providerToggle .provider-toggle-btn').forEach(btn => {
+    btn.classList.toggle('active', btn.dataset.provider === selectedProvider);
+  });
+  const label = document.getElementById('manifestUrlProviderLabel');
+  if (label) label.textContent = selectedProvider === 'ryu' ? '(Ryu API)' : '(hubcapmanifest)';
+}
+document.querySelectorAll('#providerToggle .provider-toggle-btn').forEach(btn => {
+  btn.addEventListener('click', () => setProviderToggle(btn.dataset.provider));
+});
+
 document.getElementById('btnLookupAppId').addEventListener('click', doAppIdLookup);
 document.getElementById('itemAppId').addEventListener('keydown', e => { if (e.key === 'Enter') { e.preventDefault(); doAppIdLookup(); } });
 
@@ -1021,12 +1040,12 @@ async function doAppIdLookup() {
 
   const btn = document.getElementById('btnLookupAppId');
   btn.textContent = 'Mencari...'; btn.disabled = true;
-  statusEl.innerHTML = '<span style="color:var(--text-dim);">🔎 Mengambil data dari Steam &amp; hubcapmanifest...</span>';
+  statusEl.innerHTML = `<span style="color:var(--text-dim);">🔎 Mengambil data dari Steam &amp; ${selectedProvider === 'ryu' ? 'Ryu API' : 'hubcapmanifest'}...</span>`;
   previewEl.style.display = 'none';
   manifestUrlRow.style.display = 'none';
 
   try {
-    const data = await api(`/api/admin/appid-lookup/${encodeURIComponent(appId)}`);
+    const data = await api(`/api/admin/appid-lookup/${encodeURIComponent(appId)}?provider=${selectedProvider}`);
     lookupData = data;
 
     // Auto-isi form (tetap bisa diedit manual setelahnya)
@@ -1035,11 +1054,13 @@ async function doAppIdLookup() {
     if (data.imageUrl) document.getElementById('itemImageUrl').value = data.imageUrl;
     if (data.sizeLabel) document.getElementById('itemSizeLabel').value = data.sizeLabel;
 
-    // Link manifest — otomatis muncul kalau ADA di hubcapmanifest, biar bisa dicek/dibuka manual
+    // Link manifest — otomatis muncul kalau ADA di provider yang dipilih, biar bisa dicek/dibuka manual
     if (data.manifestUrl) {
       document.getElementById('itemManifestUrl').value = data.manifestUrl;
       document.getElementById('btnOpenManifestUrl').href = data.manifestUrl;
       manifestUrlRow.style.display = 'block';
+      const label = document.getElementById('manifestUrlProviderLabel');
+      if (label) label.textContent = data.provider === 'ryu' ? '(Ryu API)' : '(hubcapmanifest)';
     } else {
       document.getElementById('itemManifestUrl').value = '';
     }
@@ -1107,6 +1128,9 @@ document.getElementById('btnSaveItem').addEventListener('click', async () => {
     body.storeUrl = appId ? (lookupData?.storeUrl || `https://store.steampowered.com/app/${appId}/`) : null;
     body.manifestUrl = document.getElementById('itemManifestUrl').value.trim() || null;
     body.sizeBytes = lookupData?.sizeBytes ?? null;
+    // Provider ('hubcap'/'ryu') dari hasil Search terakhir kalau ada — kalau admin isi
+    // manifestUrl manual tanpa pernah klik Search, ikut toggle yang lagi aktif.
+    body.provider = body.manifestUrl ? (lookupData?.provider || selectedProvider) : null;
   } else {
     // Halaman Bypass: link SELALU manual dari admin, tidak ada urusan sama hubcap/App ID.
     body.zipUrl = document.getElementById('itemBypassOnlyContent').value.trim() || null;
@@ -3488,11 +3512,13 @@ let _hcWired = false;
 let _hcSnapshot = null;
 let _hcDocsCache = null;
 let _hcActiveTab = 'docs';
+let _rySnapshot = null;
 
 async function renderHubcapPage() {
   wireHubcapOnce();
   await Promise.all([loadHcDocs(), loadHcKeysAndMonitor()]);
   if (_hcActiveTab === 'logs') loadHcLogs();
+  if (_hcActiveTab === 'ryu') loadRyKeys();
 }
 
 function wireHubcapOnce() {
@@ -3510,6 +3536,7 @@ function wireHubcapOnce() {
       if (panel) panel.classList.add('active');
       if (tab === 'logs') loadHcLogs();
       if (tab === 'monitor' && _hcSnapshot) renderHcMonitor(_hcSnapshot);
+      if (tab === 'ryu') loadRyKeys();
     });
   });
 
@@ -3519,6 +3546,11 @@ function wireHubcapOnce() {
   document.getElementById('btnHcSaveKey').addEventListener('click', doSaveHcKey);
   document.getElementById('hcKeysList').addEventListener('click', handleHcKeysListClick);
   document.getElementById('hcKeysList').addEventListener('change', handleHcKeysListChange);
+
+  document.getElementById('btnRyAddKey').addEventListener('click', () => openRyKeyModal(null));
+  document.getElementById('btnRySaveKey').addEventListener('click', doSaveRyKey);
+  document.getElementById('ryKeysList').addEventListener('click', handleRyKeysListClick);
+  document.getElementById('ryKeysList').addEventListener('change', handleRyKeysListChange);
 }
 
 // ─── Dokumentasi API (ala Swagger) ───
@@ -3740,6 +3772,126 @@ async function doToggleHcKey(id, checked, checkboxEl) {
     _hcSnapshot = snapshot;
     renderHcGlobalBadge(snapshot); renderHcKeysList(snapshot); renderHcMonitor(snapshot);
     showToast(`API Key ${checked ? 'diaktifkan' : 'dinonaktifkan'}.`, 'success');
+  } catch (e) {
+    if (checkboxEl) checkboxEl.checked = !checked;
+    showToast('Gagal mengubah status: ' + e.message, 'error');
+  }
+}
+
+// ─── Ryu API — Key Management (pola identik dengan HubCap di atas) ───
+async function loadRyKeys() {
+  try {
+    const snapshot = await api('/api/admin/ryu/keys');
+    _rySnapshot = snapshot;
+    renderRyKeysList(snapshot);
+  } catch (e) {
+    document.getElementById('ryKeysList').innerHTML = `<div class="empty-cell"><span class="empty-icon">⚠️</span>Gagal memuat API Key Ryu: ${escapeHtml(e.message)}</div>`;
+  }
+}
+
+function ryKeyRowHtml(k) {
+  return `
+  <div class="hc-key-row ${k.isCurrent ? 'is-current' : ''}" data-id="${k.id}">
+    <div class="hc-key-main">
+      <div class="hc-key-name">${escapeHtml(k.name)} ${k.isCurrent ? '<span class="hc-key-current-pill">Sedang Dipakai</span>' : ''}</div>
+      <div class="hc-key-masked">${escapeHtml(k.maskedKey)}</div>
+    </div>
+    <span class="hc-status-pill ${k.status}">${HC_STATUS_LABEL[k.status] || k.status}</span>
+    <div class="hc-key-actions">
+      <label class="switch" title="Aktif / Nonaktif">
+        <input type="checkbox" data-ry-toggle="${k.id}" ${k.active ? 'checked' : ''}>
+        <span class="switch-slider"></span>
+      </label>
+      <button class="btn-icon-sm" title="Edit" data-ry-edit="${k.id}">✏️</button>
+      <button class="btn-icon-sm" title="Hapus" data-ry-delete="${k.id}">🗑️</button>
+    </div>
+  </div>`;
+}
+
+function renderRyKeysList(snapshot) {
+  const container = document.getElementById('ryKeysList');
+  if (!container) return;
+  if (!snapshot.keys.length) {
+    container.innerHTML = `<div class="empty-cell"><span class="empty-icon">🐉</span>Belum ada API Key Ryu. Klik "+ Tambah API Key" untuk mulai.</div>`;
+    return;
+  }
+  container.innerHTML = snapshot.keys.map(ryKeyRowHtml).join('');
+}
+
+function handleRyKeysListClick(e) {
+  const editBtn = e.target.closest('[data-ry-edit]');
+  const delBtn = e.target.closest('[data-ry-delete]');
+  if (editBtn) {
+    const k = _rySnapshot?.keys.find(x => x.id === editBtn.dataset.ryEdit);
+    openRyKeyModal(k || null);
+  } else if (delBtn) {
+    doDeleteRyKey(delBtn.dataset.ryDelete);
+  }
+}
+
+function handleRyKeysListChange(e) {
+  const toggleEl = e.target.closest('[data-ry-toggle]');
+  if (toggleEl) doToggleRyKey(toggleEl.dataset.ryToggle, toggleEl.checked, toggleEl);
+}
+
+function openRyKeyModal(k) {
+  document.getElementById('ryKeyModalTitle').textContent = k ? 'Edit API Key Ryu' : 'Tambah API Key Ryu';
+  document.getElementById('ryKeyId').value = k ? k.id : '';
+  document.getElementById('ryKeyName').value = k ? k.name : '';
+  document.getElementById('ryKeyValue').value = '';
+  document.getElementById('ryKeyValue').placeholder = k ? 'Kosongkan kalau tidak ingin mengubah API Key' : 'Tempel API Key Ryu (X-Auth-Key) di sini';
+  document.getElementById('ryKeyValueHint').textContent = k ? `(saat ini: ${k.maskedKey})` : '';
+  document.getElementById('ryKeyActive').checked = k ? k.active : true;
+  document.getElementById('ryKeyModalBackdrop').style.display = 'flex';
+}
+function closeRyKeyModal() { document.getElementById('ryKeyModalBackdrop').style.display = 'none'; }
+
+async function doSaveRyKey() {
+  const id = document.getElementById('ryKeyId').value;
+  const name = document.getElementById('ryKeyName').value.trim();
+  const key = document.getElementById('ryKeyValue').value.trim();
+  const active = document.getElementById('ryKeyActive').checked;
+  if (!id && !key) { showToast('API Key wajib diisi.', 'error'); return; }
+
+  const btn = document.getElementById('btnRySaveKey');
+  const original = btn.textContent;
+  btn.disabled = true; btn.textContent = 'Menyimpan...';
+  try {
+    const body = { name, active };
+    if (key) body.key = key;
+    const snapshot = id
+      ? await api(`/api/admin/ryu/keys/${id}`, { method: 'PUT', body: JSON.stringify(body) })
+      : await api('/api/admin/ryu/keys', { method: 'POST', body: JSON.stringify(body) });
+    _rySnapshot = snapshot;
+    renderRyKeysList(snapshot);
+    showToast(id ? 'API Key Ryu berhasil diperbarui.' : 'API Key Ryu berhasil ditambahkan.', 'success');
+    closeRyKeyModal();
+  } catch (e) {
+    showToast('Gagal menyimpan: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false; btn.textContent = original;
+  }
+}
+
+async function doDeleteRyKey(id) {
+  const k = _rySnapshot?.keys.find(x => x.id === id);
+  if (!confirm(`Hapus API Key Ryu "${k?.name || id}"? Tindakan ini tidak bisa dibatalkan.`)) return;
+  try {
+    const snapshot = await api(`/api/admin/ryu/keys/${id}`, { method: 'DELETE' });
+    _rySnapshot = snapshot;
+    renderRyKeysList(snapshot);
+    showToast('API Key Ryu berhasil dihapus.', 'success');
+  } catch (e) {
+    showToast('Gagal menghapus: ' + e.message, 'error');
+  }
+}
+
+async function doToggleRyKey(id, checked, checkboxEl) {
+  try {
+    const snapshot = await api(`/api/admin/ryu/keys/${id}/toggle`, { method: 'PUT', body: JSON.stringify({ active: checked }) });
+    _rySnapshot = snapshot;
+    renderRyKeysList(snapshot);
+    showToast(`API Key Ryu ${checked ? 'diaktifkan' : 'dinonaktifkan'}.`, 'success');
   } catch (e) {
     if (checkboxEl) checkboxEl.checked = !checked;
     showToast('Gagal mengubah status: ' + e.message, 'error');

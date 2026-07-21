@@ -106,6 +106,17 @@ const HUBCAP_BASE_URL = (process.env.HUBCAP_BASE_URL || 'https://hubcapmanifest.
 const RYUU_API_KEY = process.env.RYUU_API_KEY || '';
 
 // ══════════════════════════════════════════════════════════════════════════
+// RYU API (generator.ryuu.lol/api/download/{appId}) — SENGAJA DIPISAH dari
+// "Ryuu Generator" bypass di atas (RYUU_API_KEY .env, dipakai buat link bypass
+// manual) supaya admin bisa bedakan jelas dari Admin Web. Fitur ini KHUSUS buat
+// download GAME (bukan bypass) — alternatif/fallback kalau HubCap kehabisan
+// kuota — dan API key-nya dikelola sepenuhnya dari Admin Web > Hubcap API >
+// tab "Ryu API" (collection `ryuApiKeys`, bukan .env), lengkap dengan
+// Tambah/Edit/Hapus/Aktifkan-Nonaktifkan + auto rotation, sama seperti HubCap.
+// ══════════════════════════════════════════════════════════════════════════
+const RYU_BASE_URL = (process.env.RYU_BASE_URL || 'https://generator.ryuu.lol').replace(/\/+$/, '');
+
+// ══════════════════════════════════════════════════════════════════════════
 // HUBCAP API KEY MANAGER — API Key HubCap sekarang dikelola dari Admin Web
 // (halaman "Hubcap API" > API Key Management), disimpan di database, BUKAN
 // lagi cuma dari .env. Admin bisa Tambah/Edit/Hapus/Aktifkan/Nonaktifkan key
@@ -117,6 +128,16 @@ const RYUU_API_KEY = process.env.RYUU_API_KEY || '';
 const hubcapKeyManager = require('./hubcapKeyManager')({
   getDb: () => db,
   HUBCAP_BASE_URL,
+  broadcastAdmin: (...args) => broadcastAdmin(...args),
+  logActivity: (...args) => logActivity(...args)
+});
+
+// Ryu API — lihat ryuKeyManager.js. Sengaja modul terpisah dari hubcapKeyManager
+// (provider beda, koleksi DB beda: `ryuApiKeys`), supaya jelas kebedaannya di
+// Admin Web maupun di kode.
+const ryuKeyManager = require('./ryuKeyManager')({
+  getDb: () => db,
+  RYU_BASE_URL,
   broadcastAdmin: (...args) => broadcastAdmin(...args),
   logActivity: (...args) => logActivity(...args)
 });
@@ -190,6 +211,74 @@ async function streamHubcapManifest(appId, res, filenameHint) {
   res.setHeader('Content-Disposition', `attachment; filename="${(filenameHint || 'file').replace(/[^a-z0-9]/gi, '_')}.zip"`);
   if (hubcapRes.headers['content-length']) res.setHeader('Content-Length', hubcapRes.headers['content-length']);
   hubcapRes.data.pipe(res);
+}
+
+// ── PROXY STREAM dari Ryu API → client ── Pola SAMA PERSIS seperti streamHubcapManifest
+// di atas (server yang download pakai key, client cuma terima ZIP jadi, key tidak pernah
+// terekspos ke Electron). Endpoint yang dipakai `/api/download/{appId}` TANPA parameter
+// `file_type` — supaya dapat ZIP lengkap berisi .lua + .manifest (main.js Electron perlu
+// keduanya buat inject game ke Steam), BUKAN `file_type=lua`/`file_type=manifest` yang
+// cuma balikin satu file mentah saja.
+async function streamRyuManifest(appId, res, filenameHint) {
+  const hasKey = await ryuKeyManager.hasActiveKey();
+  if (!hasKey) {
+    return res.status(500).json({ error: 'Belum ada API Key Ryu yang aktif. Tambahkan di Admin Web > Hubcap API > tab Ryu API.' });
+  }
+  const url = `${RYU_BASE_URL}/api/download/${appId}`;
+  let ryuRes = null;
+  let lastError = null;
+
+  const snapshot = await ryuKeyManager.getMonitorSnapshot();
+  const maxAttempts = Math.max(1, snapshot.activeCount || 1);
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    const keyDoc = await ryuKeyManager.getActiveKey();
+    if (!keyDoc) break;
+    try {
+      ryuRes = await axios.get(url, {
+        headers: { 'X-Auth-Key': keyDoc.key },
+        responseType: 'stream',
+        timeout: 0,
+        maxRedirects: 10,
+        validateStatus: () => true
+      });
+      if (ryuRes.status === 200) { await ryuKeyManager.markSuccess(keyDoc); break; }
+      // Baca sedikit body buat pesan error yang informatif (Ryu balikin JSON kecil kayak {"error":"..."})
+      let bodyText = '';
+      try {
+        for await (const chunk of ryuRes.data) { bodyText += chunk.toString('utf8'); if (bodyText.length > 500) break; }
+      } catch (e2) {}
+      let parsedMsg = null;
+      try { const p = JSON.parse(bodyText); if (p && typeof p.error === 'string') parsedMsg = p.error; } catch (e3) {}
+      const s = ryuRes.status;
+      lastError = { status: s, message: parsedMsg };
+      ryuRes = null;
+      if (s === 429 || s === 401 || s === 403) {
+        await ryuKeyManager.markLimited(keyDoc, parsedMsg || `HTTP ${s} saat GET /api/download/${appId}`);
+        if (attempt < maxAttempts - 1) continue; // auto rotation ke key berikutnya
+      } else {
+        await ryuKeyManager.markError(keyDoc, parsedMsg || `HTTP ${s} saat GET /api/download/${appId}`);
+      }
+      break;
+    } catch (e) {
+      lastError = { status: null, message: e.message };
+      await ryuKeyManager.markError(keyDoc, e.message || 'Gagal terhubung ke Ryu API');
+      break;
+    }
+  }
+
+  if (!ryuRes) {
+    const s = lastError?.status;
+    if (s === 429) return res.status(429).json({ error: lastError.message || 'Semua API key Ryu sedang rate limited, coba lagi sebentar lagi.' });
+    if (s === 401 || s === 403) return res.status(401).json({ error: lastError.message || 'API Key Ryu tidak valid/ditolak. Hubungi admin.' });
+    if (s === 404) return res.status(404).json({ error: lastError.message || `File untuk App ID ${appId} tidak ditemukan di Ryu API.` });
+    return res.status(500).json({ error: 'Gagal terhubung ke Ryu API: ' + (lastError?.message || 'unknown error') });
+  }
+
+  res.setHeader('Content-Type', 'application/zip');
+  res.setHeader('Content-Disposition', `attachment; filename="${(filenameHint || 'file').replace(/[^a-z0-9]/gi, '_')}.zip"`);
+  if (ryuRes.headers['content-length']) res.setHeader('Content-Length', ryuRes.headers['content-length']);
+  ryuRes.data.pipe(res);
 }
 
 // Urutan level role — dipakai buat cek "role X boleh akses item level berapa"
@@ -491,6 +580,13 @@ const LOG_CATALOG = {
   hubcap_auto_rotation:    { label: 'Auto Rotation API Key HubCap',        icon: '🔄', category: 'hubcap', status: 'warning' },
   hubcap_all_limited:      { label: 'Semua API Key HubCap Limit',          icon: '🚨', category: 'hubcap', status: 'error' },
   hubcap_api_error:        { label: 'Error API HubCap',                    icon: '⚠️', category: 'hubcap', status: 'error' },
+  ryu_key_add:              { label: 'Tambah API Key Ryu',                  icon: '🔑', category: 'ryu',    status: 'success' },
+  ryu_key_edit:             { label: 'Edit API Key Ryu',                    icon: '✏️', category: 'ryu',    status: 'success' },
+  ryu_key_delete:           { label: 'Hapus API Key Ryu',                   icon: '🗑️', category: 'ryu',    status: 'warning' },
+  ryu_key_limit:            { label: 'API Key Ryu Mencapai Limit',          icon: '⛔', category: 'ryu',    status: 'warning' },
+  ryu_auto_rotation:        { label: 'Auto Rotation API Key Ryu',           icon: '🔄', category: 'ryu',    status: 'warning' },
+  ryu_all_limited:          { label: 'Semua API Key Ryu Limit',             icon: '🚨', category: 'ryu',    status: 'error' },
+  ryu_api_error:            { label: 'Error API Ryu',                       icon: '⚠️', category: 'ryu',    status: 'error' },
   settings_change:         { label: 'Perubahan Pengaturan',                icon: '⚙️', category: 'system', status: 'info' },
   premium_expired:         { label: 'Paket Premium Berakhir',              icon: '⏰', category: 'billing', status: 'warning' },
   premium_cleanup_start:   { label: 'Penghapusan Konten Premium Dimulai',  icon: '🧹', category: 'moderation', status: 'info' },
@@ -1874,13 +1970,44 @@ app.get('/api/games/:id/stream', async (req, res) => {
     const rawUrl = game.manifestUrl || game.zipUrl || null;
     if (!rawUrl) return res.status(404).json({ error: 'File download belum diatur admin.' });
 
-    const isHubcap = rawUrl.includes('hubcapmanifest.com') || rawUrl.includes('hubcap');
+    // Provider eksplisit (game baru) diprioritaskan; fallback ke tebak dari isi URL
+    // buat game lama yang belum punya field `provider`.
+    let isHubcap = game.provider === 'hubcap' || (!game.provider && (rawUrl.includes('hubcapmanifest.com') || rawUrl.includes('hubcap')));
+    let isRyu = game.provider === 'ryu' || (!game.provider && !isHubcap && /ryuu?\.lol/i.test(rawUrl) && rawUrl.includes('/api/download/'));
+
+    // Auto-fallback antar provider: kalau provider utama game ini lagi TIDAK punya
+    // API key aktif sama sekali (mis. HubCap kehabisan kuota semua key-nya), dan
+    // provider yang satunya PUNYA key aktif, otomatis pakai provider itu — asal
+    // game-nya punya App ID (kedua provider sama-sama diakses lewat App ID Steam),
+    // supaya HubCap habis/Ryu habis tidak langsung bikin download gagal total.
+    if (game.appId) {
+      if (isHubcap && !(await hubcapKeyManager.hasActiveKey()) && (await ryuKeyManager.hasActiveKey())) {
+        isHubcap = false; isRyu = true;
+        logActivity({
+          type: 'ryu_auto_rotation', status: 'warning',
+          description: `Fallback otomatis: game "${game.name}" biasanya lewat HubCap, tapi HubCap tidak ada key aktif — dialihkan ke Ryu API.`,
+          meta: { gameId: String(game._id), appId: game.appId }
+        }).catch(() => {});
+      } else if (isRyu && !(await ryuKeyManager.hasActiveKey()) && (await hubcapKeyManager.hasActiveKey())) {
+        isRyu = false; isHubcap = true;
+        logActivity({
+          type: 'hubcap_auto_rotation', status: 'warning',
+          description: `Fallback otomatis: game "${game.name}" biasanya lewat Ryu API, tapi Ryu tidak ada key aktif — dialihkan ke HubCap.`,
+          meta: { gameId: String(game._id), appId: game.appId }
+        }).catch(() => {});
+      }
+    }
+
     if (isHubcap) {
       if (!game.appId) return res.status(400).json({ error: 'App ID game ini belum diisi admin — tidak bisa ambil manifest dari HubCap.' });
       return await streamHubcapManifest(game.appId, res, game.name);
     }
+    if (isRyu) {
+      if (!game.appId) return res.status(400).json({ error: 'App ID game ini belum diisi admin — tidak bisa ambil file dari Ryu API.' });
+      return await streamRyuManifest(game.appId, res, game.name);
+    }
 
-    // URL non-hubcap (misal link GitHub Release) — redirect langsung, tanpa proxy
+    // URL non-hubcap/non-ryu (misal link GitHub Release) — redirect langsung, tanpa proxy
     return res.redirect(rawUrl);
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -2749,7 +2876,7 @@ app.get('/api/admin/games', requireAdmin, async (req, res) => {
 });
 
 app.post('/api/admin/games', requireAdmin, async (req, res) => {
-  const { name, description, imageUrl, role, appId, storeUrl, manifestUrl, sizeBytes, sizeLabel, isOnline, category } = req.body;
+  const { name, description, imageUrl, role, appId, storeUrl, manifestUrl, sizeBytes, sizeLabel, isOnline, category, provider } = req.body;
   if (!name || !ROLE_LEVEL.hasOwnProperty(role)) return res.status(400).json({ error: 'Nama & role wajib diisi dengan benar.' });
   // Kategori WAJIB — setiap game minimal harus punya satu kategori supaya
   // filter kategori di Dashboard selalu punya data yang valid buat ditampilkan.
@@ -2766,6 +2893,10 @@ app.post('/api/admin/games', requireAdmin, async (req, res) => {
     appId: appId ? String(appId) : null,
     storeUrl: storeUrl || null,
     manifestUrl: manifestUrl || null,
+    // Provider file manifest/download untuk game ini: 'hubcap' | 'ryu' | null (link manual).
+    // Dipakai /api/games/:id/stream buat menentukan proxy mana yang dipakai — lebih akurat
+    // daripada nebak dari isi URL saja (tetap ada fallback substring buat data lama).
+    provider: (provider === 'ryu' || provider === 'hubcap') ? provider : null,
     sizeBytes: sizeBytes || null,
     sizeLabel: sizeLabel || null,
     // Tipe game: Online (bisa multiplayer online) / Offline (singleplayer murni).
@@ -2791,7 +2922,7 @@ app.post('/api/admin/games', requireAdmin, async (req, res) => {
 
 app.put('/api/admin/games/:id', requireAdmin, async (req, res) => {
   if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
-  const { name, description, imageUrl, role, appId, storeUrl, manifestUrl, sizeBytes, sizeLabel, isOnline, category } = req.body;
+  const { name, description, imageUrl, role, appId, storeUrl, manifestUrl, sizeBytes, sizeLabel, isOnline, category, provider } = req.body;
   const update = {};
   if (name !== undefined) update.name = name;
   if (description !== undefined) update.description = description;
@@ -2799,6 +2930,7 @@ app.put('/api/admin/games/:id', requireAdmin, async (req, res) => {
   if (appId !== undefined) update.appId = appId ? String(appId) : null;
   if (storeUrl !== undefined) update.storeUrl = storeUrl || null;
   if (manifestUrl !== undefined) update.manifestUrl = manifestUrl || null;
+  if (provider !== undefined) update.provider = (provider === 'ryu' || provider === 'hubcap') ? provider : null;
   if (sizeBytes !== undefined) update.sizeBytes = sizeBytes || null;
   if (sizeLabel !== undefined) update.sizeLabel = sizeLabel || null;
   if (isOnline !== undefined) update.isOnline = isOnline === false ? false : true;
@@ -4541,6 +4673,57 @@ app.delete('/api/admin/hubcap/keys/:id', requireAdmin, async (req, res) => {
   }
 });
 
+// ── Ryu API Key Management (CRUD) — pola identik dengan HubCap di atas, tapi
+// koleksi & provider terpisah (lihat ryuKeyManager.js). Tidak ada endpoint
+// stats/monitor live karena Ryu API tidak menyediakan endpoint usage publik.
+app.get('/api/admin/ryu/keys', requireAdmin, async (req, res) => {
+  try {
+    const snapshot = await ryuKeyManager.getMonitorSnapshot();
+    res.json(snapshot);
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/admin/ryu/keys', requireAdmin, async (req, res) => {
+  try {
+    const { name, key } = req.body || {};
+    const snapshot = await ryuKeyManager.addKey({ name, key });
+    res.json(snapshot);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.put('/api/admin/ryu/keys/:id', requireAdmin, async (req, res) => {
+  try {
+    const { name, key, active } = req.body || {};
+    const snapshot = await ryuKeyManager.updateKey(req.params.id, { name, key, active });
+    res.json(snapshot);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.put('/api/admin/ryu/keys/:id/toggle', requireAdmin, async (req, res) => {
+  try {
+    const { active } = req.body || {};
+    const snapshot = await ryuKeyManager.toggleKey(req.params.id, active);
+    res.json(snapshot);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.delete('/api/admin/ryu/keys/:id', requireAdmin, async (req, res) => {
+  try {
+    const snapshot = await ryuKeyManager.deleteKey(req.params.id);
+    res.json(snapshot);
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 // ADMIN — VERIFY ROLE (sinkron role App ⇄ Discord, webhook, resync, log)
 // ══════════════════════════════════════════════════════════════════════════
@@ -4696,12 +4879,50 @@ async function checkHubcapManifest(appId) {
   }
 }
 
+// Cek ketersediaan file di Ryu API tanpa full-download — sama seperti checkHubcapManifest,
+// GET-stream lalu langsung di-destroy begitu header/status masuk (hemat kuota).
+async function checkRyuManifest(appId) {
+  const keyDoc = await ryuKeyManager.getActiveKey();
+  if (!keyDoc) return { configured: false, hasManifest: null, sizeBytes: null };
+  const url = `${RYU_BASE_URL}/api/download/${appId}`;
+  try {
+    const getRes = await axios.get(url, {
+      headers: { 'X-Auth-Key': keyDoc.key },
+      timeout: 10000, responseType: 'stream', validateStatus: () => true
+    });
+    const status = getRes.status;
+    const len = getRes.headers['content-length'];
+    getRes.data.destroy();
+    if (status === 200) { await ryuKeyManager.markSuccess(keyDoc); return { configured: true, hasManifest: true, sizeBytes: len ? Number(len) : null }; }
+    if (status === 404) { await ryuKeyManager.markSuccess(keyDoc); return { configured: true, hasManifest: false, sizeBytes: null }; }
+    if (status === 401 || status === 403) {
+      await ryuKeyManager.markLimited(keyDoc, `HTTP ${status} saat cek App ID ${appId}`);
+      return { configured: true, hasManifest: null, sizeBytes: null, error: 'Ryu API: API key tidak valid/ditolak (401/403).' };
+    }
+    if (status === 429) {
+      await ryuKeyManager.markLimited(keyDoc, `HTTP 429 saat cek App ID ${appId}`);
+      return { configured: true, hasManifest: null, sizeBytes: null, error: 'Ryu API: kuota harian API key habis (429).' };
+    }
+    await ryuKeyManager.markError(keyDoc, `HTTP ${status} saat cek App ID ${appId}`);
+    return { configured: true, hasManifest: null, sizeBytes: null, error: `Ryu API: HTTP ${status}` };
+  } catch (e2) {
+    await ryuKeyManager.markError(keyDoc, e2.message || 'Gagal dihubungi');
+    return { configured: true, hasManifest: null, sizeBytes: null, error: 'Ryu API: gagal dihubungi.' };
+  }
+}
+
 app.get('/api/admin/appid-lookup/:appId', requireAdmin, async (req, res) => {
   const appId = String(req.params.appId).trim();
   if (!/^\d+$/.test(appId)) return res.status(400).json({ error: 'App ID harus berupa angka (App ID Steam).' });
 
+  // Provider file/manifest yang mau dicek — 'hubcap' (default, backward compatible)
+  // atau 'ryu' (Ryu API, fallback kalau HubCap kehabisan kuota). Nama & foto TETAP
+  // dari Steam Store API terlepas dari provider yang dipilih (tidak ada bedanya).
+  const provider = req.query.provider === 'ryu' ? 'ryu' : 'hubcap';
+
   const result = {
     appId,
+    provider,
     name: null,
     description: null,
     imageUrl: null,
@@ -4719,7 +4940,7 @@ app.get('/api/admin/appid-lookup/:appId', requireAdmin, async (req, res) => {
     warnings: []
   };
 
-  // 1) Steam Store API (publik)
+  // 1) Steam Store API (publik) — SAMA untuk kedua provider
   try {
     const steamRes = await axios.get('https://store.steampowered.com/api/appdetails', {
       params: { appids: appId, l: 'english' },
@@ -4747,23 +4968,39 @@ app.get('/api/admin/appid-lookup/:appId', requireAdmin, async (req, res) => {
     result.warnings.push('Gagal mengambil data dari Steam Store.');
   }
 
-  // 2) hubcapmanifest — cek ketersediaan manifest & ukuran file
-  try {
-    const hc = await checkHubcapManifest(appId);
-    result.hubcapConfigured = hc.configured;
-    result.hasManifest = hc.hasManifest;
-    result.sizeBytes = hc.sizeBytes;
-    result.sizeLabel = formatBytes(hc.sizeBytes);
-    // Link manifest langsung ditampilkan ke admin kalau memang tersedia di hubcapmanifest,
-    // biar bisa dicek/dibuka manual juga.
-    // Simpan sebagai /manifest/ (ZIP berisi .lua + .manifest), BUKAN /lua/ (file mentah)
-    // karena main.js Electron mengharapkan ZIP saat inject game ke Steam.
-    if (hc.hasManifest === true) result.manifestUrl = `${HUBCAP_BASE_URL}/api/v1/manifest/${appId}`;
-    if (hc.error) result.warnings.push(hc.error);
-    if (hc.configured && hc.hasManifest === false) result.warnings.push('Manifest untuk App ID ini belum tersedia di hubcapmanifest.');
-    if (!hc.configured) result.warnings.push('Belum ada API Key HubCap yang aktif (Admin Web > Hubcap API) — cek ketersediaan manifest & ukuran file dilewati.');
-  } catch (e) {
-    result.warnings.push('Gagal mengecek hubcapmanifest.');
+  // 2) Cek ketersediaan manifest/file & ukurannya di provider yang dipilih
+  if (provider === 'ryu') {
+    try {
+      const rc = await checkRyuManifest(appId);
+      result.hubcapConfigured = rc.configured; // nama field dipertahankan (dipakai UI lama) — artinya "provider siap dipakai"
+      result.hasManifest = rc.hasManifest;
+      result.sizeBytes = rc.sizeBytes;
+      result.sizeLabel = formatBytes(rc.sizeBytes);
+      if (rc.hasManifest === true) result.manifestUrl = `${RYU_BASE_URL}/api/download/${appId}`;
+      if (rc.error) result.warnings.push(rc.error);
+      if (rc.configured && rc.hasManifest === false) result.warnings.push('File untuk App ID ini belum tersedia di Ryu API.');
+      if (!rc.configured) result.warnings.push('Belum ada API Key Ryu yang aktif (Admin Web > Hubcap API > tab Ryu API) — cek ketersediaan file dilewati.');
+    } catch (e) {
+      result.warnings.push('Gagal mengecek Ryu API.');
+    }
+  } else {
+    try {
+      const hc = await checkHubcapManifest(appId);
+      result.hubcapConfigured = hc.configured;
+      result.hasManifest = hc.hasManifest;
+      result.sizeBytes = hc.sizeBytes;
+      result.sizeLabel = formatBytes(hc.sizeBytes);
+      // Link manifest langsung ditampilkan ke admin kalau memang tersedia di hubcapmanifest,
+      // biar bisa dicek/dibuka manual juga.
+      // Simpan sebagai /manifest/ (ZIP berisi .lua + .manifest), BUKAN /lua/ (file mentah)
+      // karena main.js Electron mengharapkan ZIP saat inject game ke Steam.
+      if (hc.hasManifest === true) result.manifestUrl = `${HUBCAP_BASE_URL}/api/v1/manifest/${appId}`;
+      if (hc.error) result.warnings.push(hc.error);
+      if (hc.configured && hc.hasManifest === false) result.warnings.push('Manifest untuk App ID ini belum tersedia di hubcapmanifest.');
+      if (!hc.configured) result.warnings.push('Belum ada API Key HubCap yang aktif (Admin Web > Hubcap API) — cek ketersediaan manifest & ukuran file dilewati.');
+    } catch (e) {
+      result.warnings.push('Gagal mengecek hubcapmanifest.');
+    }
   }
 
   res.json(result);
