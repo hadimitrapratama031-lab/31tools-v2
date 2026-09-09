@@ -70,6 +70,7 @@ const PAGE_WHITELIST = [
   { id: 'explore', label: 'Bypass' },
   { id: 'belipaket', label: 'Beli Paket' },
   { id: 'marketplace', label: 'Marketplace' },
+  { id: 'requestgame', label: 'Request Game' }, // nav-item data-page="requestgame" (app/index.html), sebelumnya kelewat waktu whitelist ini dibuat
   { id: 'setting', label: 'Settings' },
   { id: 'transaksi', label: 'Transaksi' },
   { id: 'tutorial', label: 'Tutorial' },
