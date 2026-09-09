@@ -2188,6 +2188,190 @@
     .rv-box{ padding:28px 20px 22px; }
   }
 
+  /* ---- EDIT PROFIL — popup "identity card" premium dibuka dari Profile
+     Dropdown (lihat #editProfileModal di index.html & blok "EDIT PROFIL"
+     di app.js). Backend (Foto Profil App/Display Name/Username/Bio) 100%
+     existing (profileManager.js + /api/profile* di server.js) — CSS di
+     bawah ini murni tampilan popup. Bahasa visual senada dengan
+     .gt-offer-modal/.rv-modal (dark surface, subtle border, soft shadow,
+     rounded corner, SVG/Lucide icon saja tanpa emoji, animasi ~200-300ms
+     easing natural) tapi sengaja dibuat lebih lapang/personal (bukan
+     transactional seperti Redeem Voucher) — kartu diberi sentuhan glass
+     (background gradient semi-transparan + backdrop-filter blur) dan foto
+     profil dibuat besar & jadi fokus utama dengan ring gradient halus.
+     z-index (65) sejajar .rv-modal/.gt-offer-modal, tetap di bawah
+     .app-update-overlay (Force Update App selalu menang). */
+  .ep-modal{
+    position:fixed; inset:0; z-index:65;
+    background:rgba(4,6,10,.62); backdrop-filter:blur(4px);
+    display:none; align-items:center; justify-content:center; padding:20px;
+  }
+  .ep-modal.show{ display:flex; }
+  .ep-box{
+    position:relative; width:100%; max-width:400px; max-height:calc(100vh - 64px);
+    overflow-y:auto;
+    background:linear-gradient(165deg, rgba(20,27,43,.94), rgba(11,21,48,.94));
+    backdrop-filter:blur(22px) saturate(140%);
+    border:1px solid var(--border-subtle); border-radius:22px;
+    padding:32px 28px 26px; text-align:center;
+    font-family:var(--pkg-font-ui);
+    box-shadow:0 34px 76px -20px rgba(0,0,0,.78), inset 0 1px 0 0 #ffffff0c;
+    animation:epPop .26s cubic-bezier(.2,.9,.3,1.05);
+  }
+  @keyframes epPop{ from{ opacity:0; transform:scale(.95) translateY(10px); } to{ opacity:1; transform:scale(1) translateY(0); } }
+  .ep-close-btn{
+    position:absolute; top:16px; right:16px; width:30px; height:30px;
+    display:flex; align-items:center; justify-content:center;
+    background:#FFFFFF0d; border:1px solid var(--border-subtle); border-radius:10px;
+    color:var(--text-secondary); cursor:pointer;
+    transition:color .15s ease, border-color .15s ease, background .15s ease;
+  }
+  .ep-close-btn svg{ width:14px; height:14px; }
+  .ep-close-btn:hover{ color:var(--text-primary); border-color:#ffffff30; background:#FFFFFF14; }
+  .ep-title{
+    font-family:var(--pkg-font-display); font-size:17px; font-weight:800;
+    letter-spacing:.02em; color:var(--text-primary); margin-bottom:22px;
+  }
+
+  /* Header: foto besar jadi fokus utama + chip Discord read-only kecil di
+     bawahnya. */
+  .ep-header{ display:flex; flex-direction:column; align-items:center; }
+  .ep-avatar-wrap{
+    position:relative; width:104px; height:104px; cursor:pointer;
+    border-radius:50%; outline:none;
+  }
+  .ep-avatar-wrap:focus-visible .ep-avatar-ring{ box-shadow:0 0 0 3px #3FB6E840; }
+  .ep-avatar-ring{
+    width:100%; height:100%; border-radius:50%; padding:3px;
+    background:linear-gradient(135deg, var(--accent), var(--gold) 60%, var(--accent));
+    box-shadow:0 14px 32px -14px #3FB6E870;
+    transition:box-shadow .2s ease;
+  }
+  .ep-avatar{
+    width:100%; height:100%; border-radius:50%; overflow:hidden;
+    display:flex; align-items:center; justify-content:center;
+    background:linear-gradient(150deg,#2C3546,#1a2130);
+    color:#8993A8; box-shadow:inset 0 0 0 1px #00000030;
+  }
+  .ep-avatar svg{ width:34px; height:34px; }
+  .ep-avatar img{ width:100%; height:100%; border-radius:50%; object-fit:cover; display:block; }
+  .ep-avatar-initials{
+    width:100%; height:100%; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    background:linear-gradient(150deg, #3FB6E8, #1f5f8f 65%, #12314d);
+    color:#fff; font-family:var(--pkg-font-display); font-size:30px; font-weight:800;
+    letter-spacing:.02em;
+  }
+  .ep-avatar-overlay{
+    position:absolute; inset:3px; border-radius:50%;
+    display:flex; flex-direction:column; align-items:center; justify-content:center; gap:4px;
+    background:rgba(4,6,10,.72); color:#fff;
+    font-size:10.5px; font-weight:700; letter-spacing:.01em;
+    opacity:0; transform:scale(.92); pointer-events:none;
+    transition:opacity .22s ease, transform .22s cubic-bezier(.4,0,.2,1);
+  }
+  .ep-avatar-overlay svg{ width:18px; height:18px; }
+  .ep-avatar-wrap:hover .ep-avatar-overlay,
+  .ep-avatar-wrap:focus-visible .ep-avatar-overlay{ opacity:1; transform:scale(1); }
+  .ep-avatar-spinner{
+    position:absolute; inset:3px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    background:rgba(4,6,10,.72); color:var(--accent);
+  }
+  .ep-avatar-spinner svg{ width:22px; height:22px; }
+  .ep-avatar-spinner .icon-spin{ animation:gtSpin 1s linear infinite; }
+  .ep-avatar-wrap.is-uploading .ep-avatar-overlay{ opacity:0; }
+
+  .ep-discord-chip{
+    display:inline-flex; align-items:center; gap:8px; max-width:100%;
+    margin-top:16px; padding:5px 14px 5px 5px;
+    background:#FFFFFF08; border:1px solid var(--border-subtle); border-radius:999px;
+    font-size:11.5px; color:var(--text-secondary);
+  }
+  .ep-discord-avatar{
+    width:20px; height:20px; border-radius:50%; flex:none; overflow:hidden;
+    background:linear-gradient(150deg,#2C3546,#1a2130); box-shadow:inset 0 0 0 1px #ffffff1c;
+  }
+  .ep-discord-avatar img{ width:100%; height:100%; border-radius:50%; object-fit:cover; display:block; }
+  .ep-discord-text{ overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .ep-discord-text strong{ color:var(--text-primary); font-weight:700; }
+
+  .ep-divider{
+    height:1px; margin:24px 0;
+    background:linear-gradient(90deg, transparent, var(--border-subtle), transparent);
+  }
+
+  /* Form — spacing lapang antar field, bukan dijejalkan. */
+  .ep-form{ display:flex; flex-direction:column; gap:18px; text-align:left; }
+  .ep-field{ display:flex; flex-direction:column; }
+  .ep-label{
+    font-size:10.5px; font-weight:700; letter-spacing:.08em; text-transform:uppercase;
+    color:var(--text-secondary); margin-bottom:9px;
+  }
+  .ep-label-row{ display:flex; align-items:center; justify-content:space-between; margin-bottom:9px; }
+  .ep-label-row .ep-label{ margin-bottom:0; }
+  .ep-input, .ep-textarea{
+    width:100%; padding:0 15px; border-radius:12px;
+    background:#00000026; border:1px solid var(--border-subtle);
+    color:var(--text-primary); font-family:var(--pkg-font-ui); font-size:14px;
+    font-weight:500; text-align:left;
+    transition:border-color .18s ease, box-shadow .18s ease;
+  }
+  .ep-input{ height:46px; }
+  .ep-textarea{ padding:12px 15px; line-height:1.55; resize:none; }
+  .ep-input::placeholder, .ep-textarea::placeholder{ color:var(--text-secondary); font-weight:500; }
+  .ep-input:focus, .ep-textarea:focus{
+    outline:none; border-color:#3FB6E870; box-shadow:0 0 0 3px #3FB6E824;
+  }
+  .ep-input:disabled, .ep-textarea:disabled{ opacity:.6; cursor:default; }
+  .ep-username-input-wrap{ position:relative; display:flex; align-items:center; }
+  .ep-username-prefix{
+    position:absolute; left:15px; color:var(--text-secondary); font-weight:700; font-size:14px;
+    pointer-events:none;
+  }
+  .ep-input-username{ padding-left:27px; }
+  .ep-hint{ font-size:11px; line-height:1.5; color:var(--text-secondary); margin-top:7px; }
+  .ep-bio-counter{
+    font-size:10.5px; font-weight:600; color:var(--text-secondary);
+    transition:color .2s ease;
+  }
+  .ep-bio-counter-warn{ color:var(--gold); }
+  .ep-bio-counter-limit{ color:var(--danger); }
+
+  .ep-error:not([hidden]){
+    display:flex; align-items:center; gap:8px; text-align:left;
+    font-size:12.5px; line-height:1.5; color:var(--danger);
+    background:#E0665A16; border:1px solid #E0665A38; border-radius:10px;
+    padding:10px 12px; margin-top:18px;
+    animation:epErrorIn .18s ease;
+  }
+  @keyframes epErrorIn{ from{ opacity:0; transform:translateY(-4px); } to{ opacity:1; transform:translateY(0); } }
+
+  .ep-actions{ display:flex; flex-direction:column; gap:10px; margin-top:22px; }
+  .ep-save-btn{
+    width:100%; display:flex; align-items:center; justify-content:center; gap:9px;
+    height:48px; border-radius:var(--radius-pill); border:1px solid #ffffff20; cursor:pointer;
+    font-family:var(--pkg-font-ui); font-size:14px; font-weight:700; letter-spacing:.01em;
+    color:#04121c; background:linear-gradient(135deg, #8fdcff, var(--accent) 60%, #1f8fc2);
+    box-shadow:0 12px 26px -12px #3FB6E880, inset 0 1px 0 #ffffff45;
+    transition:transform .16s cubic-bezier(.4,0,.2,1), box-shadow .16s ease, filter .16s ease;
+  }
+  .ep-save-btn svg{ width:17px; height:17px; }
+  .ep-save-btn:hover:not(:disabled){ transform:translateY(-1px); box-shadow:0 16px 32px -12px #3FB6E8a0, inset 0 1px 0 #ffffff55; }
+  .ep-save-btn:active:not(:disabled){ transform:translateY(0); }
+  .ep-save-btn:disabled{ cursor:default; opacity:.75; filter:saturate(.7); }
+  .ep-save-btn .icon-spin{ animation:gtSpin 1s linear infinite; }
+  .ep-cancel-btn{
+    width:100%; height:40px; border-radius:var(--radius-pill); border:1px solid transparent;
+    background:transparent; color:var(--text-secondary); cursor:pointer;
+    font-family:var(--pkg-font-ui); font-size:12.5px; font-weight:600;
+    transition:color .15s ease;
+  }
+  .ep-cancel-btn:hover{ color:var(--text-primary); }
+  @media (max-width:480px){
+    .ep-box{ padding:28px 20px 22px; }
+  }
+
   /* =====================================================
      StatusBadge (reusable) — Online / Offline indicator
      Markup: <span class="status-badge" data-status="online|offline"></span>

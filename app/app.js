@@ -1480,6 +1480,16 @@ function packageTierOf(user){
    consumeDownloadQuota() -> pushAccountUpdate() di server.js memicu event WS
    'account:update' yang sudah aktif lewat connectRealtime(), jadi angka di
    widget ini ikut berubah tanpa refresh app sama sekali). */
+// State Hide/Reopen widget ini — SENGAJA di memori (bukan localStorage),
+// reset ke `false` tiap kali App di-load ulang/restart, supaya widget
+// selalu mulai dalam kondisi FULL/terlihat begitu App dibuka (lihat catatan
+// FIX di dalam renderDownloadLimitWidget() di bawah). Hapus juga key
+// localStorage LAMA dari versi sebelumnya (kalau ada, dari sesi App yang
+// sudah pernah menyimpan preferensi Hide permanen) supaya tidak ada sisa
+// state basi yang membingungkan.
+let _dlLimitWidgetHiddenSession = false;
+try { localStorage.removeItem('dlLimitWidgetHidden'); } catch (e) {}
+
 function renderDownloadLimitWidget(user){
   const widget = document.getElementById('dlLimitWidget');
   const reopenBtn = document.getElementById('dlLimitReopenBtn');
@@ -1487,14 +1497,25 @@ function renderDownloadLimitWidget(user){
   const download = user?.accountStatus?.download;
   if (!download){ widget.hidden = true; if (reopenBtn) reopenBtn.hidden = true; return; }
 
-  // Fitur Hide: sekali user klik ×, widget tetap tersembunyi (termasuk
-  // setelah restart app) sampai user menekan tombol reopen kecil di pojok
-  // yang sama — preferensi murni tampilan, TIDAK mempengaruhi data. Data di
-  // bawah tetap di-isi ulang walau lagi hidden, supaya begitu user reopen,
-  // angkanya sudah pasti up to date (bukan angka basi dari sebelum hide).
-  const userHid = localStorage.getItem('dlLimitWidgetHidden') === '1';
-  widget.hidden = userHid;
-  if (reopenBtn) reopenBtn.hidden = !userHid;
+  // Fitur Hide: sekali user klik ×, widget tersembunyi HANYA untuk sesi App
+  // yang sedang berjalan sekarang — sampai user menekan tombol reopen kecil
+  // di pojok yang sama, ATAU App dibuka ulang. Preferensi murni tampilan,
+  // TIDAK mempengaruhi data. Data di bawah tetap di-isi ulang walau lagi
+  // hidden, supaya begitu user reopen, angkanya sudah pasti up to date
+  // (bukan angka basi dari sebelum hide).
+  //
+  // FIX (poin "saat buka App jangan langsung minimize, tampilkan FULL
+  // widgetnya"): sebelumnya preferensi Hide disimpan ke localStorage —
+  // sekali user klik × sekalipun cuma iseng, widget ini TETAP tersembunyi
+  // (cuma muncul tombol reopen kecil) di SETIAP App dibuka lagi, termasuk
+  // setelah restart, sampai user ingat untuk klik reopen manual. Sekarang
+  // preferensi Hide cuma dipegang di memori (`_dlLimitWidgetHiddenSession`,
+  // reset ke false tiap App di-load ulang/restart) — jadi widget SELALU
+  // tampil FULL begitu App dibuka, dan user tetap bebas meng-×/reopen kalau
+  // lagi menghalangi selama sesi App itu berjalan (perilaku ×/reopen dalam
+  // satu sesi tidak berubah sama sekali).
+  widget.hidden = _dlLimitWidgetHiddenSession;
+  if (reopenBtn) reopenBtn.hidden = !_dlLimitWidgetHiddenSession;
 
   // Wiring tombol Hide/Reopen — sekali saja (guard _wired), aman dipanggil
   // ulang tiap render tanpa numpuk listener.
@@ -1503,10 +1524,10 @@ function renderDownloadLimitWidget(user){
     document.getElementById('dlLimitHideBtn')?.addEventListener('click', () => {
       widget.hidden = true;
       if (reopenBtn) reopenBtn.hidden = false;
-      localStorage.setItem('dlLimitWidgetHidden', '1');
+      _dlLimitWidgetHiddenSession = true;
     });
     reopenBtn?.addEventListener('click', () => {
-      localStorage.removeItem('dlLimitWidgetHidden');
+      _dlLimitWidgetHiddenSession = false;
       widget.hidden = false;
       reopenBtn.hidden = true;
     });
@@ -4314,6 +4335,340 @@ function openRealBypassDetailById(id) {
     if(e.key === 'Escape'){
       const modal = document.getElementById('redeemVoucherModal');
       if(modal && modal.classList.contains('show')) closeRedeemVoucherModal();
+    }
+  });
+
+  /* =====================================================
+     EDIT PROFIL — popup dibuka dari Profile Dropdown (menggantikan alert()
+     lama di tombol "Profile", lihat #editProfileModal di index.html).
+     ---------------------------------------------------
+     TIDAK ADA backend/database/endpoint/Socket.IO baru di sini. Semua data
+     & logic 100% REUSE backend existing:
+       - GET  /api/profile       -> profileManager.getProfile() (App +
+         Discord read-only, SUDAH fallback ke data Discord kalau field
+         profil App masih kosong lewat toProfilePayload()).
+       - PUT  /api/profile       -> profileManager.updateProfile()
+         (displayName/username/bio — validasi format & unique-check
+         username TETAP wewenang backend, di sini cuma validasi ringan
+         supaya user langsung tau tanpa round-trip).
+       - POST /api/profile/photo -> profileManager.savePhoto() (base64 data
+         URL — batas ASLI (3MB, mime PNG/JPG/WEBP) tetap divalidasi ULANG
+         di backend meski sudah dicek client-side juga di sini).
+     Realtime (account:update ke SEMUA device App user ini, user:update ke
+     Admin Web) SUDAH otomatis jalan lewat broadcastProfileChanged() begitu
+     PUT/POST di atas sukses (lihat server.js) -> ditangani
+     handleAccountUpdate() yang SUDAH ADA lewat _ws.onmessage (lihat
+     renderProfileIdentity() dipanggil di dalamnya) — TIDAK ADA
+     listener/socket baru ditambahkan di sini, sidebar/profile-name App
+     ikut berubah dengan sendirinya begitu event itu tiba.
+     Data Discord (avatarUrl/discordUsername/discordId) ditampilkan
+     read-only saja ("Terhubung sebagai @discordUsername"), tidak pernah
+     dikirim balik ke server dari popup ini.
+  ===================================================== */
+  let _epInitial = null;      // snapshot { displayName, username, bio } saat popup dibuka — dipakai supaya PUT cuma kirim field yang BENERAN berubah
+  let _epSaving = false;
+  let _epUploadingPhoto = false;
+
+  const EP_PHOTO_MAX_BYTES = 3 * 1024 * 1024; // 3MB, sama dengan PHOTO_MAX_BYTES di profileManager.js
+  const EP_ALLOWED_MIME = ['image/png', 'image/jpeg', 'image/webp'];
+  const EP_USERNAME_RE = /^[a-z][a-z0-9_]{2,19}$/; // sama dengan USERNAME_RE di profileManager.js
+
+  // Fallback avatar kalau foto profil App belum diisi/gagal dimuat — inisial
+  // nama dengan gradient background (tetap terasa didesain), BUKAN kotak
+  // abu-abu polos.
+  function epInitialsAvatar(name){
+    const initials = String(name || '?').trim().split(/\s+/).slice(0, 2)
+      .map(w => w[0] || '').join('').toUpperCase() || '?';
+    return `<span class="ep-avatar-initials">${escapeHtml(initials)}</span>`;
+  }
+
+  function epRenderAvatar(photoUrl, name){
+    const avatarEl = document.getElementById('epAvatar');
+    if (!avatarEl) return;
+    if (photoUrl) {
+      avatarEl.innerHTML = `<img alt="Foto profil">`;
+      const img = avatarEl.querySelector('img');
+      img.onerror = () => { avatarEl.innerHTML = epInitialsAvatar(name); };
+      img.src = photoUrl;
+    } else {
+      avatarEl.innerHTML = epInitialsAvatar(name);
+    }
+  }
+
+  function epUpdateBioCounter(){
+    const bioInput = document.getElementById('epBioInput');
+    const counter = document.getElementById('epBioCounter');
+    if (!bioInput || !counter) return;
+    const len = bioInput.value.length;
+    counter.textContent = `${len}/160`;
+    counter.classList.toggle('ep-bio-counter-warn', len >= 140 && len < 160);
+    counter.classList.toggle('ep-bio-counter-limit', len >= 160);
+  }
+  document.getElementById('epBioInput')?.addEventListener('input', epUpdateBioCounter);
+
+  function showEditProfileError(message){
+    const errorEl = document.getElementById('epError');
+    if (!errorEl) return;
+    errorEl.innerHTML = `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="width:15px;height:15px;flex:none;"><use href="#ic-circle-x"></use></svg><span></span>`;
+    errorEl.querySelector('span').textContent = message;
+    errorEl.hidden = false;
+  }
+
+  function resetEditProfileSaveButton(){
+    const btn = document.getElementById('epSaveBtn');
+    const label = document.getElementById('epSaveBtnLabel');
+    if (btn) { btn.disabled = false; btn.classList.remove('is-loading'); }
+    if (label) label.textContent = 'Simpan Perubahan';
+    const icon = btn?.querySelector('svg');
+    if (icon) icon.classList.remove('icon-spin');
+  }
+
+  // Isi popup dari response GET /api/profile — dipanggil setiap popup
+  // dibuka supaya datanya SELALU terbaru (bukan cache lama).
+  function epApplyProfileData(data){
+    const app = data?.app || {};
+    const discord = data?.discord || {};
+
+    epRenderAvatar(app.photoUrl, app.displayName || discord.username);
+
+    const nameInput = document.getElementById('epDisplayNameInput');
+    const usernameInput = document.getElementById('epUsernameInput');
+    const bioInput = document.getElementById('epBioInput');
+    if (nameInput) nameInput.value = app.displayName || '';
+    if (usernameInput) usernameInput.value = app.username || '';
+    if (bioInput) bioInput.value = app.bio || '';
+    epUpdateBioCounter();
+
+    // Snapshot NILAI AWAL apa adanya dari backend (bukan dari input) —
+    // dipakai submitEditProfile() supaya PUT cuma kirim field yang memang
+    // diubah user, bukan semua field tiap kali simpan.
+    _epInitial = {
+      displayName: app.displayName || '',
+      username: app.username || '',
+      bio: app.bio || ''
+    };
+
+    // Info Discord — read-only, kecil & rapi, TIDAK bisa diedit dari sini.
+    const discordAvatarEl = document.getElementById('epDiscordAvatar');
+    if (discordAvatarEl) {
+      discordAvatarEl.innerHTML = discord.avatarUrl
+        ? `<img src="${escapeHtml(discord.avatarUrl)}" alt="" onerror="this.style.display='none';">`
+        : '';
+    }
+    const discordUsernameEl = document.getElementById('epDiscordUsername');
+    if (discordUsernameEl) discordUsernameEl.textContent = discord.username ? '@' + discord.username : '—';
+  }
+
+  async function openEditProfileModal(){
+    const modal = document.getElementById('editProfileModal');
+    if (!modal) return;
+    // Reset ke state bersih setiap dibuka — popup lama TIDAK PERNAH
+    // menyisakan error/loading state dari percobaan sebelumnya.
+    _epSaving = false;
+    _epUploadingPhoto = false;
+    const errorEl = document.getElementById('epError');
+    if (errorEl) { errorEl.hidden = true; errorEl.textContent = ''; }
+    resetEditProfileSaveButton();
+    document.getElementById('epAvatarSpinner')?.setAttribute('hidden', '');
+    document.getElementById('epAvatarWrap')?.classList.remove('is-uploading');
+    const photoInput = document.getElementById('epPhotoInput');
+    if (photoInput) photoInput.value = '';
+    const nameInput = document.getElementById('epDisplayNameInput');
+    const usernameInput = document.getElementById('epUsernameInput');
+    const bioInput = document.getElementById('epBioInput');
+    if (nameInput) nameInput.disabled = false;
+    if (usernameInput) usernameInput.disabled = false;
+    if (bioInput) bioInput.disabled = false;
+
+    // Tampilkan dulu data ringkas dari currentUser (kalau ada) supaya popup
+    // tidak kosong total sambil nunggu network, lalu ditimpa data ASLI dari
+    // GET /api/profile di bawah begitu selesai.
+    if (currentUser) epRenderAvatar(currentUser.avatarUrl, currentUser.username);
+
+    modal.classList.add('show');
+    if (nameInput) setTimeout(() => nameInput.focus(), 50);
+
+    try {
+      const data = await api('/api/profile');
+      epApplyProfileData(data);
+    } catch (e) {
+      showEditProfileError(e.message || 'Gagal memuat data profil.');
+    }
+  }
+
+  // Dipakai tombol X, tombol "Batal", DAN klik di luar box/Escape — SATU
+  // fungsi supaya konsisten, tidak melakukan perubahan apa pun selain
+  // menutup popup.
+  function closeEditProfileModal(){
+    if (_epSaving || _epUploadingPhoto) return; // sedang proses -> jangan bisa ditutup paksa
+    document.getElementById('editProfileModal')?.classList.remove('show');
+  }
+
+  /* ---- Ganti Foto ---- */
+  document.getElementById('epAvatarWrap')?.addEventListener('click', () => {
+    if (_epUploadingPhoto) return;
+    document.getElementById('epPhotoInput')?.click();
+  });
+  document.getElementById('epAvatarWrap')?.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); document.getElementById('epPhotoInput')?.click(); }
+  });
+
+  document.getElementById('epPhotoInput')?.addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    e.target.value = ''; // reset supaya pilih file yang SAMA lagi tetap trigger change berikutnya
+    if (!file) return;
+    const errorEl = document.getElementById('epError');
+    if (errorEl) errorEl.hidden = true;
+
+    // Validasi CLIENT-SIDE dulu (format & ukuran max 3MB) supaya user
+    // langsung tau tanpa nunggu round-trip ke server — batas ASLI tetap
+    // divalidasi ULANG di backend (savePhoto() di profileManager.js),
+    // validasi di sini bukan satu-satunya pertahanan.
+    if (!EP_ALLOWED_MIME.includes(file.type)) {
+      showEditProfileError('Format foto harus PNG, JPG, atau WEBP.');
+      return;
+    }
+    if (file.size > EP_PHOTO_MAX_BYTES) {
+      showEditProfileError('Ukuran foto maksimal 3MB.');
+      return;
+    }
+
+    let dataUrl;
+    try {
+      dataUrl = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = () => reject(new Error('Gagal membaca file gambar.'));
+        reader.readAsDataURL(file);
+      });
+    } catch (err) {
+      showEditProfileError(err.message);
+      return;
+    }
+
+    // Preview instan (optimistic) sambil upload jalan di background.
+    const avatarEl = document.getElementById('epAvatar');
+    const prevHtml = avatarEl ? avatarEl.innerHTML : '';
+    if (avatarEl) avatarEl.innerHTML = `<img src="${dataUrl}" alt="Foto profil">`;
+
+    _epUploadingPhoto = true;
+    document.getElementById('epAvatarSpinner')?.removeAttribute('hidden');
+    document.getElementById('epAvatarWrap')?.classList.add('is-uploading');
+
+    try {
+      const result = await api('/api/profile/photo', { method: 'POST', body: JSON.stringify({ imageBase64: dataUrl }) });
+      // Sukses — pakai URL ASLI dari server (persisten & sudah termasuk
+      // cache-busting ?v=timestamp, lihat savePhoto()), bukan data URL
+      // sementara di atas.
+      epRenderAvatar(result?.app?.photoUrl, result?.app?.displayName || document.getElementById('epDisplayNameInput')?.value);
+      showToast('success', 'Foto profil berhasil diganti.');
+      // Sidebar/profile-name App ikut berubah otomatis lewat
+      // handleAccountUpdate() yang dipicu event WS 'account:update'
+      // (broadcastProfileChanged() di server.js) — TIDAK ADA refresh
+      // manual tambahan di sini.
+    } catch (err) {
+      if (avatarEl) avatarEl.innerHTML = prevHtml; // gagal -> balikin avatar sebelumnya
+      showEditProfileError(err.message || 'Gagal mengganti foto profil.');
+    } finally {
+      _epUploadingPhoto = false;
+      document.getElementById('epAvatarSpinner')?.setAttribute('hidden', '');
+      document.getElementById('epAvatarWrap')?.classList.remove('is-uploading');
+    }
+  });
+
+  /* ---- Simpan Perubahan (Display Name/Username/Bio) ---- */
+  async function submitEditProfile(){
+    if (_epSaving) return; // cegah double-submit/double-click
+    const nameInput = document.getElementById('epDisplayNameInput');
+    const usernameInput = document.getElementById('epUsernameInput');
+    const bioInput = document.getElementById('epBioInput');
+    const btn = document.getElementById('epSaveBtn');
+    const label = document.getElementById('epSaveBtnLabel');
+    const errorEl = document.getElementById('epError');
+    if (!nameInput || !usernameInput || !bioInput || !btn) return;
+    if (errorEl) errorEl.hidden = true;
+
+    const displayName = nameInput.value.trim();
+    const usernameRaw = usernameInput.value.trim().toLowerCase();
+    const bio = bioInput.value;
+
+    // Validasi RINGAN di sisi client (batas panjang/format) supaya user
+    // langsung tau tanpa round-trip — validasi FINAL (termasuk cek username
+    // sudah dipakai orang lain) TETAP sepenuhnya wewenang backend.
+    if (displayName.length < 2 || displayName.length > 32) {
+      showEditProfileError('Display Name harus 2-32 karakter.');
+      return;
+    }
+    if (usernameRaw && !EP_USERNAME_RE.test(usernameRaw)) {
+      showEditProfileError('Username 3-20 karakter, huruf kecil/angka/underscore, wajib diawali huruf.');
+      return;
+    }
+    if (!usernameRaw && _epInitial && _epInitial.username) {
+      showEditProfileError('Username tidak boleh dikosongkan setelah pernah diatur.');
+      return;
+    }
+    if (bio.length > 160) {
+      showEditProfileError('Bio maksimal 160 karakter.');
+      return;
+    }
+
+    // Kirim CUMA field yang memang berubah dari nilai awal (snapshot saat
+    // popup dibuka/terakhir sukses simpan), bukan semua field tiap kali
+    // simpan.
+    const patch = {};
+    if (!_epInitial || displayName !== _epInitial.displayName) patch.displayName = displayName;
+    if (usernameRaw && (!_epInitial || usernameRaw !== _epInitial.username)) patch.username = usernameRaw;
+    if (!_epInitial || bio !== _epInitial.bio) patch.bio = bio;
+
+    if (!Object.keys(patch).length) {
+      // Tidak ada perubahan sama sekali -> tutup popup saja, tidak perlu
+      // panggil API sia-sia.
+      closeEditProfileModal();
+      return;
+    }
+
+    _epSaving = true;
+    nameInput.disabled = true; usernameInput.disabled = true; bioInput.disabled = true;
+    btn.disabled = true;
+    if (label) label.textContent = 'Menyimpan...';
+    btn.classList.add('is-loading');
+    const icon = btn.querySelector('svg');
+    if (icon) icon.classList.add('icon-spin');
+
+    try {
+      const result = await api('/api/profile', { method: 'PUT', body: JSON.stringify(patch) });
+      // Snapshot nilai awal ikut diperbarui supaya kalau user buka lagi
+      // tanpa reload App, perbandingan "field yang berubah" tetap akurat.
+      _epInitial = {
+        displayName: result?.app?.displayName ?? displayName,
+        username: result?.app?.username ?? usernameRaw,
+        bio: result?.app?.bio ?? bio
+      };
+      document.getElementById('editProfileModal')?.classList.remove('show');
+      showToast('success', 'Profil berhasil diperbarui.');
+      // Sidebar/profile-name App ikut berubah otomatis lewat
+      // handleAccountUpdate() yang dipicu event WS 'account:update'
+      // (broadcastProfileChanged() di server.js) — TIDAK ADA refresh
+      // manual tambahan di sini.
+    } catch (err) {
+      // Gagal (mis. username sudah dipakai orang lain) — TETAP di popup,
+      // tampilkan pesan ASLI dari backend apa adanya, user bisa langsung
+      // perbaiki tanpa perlu menutup popup dulu.
+      showEditProfileError(err.message || 'Gagal menyimpan perubahan profil.');
+    } finally {
+      _epSaving = false;
+      nameInput.disabled = false; usernameInput.disabled = false; bioInput.disabled = false;
+      resetEditProfileSaveButton();
+    }
+  }
+
+  document.getElementById('editProfileModal')?.addEventListener('click', (e) => {
+    if (e.target && e.target.id === 'editProfileModal') closeEditProfileModal();
+  });
+  document.addEventListener('keydown', (e) => {
+    if (e.key === 'Escape') {
+      const modal = document.getElementById('editProfileModal');
+      if (modal && modal.classList.contains('show')) closeEditProfileModal();
     }
   });
 
@@ -7391,8 +7746,35 @@ function openRealBypassDetailById(id) {
   // Payload ini personalized per-koneksi, jadi TIDAK dipakai langsung — cukup
   // jadi sinyal "ada perubahan akses" lalu refetch REST yang sudah
   // personalized (pola sama dengan handlePkgTransactionUpdate di atas). ──
+  //
+  // ROOT CAUSE FIX (realtime akses Marketplace -> Game/Bypass): sebelumnya
+  // handler ini CUMA memanggil loadMarketplaceProducts() (grid Product &
+  // sidebar Product Detail) — TIDAK PERNAH loadGames()/loadBypasses().
+  // Padahal access resolver tombol Download/Install di Game & Bypass
+  // (hasAccess(item), lihat mktOrRoleLocked() di atas) SATU-SATUNYA sumber
+  // kebenarannya adalah `item.hasAccess` yang datang dari allGames/
+  // allBypasses — array yang HANYA di-refresh lewat loadGames()/
+  // loadBypasses() (GET /api/games /api/bypasses, personalized per user).
+  // Server SUDAH mengirim event 'marketplace:access:update' ini persis pada
+  // saat purchase lunas MAUPUN saat Admin cabut akses (lihat
+  // pushMarketplaceAccessUpdate() di server.js — dipanggil dari
+  // activateCompletedMarketplaceOrder() dan endpoint revoke whitelist), jadi
+  // sinyalnya sudah realtime dari backend; yang hilang cuma listener App ini
+  // tidak meneruskannya ke Games/Bypass. Akibatnya tombol Download/Install
+  // baru berubah kalau ada trigger LAIN yang kebetulan memanggil loadGames()/
+  // loadBypasses() (mis. games:update dari Admin, atau reconnect WS) —
+  // sampai App direstart. Menambah 2 baris ini menutup celah root cause-nya
+  // TANPA WebSocket/event baru: applyGamesUpdate()/applyBypassesUpdate()
+  // (dipanggil dari dalam loadGames()/loadBypasses()) sudah otomatis
+  // me-render ulang grid DAN re-evaluasi tombol halaman detail Game/Bypass
+  // yang sedang terbuka (lihat definisinya) — jadi requirement "user sedang
+  // di halaman Product/Game/Bypass saat akses berubah -> UI langsung
+  // berubah tanpa pindah halaman" terpenuhi oleh mekanisme yang sudah ada,
+  // cukup disambungkan di sini.
   function handleMktAccessUpdate(data) {
     loadMarketplaceProducts();
+    loadGames();
+    loadBypasses();
 
     const isDetailOpen = document.getElementById('page-marketplace-detail')?.classList.contains('active');
     if (isDetailOpen && _openMktProduct) {

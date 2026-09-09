@@ -288,7 +288,12 @@
       </div>
     </div>
     <div class="profile-menu-divider"></div>
-    <button class="pm-item" onclick="alert('Profile page — not part of this demo.')">
+    <!-- Edit Profil — buka popup (BUKAN halaman baru), lihat #editProfileModal
+         di bawah & blok "EDIT PROFIL" di app.js/styles.css. Backend (Foto
+         Profil App/Display Name/Username/Bio + realtime account:update ke
+         App & user:update ke Admin Web) 100% existing (profileManager.js +
+         endpoint /api/profile* di server.js), popup ini cuma UI-nya di App. -->
+    <button class="pm-item" onclick="openEditProfileModal(); toggleProfileMenu();">
       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
       <span>Profile</span>
     </button>
@@ -1962,6 +1967,92 @@
       <span id="rvSubmitLabel">Redeem Voucher</span>
     </button>
     <button type="button" class="rv-tutup-btn" id="rvTutupBtn" onclick="closeRedeemVoucherModal()">Tutup</button>
+  </div>
+</div>
+
+<!-- EDIT PROFIL — popup dibuka dari Profile Dropdown (menggantikan alert()
+     lama di tombol "Profile", lihat button pm-item di atas). Backend (Foto
+     Profil App/Display Name/Username/Bio, terpisah dari data Discord) 100%
+     existing (profileManager.js + endpoint GET/PUT /api/profile & POST
+     /api/profile/photo di server.js) — popup ini murni UI, TIDAK ADA
+     backend/database/endpoint/Socket.IO baru. Realtime (account:update ke
+     semua device App user ini, user:update ke Admin Web) SUDAH otomatis
+     jalan lewat broadcastProfileChanged() begitu PUT/POST di atas sukses,
+     ditangani handleAccountUpdate() yang SUDAH ADA — TIDAK ADA listener/
+     socket baru di sini (lihat blok "EDIT PROFIL" di app.js). Data Discord
+     (avatarUrl/discordUsername/discordId) ditampilkan read-only saja
+     ("Terhubung sebagai @discordUsername"), tidak pernah dikirim balik ke
+     server dari popup ini. Bahasa visual senada dengan .gt-offer-modal/
+     .rv-modal (dark surface, subtle border, soft shadow, rounded, tanpa
+     emoji) tapi dibuat lebih "identity card" premium — foto profil besar
+     jadi fokus utama dengan ring gradient halus, spacing lapang antar
+     section, karena popup ini kemungkinan sering dibuka user. z-index (65)
+     sejajar .rv-modal/.gt-offer-modal, tetap di bawah .app-update-overlay
+     (Force Update App selalu menang). -->
+<div class="ep-modal" id="editProfileModal">
+  <div class="ep-box">
+    <button type="button" class="ep-close-btn" id="epCloseBtn" aria-label="Tutup" onclick="closeEditProfileModal()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-x"></use></svg>
+    </button>
+
+    <div class="ep-title">Edit Profil</div>
+
+    <div class="ep-header">
+      <div class="ep-avatar-wrap" id="epAvatarWrap" role="button" tabindex="0" aria-label="Ganti foto profil">
+        <div class="ep-avatar-ring">
+          <span class="ep-avatar" id="epAvatar">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg>
+          </span>
+        </div>
+        <div class="ep-avatar-overlay" id="epAvatarOverlay">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 4h-5L7 7H4a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2V9a2 2 0 0 0-2-2h-3l-2.5-3Z"/><circle cx="12" cy="13" r="3.5"/></svg>
+          <span>Ganti Foto</span>
+        </div>
+        <span class="ep-avatar-spinner" id="epAvatarSpinner" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-loader-circle"></use></svg>
+        </span>
+      </div>
+      <input type="file" id="epPhotoInput" accept="image/png,image/jpeg,image/webp" style="display:none;">
+
+      <div class="ep-discord-chip" id="epDiscordChip">
+        <span class="ep-discord-avatar" id="epDiscordAvatar"></span>
+        <span class="ep-discord-text">Terhubung sebagai <strong id="epDiscordUsername">—</strong></span>
+      </div>
+    </div>
+
+    <div class="ep-divider"></div>
+
+    <div class="ep-form">
+      <div class="ep-field">
+        <label class="ep-label" for="epDisplayNameInput">Display Name</label>
+        <input type="text" class="ep-input" id="epDisplayNameInput" maxlength="32" placeholder="Nama tampilan kamu" autocomplete="off">
+      </div>
+      <div class="ep-field">
+        <label class="ep-label" for="epUsernameInput">Username</label>
+        <div class="ep-username-input-wrap">
+          <span class="ep-username-prefix">@</span>
+          <input type="text" class="ep-input ep-input-username" id="epUsernameInput" maxlength="20" placeholder="username" autocomplete="off" spellcheck="false">
+        </div>
+        <div class="ep-hint">Huruf kecil, angka, underscore — wajib diawali huruf, 3-20 karakter.</div>
+      </div>
+      <div class="ep-field">
+        <div class="ep-label-row">
+          <label class="ep-label" for="epBioInput">Bio</label>
+          <span class="ep-bio-counter" id="epBioCounter">0/160</span>
+        </div>
+        <textarea class="ep-textarea" id="epBioInput" maxlength="160" rows="3" placeholder="Ceritakan sedikit tentang kamu..."></textarea>
+      </div>
+    </div>
+
+    <div class="ep-error" id="epError" hidden></div>
+
+    <div class="ep-actions">
+      <button type="button" class="ep-save-btn" id="epSaveBtn" onclick="submitEditProfile()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-check"></use></svg>
+        <span id="epSaveBtnLabel">Simpan Perubahan</span>
+      </button>
+      <button type="button" class="ep-cancel-btn" id="epCancelBtn" onclick="closeEditProfileModal()">Batal</button>
+    </div>
   </div>
 </div>
 
