@@ -9627,30 +9627,77 @@ async function aczSave() {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   SETTING BANNER — Dashboard Hero Banner (SATU banner, BUKAN carousel
-   multi-slide). Backend: dashboardBannerManager.js + endpoint
-   /api/admin/dashboard-banner, realtime lewat wsBroadcastAll existing
-   (event 'dashboard-banner:update' — lihat App di app/app.js). Pola JS di
-   sini SENGAJA disamakan dengan renderAppCustomizationPage()/aczSave() di
-   atas (satu fungsi render besar, dipanggil ulang tiap ada perubahan input,
-   Live Preview update TANPA perlu Save dulu).
+   SETTING BANNER — MULTI BANNER DINAMIS di Dashboard App (Banner 1, 2, 3,
+   dst, masing-masing setting sendiri). Backend: dashboardBannerManager.js +
+   endpoint /api/admin/dashboard-banner (GET { banners, pageOptions,
+   maxBanners, updatedAt, updatedBy }, PUT body { banners: [...] } — SATU
+   request menyimpan SELURUH array: tambah/edit/hapus/reorder/status
+   sekaligus), realtime lewat wsBroadcastAll existing (event
+   'dashboard-banner:update' — lihat App di app/app.js).
+
+   Model data: `dbnBanners` (array, satu objek per card). Tiap objek juga
+   punya 2 field TRANSIENT khusus Admin Web, TIDAK PERNAH dikirim ke backend:
+     - `_cid`  : key stabil buat DOM (id asli dari server bisa belum ada
+                 untuk banner baru yang belum di-Save).
+     - `_collapsed` : status expand/collapse card, murni UI.
+
+   Render: dbnRenderList() membangun ULANG seluruh HTML #dbnBannerList —
+   dipakai untuk perubahan STRUKTURAL (tambah/hapus/reorder/ganti sumber
+   gambar/ubah status/collapse). Untuk field teks yang diketik langsung
+   (eyebrow/judul/deskripsi/teks tombol/URL), TIDAK full re-render (supaya
+   fokus & posisi kursor input tidak hilang tiap huruf) — cukup update model
+   + elemen turunan (counter, mini live preview) lewat dbnPatchCardDerived().
+   Semua event listener di-attach SEKALI (event delegation ke #dbnBannerList
+   & #btnAddDashboardBanner, guarded oleh _dbnListenersBound) supaya tidak
+   numpuk listener tiap render ulang.
    ══════════════════════════════════════════════════════════════════════════ */
 let _dbnListenersBound = false;
-let dbnConfig = null;
-let _dbnOriginal = null; // snapshot JSON dbnConfig terakhir tersimpan — dipakai buat dirty-state check tombol Simpan
+let dbnBanners = [];
+let _dbnOriginal = null; // snapshot JSON (versi "bersih", tanpa field transient) terakhir tersimpan — dipakai buat dirty-state check tombol Simpan
 let dbnPageOptions = [];
-let _dbnSavedImageUrl = ''; // gambar yang SEDANG AKTIF tersimpan di DB — hanya berubah setelah Save berhasil (poin desain #2: tampilkan gambar aktif sebelum diganti)
+let dbnMaxBanners = 20;
 
-const DBN_DEFAULT_CONFIG = {
-  image: { source: 'upload', url: '' },
-  eyebrow: 'Featured This Week',
-  title: 'Elden Ring',
-  description: 'Jelajahi Lands Between, kumpulkan kekuatan runa, dan hadapi para Demigod dalam dunia terbuka yang luas.',
-  buttonText: 'Lihat Detail',
-  buttonTargetType: 'page',
-  buttonTargetPage: 'mygames',
-  buttonTargetUrl: ''
-};
+const DBN_IMAGE_MIME_WHITELIST = ['image/png', 'image/jpeg', 'image/webp'];
+
+function dbnNewCid() {
+  return `c_${Date.now()}_${Math.random().toString(36).slice(2, 9)}`;
+}
+
+function dbnDefaultBanner() {
+  return {
+    _cid: dbnNewCid(),
+    _collapsed: false,
+    id: null,
+    image: { source: 'upload', url: '' },
+    eyebrow: '',
+    title: '',
+    description: '',
+    buttonText: '',
+    buttonTargetType: 'page',
+    buttonTargetPage: dbnPageOptions[0]?.id || 'home',
+    buttonTargetUrl: '',
+    active: true
+  };
+}
+
+// Bentuk "bersih" yang dikirim ke backend / dipakai buat dirty-state compare
+// — buang field transient (_cid, _collapsed), order tidak dikirim (backend
+// men-derive dari posisi array, lihat dashboardBannerManager.mergeBanner()).
+function dbnCleanBanner(b) {
+  return {
+    id: b.id || null,
+    image: { source: b.image.source, url: b.image.url || '' },
+    eyebrow: b.eyebrow || '',
+    title: b.title || '',
+    description: b.description || '',
+    buttonText: b.buttonText || '',
+    buttonTargetType: b.buttonTargetType,
+    buttonTargetPage: b.buttonTargetPage,
+    buttonTargetUrl: b.buttonTargetUrl || '',
+    active: !!b.active
+  };
+}
+function dbnSnapshot(banners) { return JSON.stringify(banners.map(dbnCleanBanner)); }
 
 async function renderDashboardBannerPage() {
   if (!_dbnListenersBound) {
@@ -9660,226 +9707,361 @@ async function renderDashboardBannerPage() {
   const statusEl = document.getElementById('dbnStatus');
   try {
     const cfg = await api('/api/admin/dashboard-banner');
-    dbnConfig = {
-      image: { ...cfg.image },
-      eyebrow: cfg.eyebrow, title: cfg.title, description: cfg.description,
-      buttonText: cfg.buttonText, buttonTargetType: cfg.buttonTargetType,
-      buttonTargetPage: cfg.buttonTargetPage, buttonTargetUrl: cfg.buttonTargetUrl
-    };
     dbnPageOptions = Array.isArray(cfg.pageOptions) ? cfg.pageOptions : [];
-    _dbnSavedImageUrl = cfg.image?.url || '';
+    dbnMaxBanners = Number.isFinite(cfg.maxBanners) ? cfg.maxBanners : 20;
+    dbnBanners = (Array.isArray(cfg.banners) ? cfg.banners : []).map(b => ({
+      _cid: dbnNewCid(), _collapsed: false,
+      id: b.id, image: { ...b.image }, eyebrow: b.eyebrow, title: b.title, description: b.description,
+      buttonText: b.buttonText, buttonTargetType: b.buttonTargetType,
+      buttonTargetPage: b.buttonTargetPage, buttonTargetUrl: b.buttonTargetUrl, active: b.active
+    }));
     if (statusEl) {
-      statusEl.textContent = cfg.updatedAt ? `Terakhir disimpan: ${new Date(cfg.updatedAt).toLocaleString('id-ID')} oleh ${cfg.updatedBy || 'Admin'}` : 'Belum pernah disimpan — menampilkan default.';
+      statusEl.textContent = cfg.updatedAt ? `Terakhir disimpan: ${new Date(cfg.updatedAt).toLocaleString('id-ID')} oleh ${cfg.updatedBy || 'Admin'}` : 'Belum pernah disimpan.';
     }
   } catch (e) {
-    dbnConfig = JSON.parse(JSON.stringify(DBN_DEFAULT_CONFIG));
     dbnPageOptions = [];
-    _dbnSavedImageUrl = '';
-    if (statusEl) statusEl.textContent = 'Gagal memuat config tersimpan, menampilkan default.';
+    dbnBanners = [];
+    if (statusEl) statusEl.textContent = 'Gagal memuat Setting Banner tersimpan.';
     showToast('Gagal memuat Setting Banner: ' + e.message, 'error');
   }
-  _dbnOriginal = JSON.stringify(dbnConfig);
-  dbnRenderPageOptions();
-  dbnRenderAll();
-}
-
-function dbnRenderPageOptions() {
-  const sel = document.getElementById('dbnTargetPageSelect');
-  if (!sel) return;
-  sel.innerHTML = dbnPageOptions.map(p => `<option value="${p.id}">${p.label}</option>`).join('');
+  _dbnOriginal = dbnSnapshot(dbnBanners);
+  dbnRenderList();
 }
 
 function dbnBindEvents() {
-  // Sumber Gambar (Upload File / Link URL) — pola SAMA dengan aczImageSourceGroup.
-  document.getElementById('dbnImageSourceGroup').addEventListener('click', (e) => {
-    const btn = e.target.closest('.acz-pill[data-imgsource]');
-    if (!btn) return;
-    dbnConfig.image.source = btn.dataset.imgsource;
-    dbnRenderAll();
-  });
-
-  const DBN_IMAGE_MIME_WHITELIST = ['image/png', 'image/jpeg', 'image/webp'];
-  function handleDbnImageFile(file) {
-    if (!file) return;
-    if (!DBN_IMAGE_MIME_WHITELIST.includes(file.type)) {
-      showToast('Format gambar tidak didukung. Gunakan PNG, JPG/JPEG, atau WEBP.', 'error');
+  document.getElementById('btnAddDashboardBanner').addEventListener('click', () => {
+    if (dbnBanners.length >= dbnMaxBanners) {
+      showToast(`Maksimal ${dbnMaxBanners} banner.`, 'error');
       return;
     }
+    dbnBanners.push(dbnDefaultBanner());
+    dbnRenderList({ scrollToLast: true });
+  });
+
+  const list = document.getElementById('dbnBannerList');
+
+  // ── CLICK — semua tombol/pill di dalam card (event delegation, satu
+  // listener untuk semua card, sekarang & yang akan di-render nanti). ──
+  list.addEventListener('click', (e) => {
+    const card = e.target.closest('.dbn-banner-card');
+    if (!card) return;
+    const idx = Number(card.dataset.idx);
+    const banner = dbnBanners[idx];
+    if (!banner) return;
+
+    const pillImg = e.target.closest('.dbn-imgsource-group .acz-pill[data-imgsource]');
+    if (pillImg) { banner.image.source = pillImg.dataset.imgsource; dbnRenderList(); return; }
+
+    const pillTarget = e.target.closest('.dbn-targettype-group .acz-pill[data-targettype]');
+    if (pillTarget) { banner.buttonTargetType = pillTarget.dataset.targettype; dbnRenderList(); return; }
+
+    if (e.target.closest('.dbn-dropzone')) { card.querySelector('.dbn-image-file')?.click(); return; }
+
+    if (e.target.closest('.dbn-remove-image-btn')) {
+      banner.image.url = '';
+      dbnRenderList();
+      return;
+    }
+
+    if (e.target.closest('[data-action="toggle-collapse"]')) {
+      banner._collapsed = !banner._collapsed;
+      dbnRenderList();
+      return;
+    }
+
+    if (e.target.closest('[data-action="move-up"]')) {
+      if (idx > 0) { [dbnBanners[idx - 1], dbnBanners[idx]] = [dbnBanners[idx], dbnBanners[idx - 1]]; dbnRenderList(); }
+      return;
+    }
+    if (e.target.closest('[data-action="move-down"]')) {
+      if (idx < dbnBanners.length - 1) { [dbnBanners[idx + 1], dbnBanners[idx]] = [dbnBanners[idx], dbnBanners[idx + 1]]; dbnRenderList(); }
+      return;
+    }
+
+    if (e.target.closest('[data-action="delete"]')) {
+      const label = dbnBannerLabel(banner, idx);
+      if (!confirm(`Hapus "${label}"? Perubahan baru berlaku setelah klik Simpan Perubahan.`)) return;
+      dbnBanners.splice(idx, 1);
+      dbnRenderList();
+      return;
+    }
+  });
+
+  // ── CHANGE — file input, target page select, toggle Aktif/Nonaktif. ──
+  list.addEventListener('change', (e) => {
+    const card = e.target.closest('.dbn-banner-card');
+    if (!card) return;
+    const idx = Number(card.dataset.idx);
+    const banner = dbnBanners[idx];
+    if (!banner) return;
+
+    if (e.target.classList.contains('dbn-image-file')) {
+      const file = e.target.files?.[0];
+      e.target.value = '';
+      if (!file) return;
+      if (!DBN_IMAGE_MIME_WHITELIST.includes(file.type)) { showToast('Format gambar tidak didukung. Gunakan PNG, JPG/JPEG, atau WEBP.', 'error'); return; }
+      if (file.size > 5 * 1024 * 1024) { showToast('Ukuran gambar maksimal 5 MB.', 'error'); return; }
+      const reader = new FileReader();
+      reader.onload = () => { banner.image.source = 'upload'; banner.image.url = reader.result; dbnRenderList(); };
+      reader.readAsDataURL(file);
+      return;
+    }
+
+    if (e.target.classList.contains('dbn-targetpage-select')) { banner.buttonTargetPage = e.target.value; dbnUpdateSaveState(); return; }
+
+    if (e.target.classList.contains('dbn-active-toggle')) {
+      banner.active = e.target.checked;
+      dbnRenderList();
+      return;
+    }
+  });
+
+  // ── DRAG & DROP gambar ke dropzone. ──
+  list.addEventListener('dragover', (e) => {
+    const dz = e.target.closest('.dbn-dropzone');
+    if (!dz) return;
+    e.preventDefault(); e.stopPropagation();
+    dz.classList.add('dbn-dropzone--drag');
+  });
+  list.addEventListener('dragleave', (e) => {
+    const dz = e.target.closest('.dbn-dropzone');
+    if (!dz) return;
+    e.preventDefault(); e.stopPropagation();
+    dz.classList.remove('dbn-dropzone--drag');
+  });
+  list.addEventListener('drop', (e) => {
+    const dz = e.target.closest('.dbn-dropzone');
+    if (!dz) return;
+    e.preventDefault(); e.stopPropagation();
+    dz.classList.remove('dbn-dropzone--drag');
+    const card = dz.closest('.dbn-banner-card');
+    const idx = Number(card?.dataset.idx);
+    const banner = dbnBanners[idx];
+    const file = e.dataTransfer?.files?.[0];
+    if (!banner || !file) return;
+    if (!DBN_IMAGE_MIME_WHITELIST.includes(file.type)) { showToast('Format gambar tidak didukung. Gunakan PNG, JPG/JPEG, atau WEBP.', 'error'); return; }
     if (file.size > 5 * 1024 * 1024) { showToast('Ukuran gambar maksimal 5 MB.', 'error'); return; }
     const reader = new FileReader();
-    reader.onload = () => {
-      dbnConfig.image.source = 'upload';
-      dbnConfig.image.url = reader.result;
-      dbnRenderAll();
-    };
+    reader.onload = () => { banner.image.source = 'upload'; banner.image.url = reader.result; dbnRenderList(); };
     reader.readAsDataURL(file);
-  }
-
-  // Upload — drag & drop area + klik untuk buka file picker (poin desain #2).
-  const dropzone = document.getElementById('dbnDropzone');
-  const fileInput = document.getElementById('dbnImageFile');
-  dropzone.addEventListener('click', () => fileInput.click());
-  fileInput.addEventListener('change', (e) => {
-    handleDbnImageFile(e.target.files?.[0]);
-    e.target.value = '';
-  });
-  ['dragenter', 'dragover'].forEach(evt => {
-    dropzone.addEventListener(evt, (e) => { e.preventDefault(); e.stopPropagation(); dropzone.classList.add('dbn-dropzone--drag'); });
-  });
-  ['dragleave', 'drop'].forEach(evt => {
-    dropzone.addEventListener(evt, (e) => { e.preventDefault(); e.stopPropagation(); dropzone.classList.remove('dbn-dropzone--drag'); });
-  });
-  dropzone.addEventListener('drop', (e) => {
-    const file = e.dataTransfer?.files?.[0];
-    handleDbnImageFile(file);
   });
 
-  // Link URL — divalidasi ulang di backend juga (jangan percaya frontend saja).
-  document.getElementById('dbnImageUrlInput').addEventListener('input', (e) => {
-    const statusEl = document.getElementById('dbnImageUrlStatus');
-    const v = e.target.value.trim();
-    dbnConfig.image.source = 'url';
-    dbnConfig.image.url = v;
-    if (!v) { statusEl.textContent = ''; dbnRenderAll({ skipImageUrlInput: true }); return; }
-    if (!/^https?:\/\//i.test(v)) {
-      statusEl.textContent = 'Gunakan link yang diawali http:// atau https://';
-      statusEl.style.color = '#ff7eb3';
-      dbnRenderAll({ skipImageUrlInput: true });
+  // ── INPUT — field teks/textarea. TIDAK full re-render (biar kursor & fokus
+  // ketikan tidak hilang), cuma update model + elemen turunan di card yang
+  // sama. Validasi format URL ditampilkan langsung tanpa reset value. ──
+  list.addEventListener('input', (e) => {
+    const card = e.target.closest('.dbn-banner-card');
+    if (!card) return;
+    const idx = Number(card.dataset.idx);
+    const banner = dbnBanners[idx];
+    if (!banner) return;
+
+    if (e.target.classList.contains('dbn-eyebrow-input')) { banner.eyebrow = e.target.value; dbnPatchCardDerived(card, banner, idx); return; }
+    if (e.target.classList.contains('dbn-title-input')) { banner.title = e.target.value; dbnPatchCardDerived(card, banner, idx); return; }
+    if (e.target.classList.contains('dbn-desc-input')) { banner.description = e.target.value; dbnPatchCardDerived(card, banner, idx); return; }
+    if (e.target.classList.contains('dbn-buttontext-input')) { banner.buttonText = e.target.value; dbnPatchCardDerived(card, banner, idx); return; }
+
+    if (e.target.classList.contains('dbn-image-url-input')) {
+      const v = e.target.value.trim();
+      banner.image.source = 'url';
+      banner.image.url = v;
+      const statusEl = card.querySelector('.dbn-image-url-status');
+      if (statusEl) {
+        if (!v) statusEl.textContent = '';
+        else if (!/^https?:\/\//i.test(v)) { statusEl.textContent = 'Gunakan link yang diawali http:// atau https://'; statusEl.style.color = '#ff7eb3'; }
+        else statusEl.textContent = '';
+      }
+      dbnPatchCardDerived(card, banner, idx);
       return;
     }
-    statusEl.textContent = '';
-    dbnRenderAll({ skipImageUrlInput: true });
-  });
-  document.getElementById('dbnImagePreviewImg').addEventListener('error', () => {
-    if (dbnConfig.image.source !== 'url') return;
-    document.getElementById('dbnImageUrlStatus').textContent = 'Gambar gagal dimuat dari URL ini — cek kembali link-nya.';
-    document.getElementById('dbnImageUrlStatus').style.color = '#ff7eb3';
-  });
-  document.getElementById('dbnImagePreviewImg').addEventListener('load', () => {
-    if (dbnConfig.image.source !== 'url') return;
-    document.getElementById('dbnImageUrlStatus').textContent = '';
-  });
 
-  document.getElementById('dbnRemoveImageBtn').addEventListener('click', () => {
-    dbnConfig.image.url = '';
-    document.getElementById('dbnImageFile').value = '';
-    document.getElementById('dbnImageUrlInput').value = '';
-    document.getElementById('dbnImageUrlStatus').textContent = '';
-    dbnRenderAll();
-  });
-
-  // Konten
-  document.getElementById('dbnEyebrowInput').addEventListener('input', (e) => {
-    dbnConfig.eyebrow = e.target.value;
-    dbnRenderAll({ skipEyebrowInput: true });
-  });
-  document.getElementById('dbnTitleInput').addEventListener('input', (e) => {
-    dbnConfig.title = e.target.value;
-    dbnRenderAll({ skipTitleInput: true });
-  });
-  document.getElementById('dbnDescInput').addEventListener('input', (e) => {
-    dbnConfig.description = e.target.value;
-    dbnRenderAll({ skipDescInput: true });
-  });
-
-  // Tombol
-  document.getElementById('dbnButtonTextInput').addEventListener('input', (e) => {
-    dbnConfig.buttonText = e.target.value;
-    dbnRenderAll({ skipButtonTextInput: true });
-  });
-  document.getElementById('dbnTargetTypeGroup').addEventListener('click', (e) => {
-    const btn = e.target.closest('.acz-pill[data-targettype]');
-    if (!btn) return;
-    dbnConfig.buttonTargetType = btn.dataset.targettype;
-    dbnRenderAll();
-  });
-  document.getElementById('dbnTargetPageSelect').addEventListener('change', (e) => {
-    dbnConfig.buttonTargetPage = e.target.value;
-    dbnRenderAll();
-  });
-  document.getElementById('dbnTargetUrlInput').addEventListener('input', (e) => {
-    const statusEl = document.getElementById('dbnTargetUrlStatus');
-    const v = e.target.value.trim();
-    dbnConfig.buttonTargetUrl = v;
-    if (!v) { statusEl.textContent = ''; dbnRenderAll({ skipTargetUrlInput: true }); return; }
-    if (!/^https?:\/\//i.test(v)) {
-      statusEl.textContent = 'Gunakan link yang diawali http:// atau https://';
-      statusEl.style.color = '#ff7eb3';
-    } else {
-      statusEl.textContent = '';
+    if (e.target.classList.contains('dbn-targeturl-input')) {
+      const v = e.target.value.trim();
+      banner.buttonTargetUrl = v;
+      const statusEl = card.querySelector('.dbn-targeturl-status');
+      if (statusEl) {
+        if (!v) statusEl.textContent = '';
+        else if (!/^https?:\/\//i.test(v)) { statusEl.textContent = 'Gunakan link yang diawali http:// atau https://'; statusEl.style.color = '#ff7eb3'; }
+        else statusEl.textContent = '';
+      }
+      dbnUpdateSaveState();
+      return;
     }
-    dbnRenderAll({ skipTargetUrlInput: true });
   });
 
   document.getElementById('btnSaveDashboardBanner').addEventListener('click', dbnSave);
 }
 
-// ── Satu fungsi render besar: baca dbnConfig, gambar ulang SEMUA bagian UI
-// + Live Preview + dirty-state tombol Simpan. `opts.skipXxx` dipakai supaya
-// input yang LAGI diketik user sendiri tidak ke-reset value-nya (sama pola
-// dengan aczRenderAll()). ──
-function dbnRenderAll(opts = {}) {
-  if (!dbnConfig) return;
-  const img = dbnConfig.image;
+function dbnBannerLabel(banner, idx) {
+  return (banner.title && banner.title.trim()) ? banner.title.trim() : `Banner ${idx + 1}`;
+}
 
-  // Pill Sumber Gambar + panel visibility
-  document.querySelectorAll('#dbnImageSourceGroup .acz-pill').forEach(b => b.classList.toggle('active', b.dataset.imgsource === img.source));
-  document.getElementById('dbnImageUploadWrap').style.display = img.source === 'upload' ? '' : 'none';
-  document.getElementById('dbnImageUrlWrap').style.display = img.source === 'url' ? '' : 'none';
-  if (!opts.skipImageUrlInput) document.getElementById('dbnImageUrlInput').value = img.source === 'url' ? (img.url || '') : '';
+function dbnPageOptionsHtml(selected) {
+  return dbnPageOptions.map(p => `<option value="${escapeHtml(p.id)}" ${p.id === selected ? 'selected' : ''}>${escapeHtml(p.label)}</option>`).join('');
+}
 
-  // Gambar yang SEDANG AKTIF (tersimpan di DB) — beda dari draft yang lagi diedit.
-  const curRow = document.getElementById('dbnCurrentImageRow');
-  if (_dbnSavedImageUrl) {
-    curRow.style.display = 'flex';
-    document.getElementById('dbnCurrentImagePreview').src = _dbnSavedImageUrl;
-  } else {
-    curRow.style.display = 'none';
+function dbnCardTemplate(banner, idx, total) {
+  const img = banner.image;
+  const label = dbnBannerLabel(banner, idx);
+  const collapsed = !!banner._collapsed;
+  return `
+    <div class="dbn-banner-card" data-idx="${idx}">
+      <div class="dbn-card-header">
+        <button type="button" class="dbn-card-collapse-btn" data-action="toggle-collapse" title="${collapsed ? 'Perluas' : 'Tutup'}">
+          <svg class="icon icon-16"><use href="#ic-chevron-${collapsed ? 'down' : 'up'}"></use></svg>
+        </button>
+        <div class="dbn-card-header-info">
+          <span class="dbn-card-index">Banner ${idx + 1}</span>
+          <span class="dbn-card-name">${escapeHtml(label)}</span>
+        </div>
+        <span class="dbn-card-badge ${banner.active ? 'dbn-card-badge--active' : 'dbn-card-badge--inactive'}">${banner.active ? 'Aktif' : 'Nonaktif'}</span>
+        <label class="switch" title="Aktif/Nonaktif banner ini">
+          <input type="checkbox" class="dbn-active-toggle" ${banner.active ? 'checked' : ''}><span class="switch-slider"></span>
+        </label>
+        <div class="dbn-card-order-btns">
+          <button type="button" class="btn-icon-sm" data-action="move-up" ${idx === 0 ? 'disabled' : ''} title="Naikkan urutan"><svg class="icon icon-16"><use href="#ic-arrow-up"></use></svg></button>
+          <button type="button" class="btn-icon-sm" data-action="move-down" ${idx === total - 1 ? 'disabled' : ''} title="Turunkan urutan"><svg class="icon icon-16"><use href="#ic-arrow-down"></use></svg></button>
+        </div>
+        <button type="button" class="btn btn-danger btn-sm" data-action="delete" title="Hapus banner ini"><svg class="icon icon-16"><use href="#ic-trash-2"></use></svg></button>
+      </div>
+
+      <div class="dbn-card-body" ${collapsed ? 'style="display:none;"' : ''}>
+        <div class="dbn-card-grid">
+          <div class="dbn-card-fields">
+            <div class="form-group">
+              <label class="form-label">Sumber Gambar</label>
+              <div class="acz-pill-group dbn-imgsource-group">
+                <button type="button" class="acz-pill ${img.source === 'upload' ? 'active' : ''}" data-imgsource="upload">Upload File</button>
+                <button type="button" class="acz-pill ${img.source === 'url' ? 'active' : ''}" data-imgsource="url">Link URL</button>
+              </div>
+            </div>
+            <div class="form-group dbn-image-upload-wrap" style="${img.source === 'upload' ? '' : 'display:none;'}">
+              <label class="form-label">Upload Gambar <span style="color:var(--text-faint);font-weight:400;">(PNG/JPG/JPEG/WEBP, maks 5MB — drag & drop atau klik)</span></label>
+              <div class="dbn-dropzone">
+                <svg class="icon icon-24"><use href="#ic-image"></use></svg>
+                <span>Drag & drop gambar di sini, atau <u>Pilih File</u></span>
+                <input class="form-input dbn-image-file" type="file" accept="image/png,image/jpeg,image/webp" style="display:none;">
+              </div>
+            </div>
+            <div class="form-group dbn-image-url-wrap" style="${img.source === 'url' ? '' : 'display:none;'}">
+              <label class="form-label">Link URL Gambar <span style="color:var(--text-faint);font-weight:400;">(diawali http:// atau https://)</span></label>
+              <input class="form-input dbn-image-url-input" type="text" placeholder="https://example.com/banner.jpg" value="${img.source === 'url' ? escapeHtml(img.url || '') : ''}">
+              <div class="dbn-image-url-status" style="margin-top:6px;font-size:12px;color:var(--text-faint);min-height:16px;"></div>
+            </div>
+            <div class="dbn-image-preview-wrap" style="margin-top:4px;position:relative;${img.url ? '' : 'display:none;'}">
+              <img class="dbn-image-preview-img" style="width:100%;max-height:160px;object-fit:cover;border-radius:12px;border:1px solid var(--line);" src="${escapeHtml(img.url || '')}">
+              <button type="button" class="btn btn-danger btn-sm dbn-remove-image-btn" style="position:absolute;top:8px;right:8px;"><svg class="icon icon-16"><use href="#ic-trash-2"></use></svg> Hapus</button>
+            </div>
+
+            <div class="acz-divider"><span>Konten Banner</span></div>
+            <div class="form-group">
+              <label class="form-label">Teks Atas (Eyebrow)</label>
+              <input class="form-input dbn-eyebrow-input" type="text" maxlength="60" placeholder="Featured This Week" value="${escapeHtml(banner.eyebrow || '')}">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Judul</label>
+              <input class="form-input dbn-title-input" type="text" maxlength="100" placeholder="Elden Ring" value="${escapeHtml(banner.title || '')}">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Deskripsi</label>
+              <textarea class="form-input dbn-desc-input" maxlength="240" rows="3" placeholder="Deskripsi singkat game/promo yang ditonjolkan...">${escapeHtml(banner.description || '')}</textarea>
+              <div class="dbn-char-counter dbn-desc-counter">${(banner.description || '').length} / 240</div>
+            </div>
+
+            <div class="acz-divider"><span>Tombol</span></div>
+            <div class="form-group">
+              <label class="form-label">Teks Tombol</label>
+              <input class="form-input dbn-buttontext-input" type="text" maxlength="40" placeholder="Lihat Detail" value="${escapeHtml(banner.buttonText || '')}">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Tujuan Tombol</label>
+              <div class="acz-pill-group dbn-targettype-group">
+                <button type="button" class="acz-pill ${banner.buttonTargetType === 'page' ? 'active' : ''}" data-targettype="page">Halaman APP</button>
+                <button type="button" class="acz-pill ${banner.buttonTargetType === 'url' ? 'active' : ''}" data-targettype="url">Link Eksternal</button>
+              </div>
+            </div>
+            <div class="form-group dbn-targetpage-wrap" style="${banner.buttonTargetType === 'page' ? '' : 'display:none;'}">
+              <label class="form-label">Pilih Halaman APP</label>
+              <select class="form-input dbn-targetpage-select">${dbnPageOptionsHtml(banner.buttonTargetPage)}</select>
+            </div>
+            <div class="form-group dbn-targeturl-wrap" style="${banner.buttonTargetType === 'url' ? '' : 'display:none;'}">
+              <label class="form-label">Link Eksternal <span style="color:var(--text-faint);font-weight:400;">(diawali http:// atau https://)</span></label>
+              <input class="form-input dbn-targeturl-input" type="text" placeholder="https://example.com" value="${escapeHtml(banner.buttonTargetUrl || '')}">
+              <div class="dbn-targeturl-status" style="margin-top:6px;font-size:12px;color:var(--text-faint);min-height:16px;"></div>
+            </div>
+          </div>
+
+          <div class="dbn-card-preview-col">
+            <div class="dbn-card-preview-label">Live Preview</div>
+            <div class="dbn-preview-frame dbn-card-preview-frame">
+              <img class="dbn-preview-img dbn-card-preview-img" alt="" style="${img.url ? '' : 'display:none;'}" src="${escapeHtml(img.url || '')}">
+              <div class="dbn-preview-overlay">
+                <span class="dbn-preview-eyebrow dbn-card-preview-eyebrow">${escapeHtml(banner.eyebrow || 'Featured This Week')}</span>
+                <h2 class="dbn-preview-title dbn-card-preview-title">${escapeHtml(banner.title || 'Judul Banner')}</h2>
+                <p class="dbn-preview-desc dbn-card-preview-desc">${escapeHtml(banner.description || '')}</p>
+                <button type="button" class="dbn-preview-btn" disabled>
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                  <span class="dbn-card-preview-btntext">${escapeHtml(banner.buttonText || 'Lihat Detail')}</span>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>`;
+}
+
+// Rebuild PENUH #dbnBannerList — dipakai untuk perubahan struktural.
+function dbnRenderList(opts = {}) {
+  const list = document.getElementById('dbnBannerList');
+  const empty = document.getElementById('dbnEmptyState');
+  if (!list) return;
+  empty.style.display = dbnBanners.length ? 'none' : 'flex';
+  list.innerHTML = dbnBanners.map((b, i) => dbnCardTemplate(b, i, dbnBanners.length)).join('');
+
+  const addBtn = document.getElementById('btnAddDashboardBanner');
+  if (addBtn) addBtn.disabled = dbnBanners.length >= dbnMaxBanners;
+
+  const countEl = document.getElementById('dbnCountStatus');
+  if (countEl) countEl.textContent = `${dbnBanners.length} / ${dbnMaxBanners} banner`;
+
+  dbnUpdateSaveState();
+
+  if (opts.scrollToLast) {
+    const cards = list.querySelectorAll('.dbn-banner-card');
+    cards[cards.length - 1]?.scrollIntoView({ behavior: 'smooth', block: 'center' });
   }
+}
 
-  // Preview gambar draft (yang akan disimpan kalau klik Simpan)
-  const previewWrap = document.getElementById('dbnImagePreviewWrap');
-  const previewImg = document.getElementById('dbnImagePreviewImg');
-  if (img.url) {
-    previewWrap.style.display = '';
-    previewImg.src = img.url;
-  } else {
-    previewWrap.style.display = 'none';
+// Update elemen turunan SATU card (counter + mini preview + label header)
+// tanpa re-render HTML card itu sendiri — dipakai tiap keystroke supaya
+// fokus/kursor input tidak hilang.
+function dbnPatchCardDerived(card, banner, idx) {
+  const counterEl = card.querySelector('.dbn-desc-counter');
+  if (counterEl) {
+    const len = (banner.description || '').length;
+    counterEl.textContent = `${len} / 240`;
+    counterEl.classList.toggle('dbn-char-counter--warn', len >= 220);
   }
+  const nameEl = card.querySelector('.dbn-card-name');
+  if (nameEl) nameEl.textContent = dbnBannerLabel(banner, idx);
+  const pvEyebrow = card.querySelector('.dbn-card-preview-eyebrow');
+  if (pvEyebrow) pvEyebrow.textContent = banner.eyebrow || 'Featured This Week';
+  const pvTitle = card.querySelector('.dbn-card-preview-title');
+  if (pvTitle) pvTitle.textContent = banner.title || 'Judul Banner';
+  const pvDesc = card.querySelector('.dbn-card-preview-desc');
+  if (pvDesc) pvDesc.textContent = banner.description || '';
+  const pvBtn = card.querySelector('.dbn-card-preview-btntext');
+  if (pvBtn) pvBtn.textContent = banner.buttonText || 'Lihat Detail';
+  dbnUpdateSaveState();
+}
 
-  // Konten
-  if (!opts.skipEyebrowInput) document.getElementById('dbnEyebrowInput').value = dbnConfig.eyebrow || '';
-  if (!opts.skipTitleInput) document.getElementById('dbnTitleInput').value = dbnConfig.title || '';
-  if (!opts.skipDescInput) document.getElementById('dbnDescInput').value = dbnConfig.description || '';
-  const descLen = (dbnConfig.description || '').length;
-  const counterEl = document.getElementById('dbnDescCounter');
-  counterEl.textContent = `${descLen} / 240`;
-  counterEl.classList.toggle('dbn-char-counter--warn', descLen >= 220);
-
-  // Tombol
-  if (!opts.skipButtonTextInput) document.getElementById('dbnButtonTextInput').value = dbnConfig.buttonText || '';
-  document.querySelectorAll('#dbnTargetTypeGroup .acz-pill').forEach(b => b.classList.toggle('active', b.dataset.targettype === dbnConfig.buttonTargetType));
-  document.getElementById('dbnTargetPageWrap').style.display = dbnConfig.buttonTargetType === 'page' ? '' : 'none';
-  document.getElementById('dbnTargetUrlWrap').style.display = dbnConfig.buttonTargetType === 'url' ? '' : 'none';
-  if (dbnConfig.buttonTargetType === 'page') {
-    document.getElementById('dbnTargetPageSelect').value = dbnConfig.buttonTargetPage || (dbnPageOptions[0]?.id || '');
-  }
-  if (!opts.skipTargetUrlInput) document.getElementById('dbnTargetUrlInput').value = dbnConfig.buttonTargetType === 'url' ? (dbnConfig.buttonTargetUrl || '') : '';
-
-  // ── LIVE PREVIEW — PERSIS meniru bentuk `.dash-banner` App (lihat
-  // app/styles.css & dbn-preview-* di admin.css), update langsung tanpa Save.
-  const previewImgEl = document.getElementById('dbnPreviewImg');
-  if (img.url) { previewImgEl.src = img.url; previewImgEl.style.display = ''; }
-  else { previewImgEl.style.display = 'none'; }
-  document.getElementById('dbnPreviewEyebrow').textContent = dbnConfig.eyebrow || 'Featured This Week';
-  document.getElementById('dbnPreviewTitle').textContent = dbnConfig.title || 'Judul Banner';
-  document.getElementById('dbnPreviewDesc').textContent = dbnConfig.description || '';
-  document.getElementById('dbnPreviewBtnText').textContent = dbnConfig.buttonText || 'Lihat Detail';
-
-  // Dirty-state — tombol Simpan disabled kalau belum ada perubahan dari
-  // config tersimpan terakhir (poin desain #4 permintaan).
+// Dirty-state — tombol Simpan disabled kalau belum ada perubahan dari
+// config tersimpan terakhir.
+function dbnUpdateSaveState() {
   const btn = document.getElementById('btnSaveDashboardBanner');
-  const isDirty = JSON.stringify(dbnConfig) !== _dbnOriginal;
+  if (!btn) return;
+  const isDirty = dbnSnapshot(dbnBanners) !== _dbnOriginal;
   btn.disabled = !isDirty;
 }
 
@@ -9888,15 +10070,19 @@ async function dbnSave() {
   const statusEl = document.getElementById('dbnStatus');
 
   // Validasi ringan di sisi Admin Web sebelum kirim (backend tetap validasi
-  // ulang, ini cuma supaya admin tidak perlu tunggu roundtrip buat error
-  // yang jelas-jelas kelihatan dari sini).
-  if (dbnConfig.buttonTargetType === 'url' && dbnConfig.buttonTargetUrl && !/^https?:\/\//i.test(dbnConfig.buttonTargetUrl.trim())) {
-    showToast('Link Eksternal tombol harus diawali http:// atau https://', 'error');
-    return;
-  }
-  if (dbnConfig.image.url && dbnConfig.image.source === 'url' && !/^https?:\/\//i.test(dbnConfig.image.url.trim())) {
-    showToast('Link URL gambar harus diawali http:// atau https://', 'error');
-    return;
+  // ulang tiap banner, ini cuma supaya admin tidak perlu tunggu roundtrip
+  // buat error yang jelas-jelas kelihatan dari sini).
+  for (let i = 0; i < dbnBanners.length; i++) {
+    const b = dbnBanners[i];
+    const label = dbnBannerLabel(b, i);
+    if (b.buttonTargetType === 'url' && b.buttonTargetUrl && !/^https?:\/\//i.test(b.buttonTargetUrl.trim())) {
+      showToast(`${label}: Link Eksternal tombol harus diawali http:// atau https://`, 'error');
+      return;
+    }
+    if (b.image.url && b.image.source === 'url' && !/^https?:\/\//i.test(b.image.url.trim())) {
+      showToast(`${label}: Link URL gambar harus diawali http:// atau https://`, 'error');
+      return;
+    }
   }
 
   btn.disabled = true;
@@ -9905,25 +10091,24 @@ async function dbnSave() {
   try {
     const res = await api('/api/admin/dashboard-banner', {
       method: 'PUT',
-      body: JSON.stringify(dbnConfig)
+      body: JSON.stringify({ banners: dbnBanners.map(dbnCleanBanner) })
     });
-    dbnConfig = {
-      image: { ...res.config.image },
-      eyebrow: res.config.eyebrow, title: res.config.title, description: res.config.description,
-      buttonText: res.config.buttonText, buttonTargetType: res.config.buttonTargetType,
-      buttonTargetPage: res.config.buttonTargetPage, buttonTargetUrl: res.config.buttonTargetUrl
-    };
-    _dbnSavedImageUrl = dbnConfig.image.url || '';
-    _dbnOriginal = JSON.stringify(dbnConfig);
-    dbnRenderAll();
-    showToast('Banner disimpan & langsung diterapkan realtime ke semua App.', 'success');
+    dbnBanners = (res.config.banners || []).map(b => ({
+      _cid: dbnNewCid(), _collapsed: false,
+      id: b.id, image: { ...b.image }, eyebrow: b.eyebrow, title: b.title, description: b.description,
+      buttonText: b.buttonText, buttonTargetType: b.buttonTargetType,
+      buttonTargetPage: b.buttonTargetPage, buttonTargetUrl: b.buttonTargetUrl, active: b.active
+    }));
+    _dbnOriginal = dbnSnapshot(dbnBanners);
+    dbnRenderList();
+    showToast('Setting Banner disimpan & langsung diterapkan realtime ke semua App.', 'success');
     if (statusEl) statusEl.textContent = `Terakhir disimpan: ${new Date(res.config.updatedAt).toLocaleString('id-ID')} oleh ${res.config.updatedBy || 'Admin'}`;
   } catch (e) {
     showToast('Gagal menyimpan: ' + e.message, 'error');
   } finally {
     btn.innerHTML = originalHtml;
-    // dbnRenderAll() di atas sudah menentukan disabled yang benar (dirty-state) kalau sukses;
+    // dbnRenderList() di atas sudah menentukan disabled yang benar (dirty-state) kalau sukses;
     // kalau gagal, biarkan tetap enabled supaya admin bisa coba Simpan lagi.
-    if (btn.disabled) btn.disabled = JSON.stringify(dbnConfig) === _dbnOriginal;
+    if (btn.disabled) dbnUpdateSaveState();
   }
 }

@@ -2776,6 +2776,50 @@ button:hover .icon,
 .dbn-dropzone svg { opacity: .7; }
 .dbn-dropzone u { color: var(--violet); text-decoration: none; font-weight: 700; }
 
+/* ── MULTI BANNER — daftar card, satu card per banner. Reuse token warna &
+   .card/.acz-pill-group/.acz-divider yang sudah ada, cuma header/grid card
+   yang baru (poin desain: bukan sistem visual baru yang beda sendiri). ── */
+.dbn-empty-state {
+  display: flex; align-items: center; gap: 12px; padding: 22px; margin-bottom: 16px;
+  border-radius: var(--radius-lg); border: 1.5px dashed var(--line-hi);
+  background: var(--glass); color: var(--text-faint); font-size: 13px;
+}
+.dbn-empty-state svg { opacity: .6; flex-shrink: 0; }
+.dbn-banner-list { display: flex; flex-direction: column; gap: 16px; }
+.dbn-banner-card {
+  background: var(--glass); border: 1px solid var(--line); border-radius: var(--radius-lg);
+  overflow: hidden; backdrop-filter: blur(12px);
+}
+.dbn-card-header {
+  display: flex; align-items: center; gap: 10px; padding: 14px 16px;
+  border-bottom: 1px solid var(--line); flex-wrap: wrap;
+}
+.dbn-card-collapse-btn {
+  display: flex; align-items: center; justify-content: center; width: 28px; height: 28px;
+  border-radius: 8px; border: 1px solid var(--line); background: transparent; color: var(--text-dim);
+  cursor: pointer; flex-shrink: 0; transition: background .15s, color .15s;
+}
+.dbn-card-collapse-btn:hover { background: rgba(167,139,250,.14); color: #a78bfa; }
+.dbn-card-header-info { display: flex; align-items: baseline; gap: 8px; min-width: 0; flex: 1; }
+.dbn-card-index { font-size: 12px; font-weight: 700; color: var(--text-faint); flex-shrink: 0; }
+.dbn-card-name {
+  font-size: 13.5px; font-weight: 700; color: var(--text); white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; min-width: 0;
+}
+.dbn-card-badge {
+  font-size: 10.5px; font-weight: 700; text-transform: uppercase; letter-spacing: .04em;
+  padding: 3px 9px; border-radius: 999px; flex-shrink: 0;
+}
+.dbn-card-badge--active { color: var(--green); background: rgba(74,222,128,.14); }
+.dbn-card-badge--inactive { color: var(--text-faint); background: rgba(255,255,255,.06); }
+.dbn-card-order-btns { display: flex; gap: 4px; flex-shrink: 0; }
+.dbn-card-body { padding: 18px 18px 20px; }
+.dbn-card-grid { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 20px; align-items: start; }
+@media (max-width: 900px) { .dbn-card-grid { grid-template-columns: 1fr; } }
+.dbn-card-preview-col { position: sticky; top: 20px; }
+.dbn-card-preview-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--text-faint); margin-bottom: 8px; }
+.dbn-card-preview-frame { aspect-ratio: 16/10; min-height: 160px; }
+
 /* ── Visual color picker popover (Saturation/Brightness area + Hue slider) ──
    Ini yang menjawab requirement #3/#10: Admin drag di kotak besar untuk
    saturation/brightness, drag di slider untuk hue — SAMA SEKALI tidak wajib

@@ -7499,10 +7499,10 @@ app.put('/api/admin/app-customization', requireAdmin, async (req, res) => {
 });
 
 // ══════════════════════════════════════════════════════════════════════════
-// DASHBOARD HERO BANNER — SATU kartu banner statis di halaman Dashboard APP
-// (elemen `.dash-banner`, lihat dashboardBannerManager.js), sekarang bisa
-// diatur penuh dari Admin Web ("Setting Banner") dan berubah REALTIME ke
-// semua App yang sedang online, TANPA restart/reload.
+// DASHBOARD HERO BANNER — MULTI BANNER DINAMIS di halaman Dashboard APP
+// (elemen `.dash-banner` carousel, lihat dashboardBannerManager.js), diatur
+// penuh dari Admin Web ("Setting Banner") dan berubah REALTIME ke semua App
+// yang sedang online, TANPA restart/reload.
 //
 // PENTING: ini KASUS BERBEDA dari sistem banner carousel multi-slide yang
 // sudah ada (koleksi `banners`, endpoint /api/banners & /api/admin/banners
@@ -7512,10 +7512,17 @@ app.put('/api/admin/app-customization', requireAdmin, async (req, res) => {
 //
 // Endpoint publik (APP) butuh login (requireUser, sama pola dengan
 // /api/banners/​/api/app-customization) — banner ini cuma tampil di
-// Dashboard setelah user login. Endpoint admin di-guard requireAdmin, sama
-// seperti endpoint admin lain di project ini. Realtime lewat wsBroadcastAll
-// yang SUDAH ADA (event 'dashboard-banner:update') — TIDAK ada WebSocket
-// baru sama sekali.
+// Dashboard setelah user login, dan HANYA mengembalikan banner yang
+// `active` (poin permintaan: APP ambil SEMUA banner aktif). Endpoint admin
+// di-guard requireAdmin, sama seperti endpoint admin lain di project ini.
+// Realtime lewat wsBroadcastAll yang SUDAH ADA (event
+// 'dashboard-banner:update') — TIDAK ada WebSocket baru sama sekali.
+//
+// Model save TETAP satu PUT = seluruh array banner (tambah/edit/hapus/ubah
+// urutan/ubah status SEMUA jadi draft di Admin Web, dikirim sekali lewat
+// body { banners: [...] }) — pola SAMA PERSIS dengan endpoint versi
+// single-banner sebelumnya, cuma bentuk payload-nya sekarang array. Lihat
+// dashboardBannerManager.updateConfig() untuk validasi per-item.
 // ══════════════════════════════════════════════════════════════════════════
 app.get('/api/dashboard-banner', requireUser, async (req, res) => {
   try {
@@ -7532,9 +7539,11 @@ app.get('/api/admin/dashboard-banner', requireAdmin, async (req, res) => {
     // pageOptions: whitelist tujuan Halaman APP yang valid (lihat
     // PAGE_WHITELIST di dashboardBannerManager.js) — dikirim bareng config
     // supaya dropdown "Tujuan Tombol" di Admin Web SELALU sinkron dengan
-    // halaman/nav yang benar-benar ada di APP (poin #6 permintaan: jangan
-    // hardcode string bebas yang bisa typo).
-    res.json({ ...cfg, pageOptions: dashboardBannerManager.PAGE_WHITELIST });
+    // halaman/nav yang benar-benar ada di APP (jangan hardcode string bebas
+    // yang bisa typo). maxBanners dikirim juga supaya Admin Web bisa
+    // menonaktifkan tombol "+ Tambah Banner" begitu batas tercapai, tanpa
+    // hardcode angka terpisah di frontend.
+    res.json({ ...cfg, pageOptions: dashboardBannerManager.PAGE_WHITELIST, maxBanners: dashboardBannerManager.MAX_BANNERS });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -7544,11 +7553,12 @@ app.put('/api/admin/dashboard-banner', requireAdmin, async (req, res) => {
   try {
     const next = await dashboardBannerManager.updateConfig(req.body || {}, req.admin?.username || 'Admin');
 
+    const titles = next.banners.map(b => `"${b.title}"${b.active ? '' : ' (nonaktif)'}`).join(', ') || '(kosong)';
     logActivity({
       type: 'settings_change', username: req.admin?.username || 'Admin', admin: req.admin?.username || 'Admin',
       status: 'success', ip: getReqIp(req),
-      description: `Admin mengubah Dashboard Banner (judul: "${next.title}", tombol: "${next.buttonText}" -> ${next.buttonTargetType === 'page' ? 'halaman ' + next.buttonTargetPage : next.buttonTargetUrl}).`,
-      meta: { title: next.title, buttonText: next.buttonText, buttonTargetType: next.buttonTargetType, buttonTargetPage: next.buttonTargetPage, buttonTargetUrl: next.buttonTargetUrl }
+      description: `Admin mengubah Setting Banner Dashboard (${next.banners.length} banner: ${titles}).`,
+      meta: { bannerCount: next.banners.length, banners: next.banners.map(b => ({ id: b.id, title: b.title, active: b.active, order: b.order })) }
     }).catch(() => {});
 
     // Realtime — App yang sedang online langsung menerima banner terbaru

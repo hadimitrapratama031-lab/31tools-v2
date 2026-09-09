@@ -1523,12 +1523,20 @@ ipcMain.handle('active-tools-run-powershell', (event, { command } = {}) => {
 
       cleanupTempFiles();
 
+      // CATATAN FIX (popup "i (exit code 0)."): baris yang di-push ke renderer
+      // di sini SEBELUMNYA menyertakan teks teknis "(exit code N)" — ini yang
+      // muncul apa adanya di UI karena app.js dulu menampilkan baris log
+      // TERAKHIR sebagai status text tanpa filter (lihat fix di app.js,
+      // fungsi onActiveToolsPsProgress). Exit code TETAP dicatat lengkap di
+      // `code` (dipakai di file log internal userData/logs di atas) — cuma
+      // teks yang dikirim ke renderer/​UI sekarang bahasa manusia biasa,
+      // tanpa detail proses/teknis.
       if (Number.isInteger(code) && code === 0) {
-        pushLog('✅ Selesai (exit code 0).');
+        pushLog('✅ Selesai.');
         resolve({ success: true, code, log: logLines.join('\n') });
       } else {
-        pushLog(`✖ Command berhenti dengan exit code ${Number.isInteger(code) ? code : 'tidak diketahui'}.`);
-        resolve({ success: false, error: `PowerShell berhenti dengan exit code ${Number.isInteger(code) ? code : 'tidak diketahui'}.`, code, log: logLines.join('\n') });
+        pushLog('✖ Command berhenti dengan kesalahan.');
+        resolve({ success: false, error: 'Active Tools gagal dijalankan. Cek log internal untuk detail teknis.', code, log: logLines.join('\n') });
       }
     });
   });

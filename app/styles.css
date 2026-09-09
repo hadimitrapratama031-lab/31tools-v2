@@ -709,6 +709,21 @@
     border-color:var(--success); background:var(--success-bg); color:var(--success);
   }
   .at-prog-step.done .at-step-icon::after{ content:''; width:5px; height:8px; border-right:1.6px solid currentColor; border-bottom:1.6px solid currentColor; transform:rotate(45deg) translate(-1px,-1.5px); }
+  /* FIX (requirement #12 error handling per tahap) — tahap yang gagal ditandai
+     ✕ merah (pakai var(--danger), sama dgn .at-req-icon.error di atas), beda
+     dari 'done' (centang hijau) supaya user bisa lihat persis tahap mana yang
+     gagal, bukan cuma pesan generik di atas. */
+  .at-prog-step.failed{ color:var(--danger); }
+  .at-prog-step.failed .at-step-icon{
+    border-color:var(--danger); background:#E0665A1f; color:var(--danger);
+  }
+  .at-prog-step.failed .at-step-icon::before,
+  .at-prog-step.failed .at-step-icon::after{
+    content:''; position:absolute; width:8px; height:1.6px; background:currentColor; border-radius:1px;
+  }
+  .at-prog-step.failed .at-step-icon{ position:relative; }
+  .at-prog-step.failed .at-step-icon::before{ transform:rotate(45deg); }
+  .at-prog-step.failed .at-step-icon::after{ transform:rotate(-45deg); }
   .at-req-progress .at-spinner{
     width:14px; height:14px; border-radius:50%; flex:none;
     border:2px solid #FFFFFF20; border-top-color:var(--accent); animation:at-spin .7s linear infinite;
@@ -745,6 +760,24 @@
     grid-template-columns:minmax(0, 2.1fr) minmax(300px, 0.9fr);
     gap:22px;
     align-items:stretch;
+    align-content:stretch;
+    /* FIX responsive: sebelumnya row ini TIDAK punya tinggi sendiri, jadi
+       saat window melebar hanya WIDTH kolom yang bertambah (lewat fr unit)
+       sementara HEIGHT tetap mengikuti tinggi konten List Top Installer
+       yang nyaris konstan (font-size & padding-nya fixed px) — akibatnya
+       makin lebar window, makin "gepeng" rasio row ini, dan gambar Banner
+       (object-fit:cover) jadi kepotong makin banyak.
+       Sekarang row diberi aspect-ratio yang dihitung dari LEBAR row itu
+       sendiri (bukan window.innerWidth) — 10/3 dipilih supaya di lebar
+       konten ~1200px (window ±1280px) hasilnya persis sama seperti tinggi
+       natural sebelumnya (±360px), jadi tampilan di ukuran normal TIDAK
+       berubah. Begitu window/container melebar, height ikut membesar
+       proporsional (align-content:stretch membuat row auto ini mengisi
+       penuh tinggi dari aspect-ratio, lalu Banner & Top Installer stretch
+       mengikuti — lihat catatan align-items:stretch). Di breakpoint sempit
+       (<1099px, lihat media query di bawah) aspect-ratio ini di-reset
+       karena layout berubah jadi 1 kolom (stacked), bukan sejajar lagi. */
+    aspect-ratio:10 / 3;
   }
 
   .dash-banner{
@@ -752,7 +785,27 @@
     border-radius:16px; overflow:hidden;
     background:linear-gradient(140deg,#141b2b,#0b0e16);
   }
-  .dash-banner > img{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
+  /* ── Track — wadah relatif tempat semua slide ditumpuk (position:absolute
+     inset:0 per slide, lihat .dash-banner-slide di bawah). Menumpuk (bukan
+     flex-row + translateX) supaya lebar/tinggi .dash-banner (yang sudah
+     responsive lewat aspect-ratio row-nya, lihat .dash-top-row) TIDAK perlu
+     dihitung ulang tiap ganti slide — setiap slide otomatis mengisi penuh
+     ukuran .dash-banner apapun breakpoint-nya. ── */
+  .dash-banner-track{ position:absolute; inset:0; }
+  .dash-banner-slide{
+    position:absolute; inset:0;
+    opacity:0; pointer-events:none;
+    transform:translateX(0);
+    /* Durasi & easing dipakai JS (lihat _dashCarouselGoTo() di app.js) untuk
+       animasi PERPINDAHAN antar slide (slide horizontal halus + fade),
+       transition di sini jadi fallback/base kalau JS set transform/opacity
+       tanpa override transition eksplisit. ~750ms, cubic-bezier "material
+       standard" — natural, bukan bounce/zoom/rotate. */
+    transition:transform .75s cubic-bezier(.4,0,.2,1), opacity .75s ease;
+    will-change:transform, opacity;
+  }
+  .dash-banner-slide--active{ opacity:1; pointer-events:auto; transform:translateX(0); z-index:2; }
+  .dash-banner-slide > img{ position:absolute; inset:0; width:100%; height:100%; object-fit:cover; }
   .dash-banner-overlay{
     position:absolute; inset:0; display:flex; flex-direction:column; justify-content:flex-end;
     padding:28px 32px; gap:8px;
@@ -778,6 +831,24 @@
   }
   .dash-banner-btn:hover{ filter:brightness(1.08); transform:translateY(-1px); }
   .dash-banner-btn svg{ width:15px; height:15px; }
+
+  /* ── Dot indicator — cuma ditampilkan (display:flex, di-toggle lewat JS)
+     kalau banner aktif > 1 (lihat _dashCarouselRenderDots() di app.js).
+     Klik dot -> pindah slide + reset timer autoplay (lihat handler klik
+     event-delegation di app.js, BUKAN listener per-dot supaya render ulang
+     dot tidak pernah menumpuk listener). ── */
+  .dash-banner-dots{
+    position:absolute; left:0; right:0; bottom:14px; z-index:3;
+    display:flex; align-items:center; justify-content:center; gap:7px;
+    pointer-events:none;
+  }
+  .dash-banner-dot{
+    pointer-events:auto; cursor:pointer; border:none; padding:0;
+    width:7px; height:7px; border-radius:99px; background:rgba(255,255,255,.38);
+    transition:background .25s ease, width .25s ease, transform .15s ease;
+  }
+  .dash-banner-dot:hover{ background:rgba(255,255,255,.6); }
+  .dash-banner-dot.active{ width:20px; background:var(--accent); }
 
   .dash-top-installer{
     display:flex; flex-direction:column; min-height:0;
@@ -862,8 +933,15 @@
   }
 
   @media (max-width:1099px){
-    .dash-top-row{ grid-template-columns:1fr; }
-    .dash-banner{ aspect-ratio:16/8; }
+    /* Di lebar sempit, Banner & Top Installer TIDAK lagi sejajar 1 row
+       (grid-template-columns jadi 1fr → stacked ke bawah), jadi
+       aspect-ratio gabungan row (10/3, lihat .dash-top-row di atas) tidak
+       relevan lagi di sini — harus di-reset supaya tidak ikut memaksa
+       tinggi total kedua elemen yang sudah stacked. Banner dapat
+       aspect-ratio sendiri (16/8), Top Installer dapat max-height sendiri,
+       persis seperti sebelumnya — tidak diubah. */
+    .dash-top-row{ grid-template-columns:1fr; aspect-ratio:auto; align-content:normal; }
+    .dash-banner{ aspect-ratio:16/8; height:auto; }
     .dash-top-installer{ max-height:280px; }
   }
 

@@ -1,4 +1,4 @@
-const SERVER_URL = 'https://testingapp-production-ad91.up.railway.app';
+const SERVER_URL = 'https://31store-production.up.railway.app';
 const WS_URL = SERVER_URL.replace(/^http/, 'ws') + '/ws';
 
 let currentUser = null;
@@ -800,13 +800,23 @@ function applyAppBranding(branding) {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   DASHBOARD HERO BANNER — SATU kartu banner statis di halaman Dashboard
-   (`.dash-banner`), sekarang diatur penuh dari Admin Web ("Setting Banner"),
-   realtime lewat WebSocket event 'dashboard-banner:update' (lihat
-   connectRealtime() di atas & dashboardBannerManager.broadcastUpdate() —
-   TIDAK ada sistem realtime baru, pola SAMA PERSIS dengan App Customization
-   di atas: WS cuma bawa sinyal ringan {changed, version}, App WAJIB fetch
-   ulang lewat REST GET /api/dashboard-banner yang sudah ada).
+   DASHBOARD HERO BANNER — MULTI BANNER DINAMIS di halaman Dashboard
+   (`.dash-banner`), diatur penuh dari Admin Web ("Setting Banner"), realtime
+   lewat WebSocket event 'dashboard-banner:update' (lihat connectRealtime()
+   di atas & dashboardBannerManager.broadcastUpdate() — TIDAK ada sistem
+   realtime baru, pola SAMA PERSIS dengan App Customization di atas: WS cuma
+   bawa sinyal ringan {changed, version}, App WAJIB fetch ulang lewat REST
+   GET /api/dashboard-banner yang sudah ada).
+
+   1 banner aktif  -> tampil sebagai banner biasa (tanpa dot, tanpa autoplay).
+   >=2 banner aktif -> otomatis jadi carousel: ganti slide tiap 3 detik,
+   animasi slide horizontal halus + fade (~750ms), loop ke banner pertama
+   setelah banner terakhir, dot indicator di bawah (klik dot -> pindah +
+   reset timer autoplay). Semua banner & urutannya 100% dari backend/
+   database (source of truth) — TIDAK ada banner hardcode di sini, kecuali
+   DASHBOARD_BANNER_FALLBACK di bawah yang MURNI anti-blank sebelum data
+   backend sempat dibaca (sama fungsinya dengan markup fallback statis versi
+   lama), bukan sumber data permanen.
 
    BUKAN sistem carousel `banners` (multi-slide/Code Banner/dot indicator)
    yang sudah ada di file ini — sistem itu TIDAK disentuh sama sekali di
@@ -818,6 +828,8 @@ function applyAppBranding(branding) {
    begitu online lagi.
    ══════════════════════════════════════════════════════════════════════════ */
 const DASHBOARD_BANNER_CACHE_KEY = 'dashboardBannerCache';
+const DASHBOARD_BANNER_AUTOPLAY_MS = 3000;   // ganti slide tiap 3 detik (poin permintaan)
+const DASHBOARD_BANNER_ANIM_MS = 750;        // 600–900ms, "premium & elegan" (poin permintaan)
 
 function _readDashboardBannerCache() {
   try { return JSON.parse(localStorage.getItem(DASHBOARD_BANNER_CACHE_KEY) || 'null'); }
@@ -827,78 +839,277 @@ function _writeDashboardBannerCache(cfg) {
   try { localStorage.setItem(DASHBOARD_BANNER_CACHE_KEY, JSON.stringify(cfg)); } catch (e) {}
 }
 
+const DASHBOARD_BANNER_FALLBACK = {
+  banners: [{
+    id: '__fallback__',
+    imageUrl: 'https://cdn.akamai.steamstatic.com/steam/apps/1245620/header.jpg',
+    eyebrow: 'Featured This Week',
+    title: 'Elden Ring',
+    description: 'Jelajahi Lands Between, kumpulkan kekuatan runa, dan hadapi para Demigod dalam dunia terbuka yang luas.',
+    buttonText: 'Lihat Detail',
+    buttonTargetType: 'page',
+    buttonTargetPage: 'mygames',
+    buttonTargetUrl: ''
+  }],
+  version: 0
+};
+
+// ── State carousel — semua di satu tempat supaya gampang di-reset & dicegah
+// duplikat (poin permintaan: "jangan sampai ada timer menumpuk / duplicate
+// listener / carousel jalan lebih dari satu"). ──
+let _dashBannerData = [];           // array banner AKTIF yang lagi dirender, urutan = urutan tampil (dari backend)
+let _dashBannerVersion = 0;         // dipakai buat cache-bust Image URL (link), sama pola dengan versi lama
+let _dashBannerIndex = 0;           // index slide yang sedang aktif
+let _dashBannerAutoplayTimer = null;
+let _dashHomePageActive = true;     // Dashboard adalah halaman awal APP -> default true, di-update lewat setNav()
+let _dashBannerDotsBound = false;   // event delegation dot cuma dibind SEKALI (node wrapper-nya persist antar render)
+let _dashBannerTrackBound = false;  // event delegation tombol banner cuma dibind SEKALI
+
+function _dashEscapeHtml(str) {
+  return String(str == null ? '' : str).replace(/[&<>"']/g, (ch) => (
+    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]
+  ));
+}
+function _dashBannerImgSrc(b) {
+  if (!b.imageUrl) return '';
+  if (_dashBannerVersion && !b.imageUrl.startsWith('data:')) {
+    return `${b.imageUrl}${b.imageUrl.includes('?') ? '&' : '?'}v=${encodeURIComponent(_dashBannerVersion)}`;
+  }
+  return b.imageUrl;
+}
+
 async function loadDashboardBanner() {
   // Tampilkan dulu cache terakhir (kalau ada) supaya tidak ada jeda balik
   // ke fallback statis sebelum fetch selesai (terutama saat offline) —
-  // sama alasan dengan loadAppCustomization() di atas.
+  // sama alasan dengan loadAppCustomization() di atas. Kalau belum pernah
+  // ada cache sama sekali (App baru pertama kali dibuka), pakai
+  // DASHBOARD_BANNER_FALLBACK dulu supaya tidak pernah blank.
   const cached = _readDashboardBannerCache();
-  if (cached) applyDashboardBanner(cached);
+  applyDashboardBanner(cached || DASHBOARD_BANNER_FALLBACK);
   try {
     const cfg = await api('/api/dashboard-banner');
     if (cfg) applyDashboardBanner(cfg);
   } catch (e) {
-    // Offline/gagal fetch -> tetap pakai cache (kalau ada) atau markup
-    // fallback statis yang sudah ada di index.html (poin #12 permintaan:
-    // field kosong/belum pernah diatur admin TIDAK BOLEH bikin blank/crash).
+    // Offline/gagal fetch -> tetap pakai cache/fallback yang sudah dirender
+    // di atas (field kosong/belum pernah diatur admin TIDAK BOLEH bikin
+    // blank/crash).
     console.warn('[Dashboard Banner] GET /api/dashboard-banner GAGAL, tetap pakai cache/fallback:', e);
   }
 }
 
-// Data lengkap tombol (target halaman/URL) disimpan di sini, dibaca oleh
-// handleDashboardBannerClick() saat user benar-benar klik tombolnya —
-// supaya klik SELALU pakai tujuan config TERBARU yang sedang aktif di DOM,
-// bukan versi lama yang mungkin ter-capture di closure lama.
-let _dashboardBannerButtonTarget = { type: 'page', page: 'mygames', url: '' };
-
+// ── Terima config baru (dari cache, REST, atau resync WS) -> render ulang
+// carousel. Menjaga slide yang SEDANG TAMPIL berdasarkan ID banner (bukan
+// posisi array) supaya kalau Admin cuma ubah banner LAIN, slide yang lagi
+// dilihat user tidak loncat/reset tanpa alasan. Kalau banner yang sedang
+// tampil itu sendiri dihapus/dinonaktifkan Admin, otomatis clamp ke banner
+// valid terdekat — TIDAK PERNAH menampilkan slide kosong (poin permintaan).
 function applyDashboardBanner(cfg) {
-  if (!cfg || typeof cfg !== 'object') return;
+  if (!cfg || typeof cfg !== 'object' || !Array.isArray(cfg.banners)) return;
   _writeDashboardBannerCache(cfg);
 
-  const imgEl = document.getElementById('dashBannerImg');
-  const eyebrowEl = document.getElementById('dashBannerEyebrow');
-  const titleEl = document.getElementById('dashBannerTitle');
-  const descEl = document.getElementById('dashBannerDesc');
-  const btnTextEl = document.getElementById('dashBannerBtnText');
-  if (!imgEl || !eyebrowEl || !titleEl || !descEl || !btnTextEl) return;
+  const prevActiveId = _dashBannerData[_dashBannerIndex] ? _dashBannerData[_dashBannerIndex].id : null;
+  _dashBannerVersion = cfg.version || 0;
+  // Kosong total di database -> tetap pakai fallback statis (bukan slide
+  // kosong) — konsisten dengan poin "field kosong tidak boleh bikin blank".
+  _dashBannerData = cfg.banners.length ? cfg.banners.slice() : DASHBOARD_BANNER_FALLBACK.banners.slice();
 
-  // Gambar — kalau kosong/belum pernah diisi admin, JANGAN ganti src (biar
-  // tetap pakai fallback statis dari index.html, tidak pernah blank/pecah).
-  // Cache-bust dengan `version` khusus Image URL (link), sama alasan dengan
-  // _cacheBustImageUrl() App Customization — Upload (data:) tidak perlu ini.
-  if (cfg.imageUrl) {
-    const url = (cfg.version && !cfg.imageUrl.startsWith('data:'))
-      ? `${cfg.imageUrl}${cfg.imageUrl.includes('?') ? '&' : '?'}v=${encodeURIComponent(cfg.version)}`
-      : cfg.imageUrl;
-    const preload = new Image();
-    preload.onload = () => { imgEl.src = url; };
-    preload.onerror = () => { console.warn('[Dashboard Banner] Gambar gagal dimuat, banner image TIDAK berubah:', cfg.imageUrl); };
-    preload.src = url;
-  }
+  let nextIndex = _dashBannerData.findIndex(b => b.id === prevActiveId);
+  if (nextIndex === -1) nextIndex = 0;
+  nextIndex = Math.min(Math.max(nextIndex, 0), _dashBannerData.length - 1);
 
-  if (cfg.eyebrow) eyebrowEl.textContent = cfg.eyebrow;
-  if (cfg.title) titleEl.textContent = cfg.title;
-  if (cfg.description) descEl.textContent = cfg.description;
-  if (cfg.buttonText) btnTextEl.textContent = cfg.buttonText;
-
-  _dashboardBannerButtonTarget = {
-    type: cfg.buttonTargetType === 'url' ? 'url' : 'page',
-    page: cfg.buttonTargetPage || 'mygames',
-    url: cfg.buttonTargetUrl || ''
-  };
+  _dashCarouselRender(nextIndex);
 }
 
-// Dipanggil dari onclick tombol banner (lihat #dashBannerBtn di index.html).
+// ── Rebuild SEMUA slide + dot indicator dari _dashBannerData (bukan diff),
+// lalu tampilkan `activeIndex` TANPA animasi transisi (dipakai saat data
+// baru masuk — animasi geser cuma untuk perpindahan slide lewat autoplay/
+// klik dot, lihat _dashCarouselGoTo()). Rebuild penuh supaya render SELALU
+// konsisten dengan urutan array terbaru dari backend (source of truth). ──
+function _dashCarouselRender(activeIndex) {
+  const track = document.getElementById('dashBannerTrack');
+  const dotsWrap = document.getElementById('dashBannerDots');
+  if (!track) return;
+
+  track.innerHTML = _dashBannerData.map((b, i) => `
+    <div class="dash-banner-slide${i === activeIndex ? ' dash-banner-slide--active' : ''}" data-index="${i}">
+      ${b.imageUrl ? `<img class="dash-banner-slide-img" src="${_dashBannerImgSrc(b)}" alt="">` : ''}
+      <div class="dash-banner-overlay">
+        <span class="dash-banner-eyebrow">${_dashEscapeHtml(b.eyebrow)}</span>
+        <h2 class="dash-banner-title">${_dashEscapeHtml(b.title)}</h2>
+        <p class="dash-banner-desc">${_dashEscapeHtml(b.description)}</p>
+        <button class="dash-banner-btn" type="button" data-banner-action="click">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+          <span class="dash-banner-btn-text">${_dashEscapeHtml(b.buttonText || 'Lihat Detail')}</span>
+        </button>
+      </div>
+    </div>
+  `).join('');
+
+  _dashBannerIndex = activeIndex;
+  _dashCarouselBindTrackEvents(track);
+  _dashCarouselRenderDots(dotsWrap);
+  _dashCarouselRestartAutoplay();
+}
+
+// ── Dot indicator — HANYA ditampilkan kalau banner aktif > 1 (poin
+// permintaan: 1 banner = banner biasa, tanpa dot). Listener klik dibind
+// SEKALI di wrapper-nya (event delegation, node #dashBannerDots sendiri
+// TIDAK pernah diganti — cuma innerHTML-nya — jadi tidak pernah dobel
+// listener walau dirender ulang berkali-kali). ──
+function _dashCarouselRenderDots(dotsWrap) {
+  if (!dotsWrap) return;
+  if (_dashBannerData.length > 1) {
+    dotsWrap.style.display = '';
+    dotsWrap.innerHTML = _dashBannerData.map((b, i) => (
+      `<button type="button" class="dash-banner-dot${i === _dashBannerIndex ? ' active' : ''}" data-dot-index="${i}" aria-label="Banner ${i + 1}"></button>`
+    )).join('');
+  } else {
+    dotsWrap.style.display = 'none';
+    dotsWrap.innerHTML = '';
+  }
+  if (!_dashBannerDotsBound) {
+    dotsWrap.addEventListener('click', (e) => {
+      const dot = e.target.closest('.dash-banner-dot[data-dot-index]');
+      if (!dot) return;
+      const idx = Number(dot.dataset.dotIndex);
+      // Klik dot -> langsung pindah ke banner tersebut, timer autoplay
+      // di-reset (lihat akhir _dashCarouselGoTo()), tunggu 3 detik lagi
+      // sebelum autoplay berikutnya jalan (poin permintaan INDICATOR).
+      if (!Number.isNaN(idx)) _dashCarouselGoTo(idx);
+    });
+    _dashBannerDotsBound = true;
+  }
+}
+function _dashCarouselUpdateDotsActive() {
+  const dotsWrap = document.getElementById('dashBannerDots');
+  if (!dotsWrap) return;
+  dotsWrap.querySelectorAll('.dash-banner-dot').forEach((d, i) => d.classList.toggle('active', i === _dashBannerIndex));
+}
+
+// Tombol "Lihat Detail" tiap slide — event delegation di track (dibind
+// SEKALI, node track TIDAK pernah diganti walau innerHTML-nya di-rebuild).
+function _dashCarouselBindTrackEvents(track) {
+  if (_dashBannerTrackBound) return;
+  track.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-banner-action="click"]');
+    if (!btn) return;
+    const slideEl = btn.closest('.dash-banner-slide');
+    if (!slideEl) return;
+    const idx = Number(slideEl.dataset.index);
+    handleDashboardBannerClick(idx);
+  });
+  _dashBannerTrackBound = true;
+}
+
 // Tujuan tombol (halaman internal APP via setNav(), ATAU link eksternal)
-// SEPENUHNYA ditentukan config dari Admin Web (poin #5/CONTOH permintaan) —
-// TIDAK ada tujuan hardcode lagi di sini.
-function handleDashboardBannerClick() {
-  const target = _dashboardBannerButtonTarget;
-  if (target.type === 'url' && target.url) {
-    window.open(target.url, '_blank', 'noopener,noreferrer');
+// SEPENUHNYA ditentukan config banner itu dari Admin Web — TIDAK ada tujuan
+// hardcode di sini, sama filosofi dengan versi single-banner sebelumnya.
+function handleDashboardBannerClick(index) {
+  const b = _dashBannerData[index];
+  if (!b) return;
+  if (b.buttonTargetType === 'url' && b.buttonTargetUrl) {
+    window.open(b.buttonTargetUrl, '_blank', 'noopener,noreferrer');
   } else if (typeof setNav === 'function') {
-    setNav(target.page || 'mygames');
+    setNav(b.buttonTargetPage || 'mygames');
   }
 }
+
+// ── Pindah slide dengan animasi "slide horizontal halus + fade" premium
+// (poin permintaan ANIMASI — bukan bounce/zoom/rotate/flashy). Slide baru
+// diposisikan di luar frame TANPA transition dulu (loncat instan, tidak
+// ikut teranimasi), lalu di frame berikutnya transition dinyalakan & kedua
+// slide digeser ke posisi akhir — teknik FLIP sederhana biar mulus di
+// segala kecepatan device. ──
+function _dashCarouselGoTo(newIndex, opts) {
+  opts = opts || {};
+  const track = document.getElementById('dashBannerTrack');
+  const total = _dashBannerData.length;
+  if (!track || total < 2) return;
+  newIndex = ((newIndex % total) + total) % total;
+  if (newIndex === _dashBannerIndex && !opts.force) { _dashCarouselRestartAutoplay(); return; }
+
+  const slides = track.querySelectorAll('.dash-banner-slide');
+  const oldEl = slides[_dashBannerIndex];
+  const newEl = slides[newIndex];
+  if (!oldEl || !newEl || oldEl === newEl) { _dashBannerIndex = newIndex; return; }
+
+  const forward = (newIndex === (_dashBannerIndex + 1) % total);
+  const direction = opts.direction || (forward ? 1 : -1);
+
+  newEl.style.transition = 'none';
+  newEl.style.opacity = '0';
+  newEl.style.transform = `translateX(${direction * 32}px)`;
+  newEl.style.zIndex = '2';
+  newEl.classList.add('dash-banner-slide--active');
+  oldEl.style.zIndex = '1';
+  void newEl.offsetWidth; // force reflow — supaya transition:none di atas benar-benar "settle" dulu
+
+  requestAnimationFrame(() => {
+    newEl.style.transition = `transform ${DASHBOARD_BANNER_ANIM_MS}ms cubic-bezier(.4,0,.2,1), opacity ${DASHBOARD_BANNER_ANIM_MS}ms ease`;
+    oldEl.style.transition = `transform ${DASHBOARD_BANNER_ANIM_MS}ms cubic-bezier(.4,0,.2,1), opacity ${DASHBOARD_BANNER_ANIM_MS}ms ease`;
+    newEl.style.opacity = '1';
+    newEl.style.transform = 'translateX(0)';
+    oldEl.style.opacity = '0';
+    oldEl.style.transform = `translateX(${-direction * 32}px)`;
+  });
+
+  _dashBannerIndex = newIndex;
+  _dashCarouselUpdateDotsActive();
+
+  // Bersihkan slide lama setelah animasi selesai supaya statenya "netral"
+  // lagi (siap dipakai dari arah manapun kalau dia jadi target berikutnya).
+  window.setTimeout(() => {
+    if (!oldEl.isConnected) return;
+    oldEl.classList.remove('dash-banner-slide--active');
+    oldEl.style.transition = 'none';
+    oldEl.style.transform = 'translateX(0)';
+    oldEl.style.zIndex = '';
+    void oldEl.offsetWidth;
+    oldEl.style.transition = '';
+  }, DASHBOARD_BANNER_ANIM_MS + 50);
+
+  // Reset timer autoplay setiap kali slide berpindah (baik dari autoplay
+  // itu sendiri maupun klik dot manual) — poin INDICATOR: "reset timer,
+  // tunggu 3 detik sebelum autoplay berikutnya".
+  _dashCarouselRestartAutoplay();
+}
+
+// ── Autoplay — SELALU clearInterval dulu sebelum (mungkin) bikin yang baru,
+// jadi manapun pemicunya (render ulang data baru/reconnect WS/klik dot/
+// pindah halaman) TIDAK PERNAH ada 2 interval jalan bersamaan (poin
+// permintaan: "jangan pakai timer yang menumpuk/duplicate"). Autoplay hanya
+// aktif kalau: banner aktif > 1, halaman Dashboard sedang dibuka, DAN tab
+// App sedang terlihat (document.hidden === false) — supaya tidak jalan
+// sia-sia di background. ──
+function _dashCarouselRestartAutoplay() {
+  if (_dashBannerAutoplayTimer) {
+    clearInterval(_dashBannerAutoplayTimer);
+    _dashBannerAutoplayTimer = null;
+  }
+  if (_dashBannerData.length > 1 && _dashHomePageActive && !document.hidden) {
+    _dashBannerAutoplayTimer = setInterval(() => {
+      _dashCarouselGoTo(_dashBannerIndex + 1, { direction: 1 });
+    }, DASHBOARD_BANNER_AUTOPLAY_MS);
+  }
+}
+
+// Dipanggil dari setNav() (lihat blok nav di bawah file ini) — autoplay
+// cuma jalan "selama halaman Dashboard aktif" (poin permintaan AUTO SLIDE),
+// berhenti begitu user pindah ke halaman lain, jalan lagi begitu balik.
+function _dashCarouselSetHomeActive(active) {
+  _dashHomePageActive = active;
+  _dashCarouselRestartAutoplay();
+}
+
+// Tab/App di-minimize atau window kehilangan visibility -> pause autoplay
+// (hemat kerja & mencegah timer "ngebut mengejar" saat balik terlihat);
+// balik terlihat -> _dashCarouselRestartAutoplay() otomatis nyalakan lagi
+// KALAU memang masih di halaman Dashboard. Listener ini didaftar SEKALI di
+// scope module (bukan di dalam fungsi yang dipanggil berulang), jadi tidak
+// pernah dobel.
+document.addEventListener('visibilitychange', () => {
+  _dashCarouselRestartAutoplay();
+});
 
 function enterApp(user) {
   currentUser = user;
@@ -2182,8 +2393,19 @@ function resetAtProgressUI(showSteps) {
 function setAtStep(key, status) {
   const el = document.querySelector(`#atProgSteps .at-prog-step[data-step="${key}"]`);
   if (!el) return;
-  el.classList.remove('active', 'done');
-  if (status === 'active' || status === 'done') el.classList.add(status);
+  el.classList.remove('active', 'done', 'failed');
+  if (status === 'active' || status === 'done' || status === 'failed') el.classList.add(status);
+}
+
+// FIX (requirement #12 — error handling per tahap): tandai tahap yang sedang
+// berjalan ('active') sebagai gagal ('failed', ikon ✕) begitu proses Active
+// Tools error — supaya user tahu persis di tahap mana gagalnya, bukan cuma
+// pesan generik. Tahap yang SUDAH ✓ sebelumnya tidak disentuh/tidak berubah
+// jadi gagal. Aman dipanggil untuk metode PowerShell juga (tidak ada elemen
+// step yang match -> tidak melakukan apa-apa).
+function markCurrentAtStepFailed() {
+  const activeEl = document.querySelector('#atProgSteps .at-prog-step.active');
+  if (activeEl) { activeEl.classList.remove('active'); activeEl.classList.add('failed'); }
 }
 
 function setAtBarPercent(pct) {
@@ -2211,6 +2433,26 @@ function setAtMeta(text) {
 function setAtStatusText(text) {
   const el = document.getElementById('atProgStatus');
   if (el) el.textContent = text || '';
+}
+
+// FIX (popup Active Tools nampilin "i (exit code 0)." / raw log): filter baris
+// teknis/internal (exit code, process exited, stdout/stderr mentah, dst) supaya
+// TIDAK PERNAH dipakai sebagai status text user-facing. Baris log ASLI tidak
+// dihapus/diubah di mana pun — cuma tidak dipakai untuk teks yang dilihat user
+// di popup ini. Pola di bawah sengaja spesifik ke penanda teknis, bukan
+// memfilter output PowerShell secara umum (supaya progress asli dari script
+// tetap bisa tampil apa adanya kalau memang bukan noise teknis).
+const AT_RAW_TECHNICAL_LOG_PATTERNS = [
+  /exit code/i,
+  /^process (exited|closed|finished)/i,
+  /^(stdout|stderr)\b\s*:?/i,
+  /^command finished/i,
+  /^\s*at\s+.*\((.*):\d+:\d+\)\s*$/, // stack trace frame
+];
+function isRawTechnicalLogLine(line) {
+  const s = String(line || '').trim();
+  if (!s) return true;
+  return AT_RAW_TECHNICAL_LOG_PATTERNS.some(re => re.test(s));
 }
 
 function showAtAbortButton(show) {
@@ -2343,6 +2585,12 @@ async function runActiveToolsLinkInstall() {
     setAtBarIndeterminate(false);
 
     setAtStep('verify', 'active');
+    // Verifikasi tidak punya percentage granular di sistem lama (cuma satu
+    // panggilan IPC yang langsung selesai/gagal) — pakai indeterminate,
+    // BUKAN membiarkan angka % terakhir dari download nyangkut di layar
+    // (requirement #6: lebih baik "Sedang memproses..." daripada % palsu).
+    setAtBarIndeterminate(true);
+    setAtMeta('');
     setAtStatusText('Memverifikasi instalasi...');
     saveActiveToolsFiles(result.extractedFiles);
     const statusRes = await window.electronAPI.activeToolsCheckStatus({ steamPath, extractedFiles: result.extractedFiles });
@@ -2351,6 +2599,8 @@ async function runActiveToolsLinkInstall() {
     setAtStep('verify', 'done');
 
     setAtStep('activate', 'active');
+    setAtStatusText('Mengaktifkan Active Tools...');
+    setAtBarIndeterminate(true); // aktivasi juga tidak punya percentage granular
     // Baru di sini tombol boleh "naik level" jadi Install Ulang (requirement
     // #3: berdasarkan status SEBENARNYA, bukan asumsi) — TIDAK dipanggil di
     // cabang error/throw di atas, dan TIDAK PERNAH di-reset ke false lagi
@@ -2364,6 +2614,7 @@ async function runActiveToolsLinkInstall() {
   } catch (e) {
     _atDownloadListenerActive = false;
     showAtAbortButton(false);
+    markCurrentAtStepFailed();
     renderActiveToolsRequiredModal('error', e.message || 'Terjadi kesalahan saat mengaktifkan Active Tools.');
     renderActiveToolsCard();
     if (typeof logToolUsage === 'function') logToolUsage('active_tools', 'failed', e.message);
@@ -2400,7 +2651,13 @@ async function runActiveToolsPowerShell() {
   if (!_atPsListenerBound && window.electronAPI.onActiveToolsPsProgress) {
     _atPsListenerBound = true;
     window.electronAPI.onActiveToolsPsProgress(({ line }) => {
-      if (line) setAtStatusText(line.slice(0, 140));
+      // FIX (popup nampilin "i (exit code 0)." dkk): baris log PowerShell
+      // (stdout/stderr mentah + baris internal seperti exit code) TIDAK
+      // boleh langsung tampil ke user apa adanya — cuma boleh jadi status
+      // text kalau bukan baris teknis/internal. Baris teknis tetap ada di
+      // `line` aslinya (dan tetap tersimpan lengkap di log file internal
+      // lewat main.js), cuma tidak dipakai sebagai status text di sini.
+      if (line && !isRawTechnicalLogLine(line)) setAtStatusText(line.slice(0, 140));
     });
   }
 
@@ -2415,6 +2672,7 @@ async function runActiveToolsPowerShell() {
     if (typeof logToolUsage === 'function') logToolUsage('active_tools', 'success', 'method=powershell');
     return true;
   } catch (e) {
+    markCurrentAtStepFailed(); // no-op utk metode ini (tidak ada step granular) — aman dipanggil
     renderActiveToolsRequiredModal('error', e.message || 'Terjadi kesalahan saat menjalankan PowerShell command.');
     renderActiveToolsCard();
     if (typeof logToolUsage === 'function') logToolUsage('active_tools', 'failed', `method=powershell; ${e.message || ''}`);
@@ -2499,13 +2757,37 @@ function renderActiveToolsRequiredModal(state, detail) {
   } else if (state === 'success') {
     icon.classList.add('success');
     title.textContent = 'Active Tools Berhasil';
-    desc.textContent = 'Active Tools berhasil diaktifkan dan siap digunakan.';
+    desc.textContent = 'Active Tools berhasil dipasang dan diaktifkan.';
+    // FIX (checklist hilang saat success): SEBELUMNYA `progress.hidden = true`
+    // di atas berlaku juga di state ini, jadi 4 checklist (Download/Ekstrak &
+    // Pasang/Verifikasi/Aktivasi) yang baru saja selesai langsung hilang
+    // begitu masuk ke layar sukses — padahal user harusnya masih bisa melihat
+    // semua tahap sudah ✓ (lihat requirement "jangan menutup popup terlalu
+    // cepat" / mockup hasil akhir). Sekarang panel progress TETAP ditampilkan
+    // di state sukses; `atProgSteps` sendiri hanya terisi kalau memang sudah
+    // diisi checklist nyata sebelumnya (metode Link) — untuk metode PowerShell
+    // (tidak ada tahap granular) elemen ini tetap hidden karena showSteps di
+    // resetAtProgressUI() sudah false dari awal, jadi tidak ada checklist palsu
+    // yang dipaksakan tampil.
+    progress.hidden = false;
+    setAtBarIndeterminate(false);
+    setAtBarPercent(100);
+    setAtMeta('');
+    setAtStatusText('Selesai');
     cancelBtn.hidden = true;
     activateBtn.textContent = 'Tutup';
   } else if (state === 'error') {
     icon.classList.add('error');
     title.textContent = 'Instalasi Gagal';
     desc.textContent = detail || 'Terdapat masalah saat memasang Active Tools.';
+    // FIX (requirement #12 error handling): tetap tampilkan panel progress di
+    // state gagal supaya user bisa lihat tahap mana yang sudah ✓ dan tahap
+    // mana yang gagal (✕) — bukan cuma pesan generik tanpa konteks. Tahap yang
+    // sedang 'active' saat error terjadi ditandai gagal oleh
+    // markCurrentAtStepFailed() (dipanggil di catch block pemanggil), BUKAN
+    // di sini, supaya fungsi render ini tetap murni presentasi.
+    progress.hidden = false;
+    setAtBarIndeterminate(false);
     cancelBtn.textContent = 'Tutup';
     activateBtn.textContent = 'Coba Lagi';
   } else {
@@ -3838,6 +4120,13 @@ function openRealBypassDetailById(id) {
     if (page === 'transaksi' && typeof loadTransaksiPage === 'function') {
       loadTransaksiPage();
     }
+    // DASHBOARD BANNER CAROUSEL — autoplay cuma jalan "selama halaman
+    // Dashboard aktif" (poin permintaan AUTO SLIDE). Pindah ke halaman lain
+    // -> pause; balik ke Dashboard -> jalan lagi otomatis (lihat
+    // _dashCarouselSetHomeActive() di blok DASHBOARD HERO BANNER di atas).
+    if (typeof _dashCarouselSetHomeActive === 'function') {
+      _dashCarouselSetHomeActive(page === 'home');
+    }
   }
 
   /* ---------- profile menu ---------- */
@@ -4734,6 +5023,34 @@ function openRealBypassDetailById(id) {
 
   // ── Bar install inline (#installProgressBar) — adaptasi dari dlModal* APP LAMA ──
   let _installCancelRequested = false; // dibaca handleInstall() supaya tidak lapor 'gagal' kalau memang user yang batalkan
+
+  // FIX (Cancel Download Game/Bypass sebelum progress muncul): SEBELUMNYA,
+  // klik "Batal" di tahap paling awal (fetch link download dari server,
+  // deteksi Steam, cari folder game, issue watermark — SEMUA ini terjadi
+  // SEBELUM window.electronAPI.injectGame()/installBypass() benar-benar
+  // dipanggil) cuma memanggil IPC 'cancel-download', yang di main process
+  // TIDAK melakukan apa-apa kalau memang belum ada request download yang
+  // sedang berjalan (activeDownloadRequest masih null di main.js). Akibatnya
+  // sinyal cancel user "hilang" — handleInstall() tetap lanjut ke
+  // injectGame()/installBypass() begitu tahap2 di atas selesai, dan download
+  // tetap mulai seolah user tidak pernah klik Batal.
+  //
+  // Fix-nya BUKAN bikin cancellation/AbortController baru — tetap pakai
+  // 'cancel-download' yang sudah ada (dipanggil di cancelBtn.onclick di
+  // bawah, tetap jalan sebagai jaga-jaga kalau kebetulan download beneran
+  // sudah mulai). Yang ditambah cuma pengecekan flag _installCancelRequested
+  // di setiap titik SEBELUM tahap async berikutnya jalan (lihat
+  // throwIfInstallCancelled() dipanggil di handleInstall()) — begitu user
+  // klik Batal, tahap manapun yang sedang berjalan/next SELESAI TANPA PERNAH
+  // memanggil injectGame()/installBypass() sama sekali, jadi tidak perlu
+  // menunggu ada progress% dulu baru cancel "kepakai".
+  function throwIfInstallCancelled() {
+    if (_installCancelRequested) {
+      const err = new Error('Dibatalkan oleh user sebelum download dimulai.');
+      err.cancelledEarly = true;
+      throw err;
+    }
+  }
   function installBarShow(title, iconKey, accent) {
     const bar = document.getElementById('installProgressBar');
     const iconEl = document.getElementById('installProgressIcon');
@@ -4886,6 +5203,7 @@ function openRealBypassDetailById(id) {
       if (isGame) {
         // ── GAME INJECT (sama persis APP LAMA) ──
         const data = await api(`/api/games/${itemId}/download`);
+        throwIfInstallCancelled(); // lihat definisi di atas — cancel sebelum download IPC dipanggil
         if (!data.streamPath) throw new Error(data.error || 'Server tidak memberikan link download. Pastikan admin sudah mengisi data game.');
         downloadAttemptId = data.downloadAttemptId || null;
         installBarSetStage('URL diterima, mendeteksi Steam...');
@@ -4895,9 +5213,11 @@ function openRealBypassDetailById(id) {
         const streamAuthHeaders = { Authorization: `Bearer ${token}` };
 
         const steamPath = await window.electronAPI.getSteamPath();
+        throwIfInstallCancelled();
         if (!steamPath) throw new Error('Steam tidak ditemukan di PC ini. Pastikan Steam sudah terinstall dan pernah dijalankan.');
 
         const gameWatermark = await issueWatermarkSafe('game', itemId);
+        throwIfInstallCancelled(); // gate TERAKHIR — kalau lolos, baru injectGame() (download nyata) dipanggil
 
         installBarSetStage('Mengunduh & meng-inject file...');
         const result = await window.electronAPI.injectGame({
@@ -4935,6 +5255,7 @@ function openRealBypassDetailById(id) {
         // Bearer token, dipakai utk link Ryuu Generator). ──
         installBarSetStage('Mengambil link bypass...');
         const linkData = await api(`/api/bypasses/${itemId}/download-link`);
+        throwIfInstallCancelled(); // lihat definisi di atas — cancel sebelum download IPC dipanggil
         if (!linkData.directUrl && !linkData.streamPath) {
           throw new Error(linkData.error || 'Link bypass tidak ditemukan. Pastikan admin sudah mengisi link file bypass.');
         }
@@ -4945,10 +5266,12 @@ function openRealBypassDetailById(id) {
 
         installBarSetStage('Mendeteksi Steam...');
         const steamPath = await window.electronAPI.getSteamPath();
+        throwIfInstallCancelled();
         if (!steamPath) throw new Error('Steam tidak ditemukan. Pastikan Steam sudah terinstall.');
 
         installBarSetStage(`Mencari folder game (App ID: ${appId})...`);
         const folderResult = await window.electronAPI.findGameFolderByAppId({ steamPath, appId: String(appId) });
+        throwIfInstallCancelled();
         if (!folderResult.found) throw new Error(folderResult.error || `Game dengan App ID ${appId} belum terinstall di Steam. Install gamenya dulu lalu coba lagi.`);
 
         installBarSetStage('Mengunduh bypass...');
@@ -4956,6 +5279,7 @@ function openRealBypassDetailById(id) {
         const bypassDriveUrl = linkData.streamPath ? `${SERVER_URL}${linkData.streamPath}` : linkData.directUrl;
         const bypassExtraHeaders = linkData.streamPath ? { Authorization: `Bearer ${bypassToken}` } : {};
         const bypassWatermark = await issueWatermarkSafe('bypass', itemId);
+        throwIfInstallCancelled(); // gate TERAKHIR — kalau lolos, baru installBypass() (download nyata) dipanggil
 
         const result = await window.electronAPI.installBypass({
           folderPath:   folderResult.folderPath,
@@ -5000,6 +5324,19 @@ function openRealBypassDetailById(id) {
       if (typeof loadHistori === 'function' && loadHistori !== undefined) { try { loadHistori(); } catch (e) {} }
 
     } catch (e) {
+      // FIX (Cancel Download sebelum progress muncul) — cancel yang terjadi
+      // SEBELUM injectGame()/installBypass() dipanggil (lihat
+      // throwIfInstallCancelled() di atas) masuk ke sini lewat throw biasa,
+      // BUKAN lewat `result.cancelled` (karena IPC download-nya sendiri
+      // memang tidak pernah dipanggil). Ditangani SAMA PERSIS seperti cabang
+      // `result.cancelled` di atas — pesan "Download dibatalkan", BUKAN
+      // dianggap gagal/error, dan dilaporkan ke server dengan stage
+      // 'cancelled' (bukan 'failed').
+      if (e && e.cancelledEarly) {
+        installBarSetError(itemName, 'Download dibatalkan', null, true);
+        reportDownloadOutcome({ itemType, itemName, itemImage: null, downloadAttemptId, stage: 'cancelled', rollback: null, reason: 'Dibatalkan oleh user sebelum download dimulai.' });
+        return;
+      }
       installBarSetError(itemName, 'Download gagal', e.message, false);
       const failedMeta = isGame
         ? allGames.find(g => String(g._id) === String(itemId))

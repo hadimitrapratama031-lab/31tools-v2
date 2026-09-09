@@ -337,24 +337,32 @@
 
       <!-- ROW 1: Banner (kiri) + Top Installer Mingguan (kanan) — sejajar, tinggi sama -->
       <div class="dash-top-row">
-        <!-- DASHBOARD HERO BANNER — SATU banner (bukan carousel), sekarang
-             diatur penuh dari Admin Web ("Setting Banner") & realtime lewat
-             WS event 'dashboard-banner:update' existing. Isi awal di bawah
-             ini HANYA fallback statis (dirender sebelum GET pertama
-             selesai) — begitu loadDashboardBanner() di app.js jalan, semua
-             field ini ditimpa data dari backend/database (source of truth).
-             Lihat blok DASHBOARD BANNER di app.js. -->
-        <div class="dash-banner">
-          <img id="dashBannerImg" src="https://cdn.akamai.steamstatic.com/steam/apps/1245620/header.jpg" alt="Featured banner">
-          <div class="dash-banner-overlay">
-            <span class="dash-banner-eyebrow" id="dashBannerEyebrow">Featured This Week</span>
-            <h2 class="dash-banner-title" id="dashBannerTitle">Elden Ring</h2>
-            <p class="dash-banner-desc" id="dashBannerDesc">Jelajahi Lands Between, kumpulkan kekuatan runa, dan hadapi para Demigod dalam dunia terbuka yang luas.</p>
-            <button class="dash-banner-btn" id="dashBannerBtn" onclick="handleDashboardBannerClick()">
-              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-              <span id="dashBannerBtnText">Lihat Detail</span>
-            </button>
+        <!-- DASHBOARD HERO BANNER — MULTI BANNER DINAMIS (carousel kalau
+             lebih dari 1 banner aktif), diatur penuh dari Admin Web
+             ("Setting Banner") & realtime lewat WS event
+             'dashboard-banner:update' existing. Slide di dalam
+             #dashBannerTrack SEPENUHNYA dirender oleh JS (lihat blok
+             DASHBOARD BANNER di app.js) — markup di bawah ini HANYA
+             kerangka + SATU slide fallback statis (dirender sebelum GET
+             pertama/cache selesai dibaca) supaya tidak pernah blank.
+             #dashBannerDots (dot indicator) disembunyikan lewat JS kalau
+             cuma ada 1 banner aktif. -->
+        <div class="dash-banner" id="dashBannerRoot">
+          <div class="dash-banner-track" id="dashBannerTrack">
+            <div class="dash-banner-slide dash-banner-slide--active" data-index="0">
+              <img class="dash-banner-slide-img" src="https://cdn.akamai.steamstatic.com/steam/apps/1245620/header.jpg" alt="Featured banner">
+              <div class="dash-banner-overlay">
+                <span class="dash-banner-eyebrow">Featured This Week</span>
+                <h2 class="dash-banner-title">Elden Ring</h2>
+                <p class="dash-banner-desc">Jelajahi Lands Between, kumpulkan kekuatan runa, dan hadapi para Demigod dalam dunia terbuka yang luas.</p>
+                <button class="dash-banner-btn" type="button" data-banner-action="click">
+                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                  <span class="dash-banner-btn-text">Lihat Detail</span>
+                </button>
+              </div>
+            </div>
           </div>
+          <div class="dash-banner-dots" id="dashBannerDots" style="display:none;"></div>
         </div>
 
         <div class="dash-top-installer">

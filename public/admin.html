@@ -3096,152 +3096,49 @@
       </div>
     </section>
 
-    <!-- SETTING BANNER PAGE — Dashboard Hero Banner (SATU banner, BUKAN
-         carousel multi-slide). Mengikuti visual language yang SAMA PERSIS
-         dengan halaman App Customization di atas (acz-layout/card/
-         form-input/acz-pill-group/acz-divider) — bukan style baru yang beda
-         sendiri (poin desain permintaan). Backend: dashboardBannerManager.js
-         + endpoint /api/admin/dashboard-banner, realtime lewat
-         wsBroadcastAll existing (event 'dashboard-banner:update'). -->
+    <!-- SETTING BANNER PAGE — MULTI BANNER DINAMIS di Dashboard App
+         (Banner 1, 2, 3, dst, tiap banner setting sendiri: gambar, eyebrow,
+         judul, deskripsi, status aktif/nonaktif, urutan, tombol/action).
+         2+ banner aktif otomatis jadi carousel auto-slide di App (lihat
+         app/app.js). Mengikuti visual language yang SAMA dengan halaman App
+         Customization di atas (card/form-input/acz-pill-group/acz-divider)
+         — bukan style baru yang beda sendiri. Backend:
+         dashboardBannerManager.js + endpoint /api/admin/dashboard-banner
+         (body { banners: [...] }, SATU PUT = seluruh array — tambah/edit/
+         hapus/reorder/status sekaligus), realtime lewat wsBroadcastAll
+         existing (event 'dashboard-banner:update'). Lihat dbn* di admin.js.
+         PENTING: ini BUKAN sistem banner carousel lama (nav-item "Banner"
+         di atas, koleksi `banners`/Code Banner) — itu tidak disentuh. -->
     <section class="page" id="pageDashboardbanner">
       <div class="page-header">
         <div class="page-header-left">
           <div class="page-header-icon" style="background:rgba(63,182,232,.16);"><svg class="icon icon-18" style="color:#3FB6E8;"><use href="#ic-image"></use></svg></div>
           <div>
             <div class="page-header-title">Setting Banner</div>
-            <div class="page-header-desc">Atur kartu banner Dashboard App (gambar, teks, tombol). Perubahan realtime ke semua App yang sedang online — tidak perlu restart atau login ulang.</div>
+            <div class="page-header-desc">Atur banner Dashboard App — bisa lebih dari satu, tiap banner setting sendiri (gambar, teks, tombol). 2+ banner aktif otomatis jadi carousel di App. Perubahan realtime ke semua App yang sedang online — tidak perlu restart atau login ulang.</div>
           </div>
         </div>
+        <button type="button" class="btn btn-primary" id="btnAddDashboardBanner" style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
+          <svg class="icon icon-18"><use href="#ic-plus"></use></svg> Tambah Banner
+        </button>
       </div>
 
-      <div class="acz-layout">
-        <div class="acz-editor">
+      <div id="dbnEmptyState" class="dbn-empty-state" style="display:none;">
+        <svg class="icon icon-24"><use href="#ic-image"></use></svg>
+        <div>Belum ada banner. Klik <b>+ Tambah Banner</b> di atas untuk membuat banner pertama.</div>
+      </div>
 
-          <!-- ── GAMBAR ── -->
-          <div class="card">
-            <div class="card-header">
-              <div class="card-title"><svg class="icon icon-18"><use href="#ic-image"></use></svg> Gambar Banner</div>
-              <div class="card-sub">Upload file langsung, atau pakai link URL gambar.</div>
-            </div>
-            <div class="card-body">
-              <div class="dbn-current-image-row" id="dbnCurrentImageRow" style="display:none;">
-                <img id="dbnCurrentImagePreview" alt="">
-                <span class="dbn-current-image-label">Gambar yang sedang aktif saat ini</span>
-              </div>
+      <!-- Daftar card banner — di-render ulang oleh dbnRenderList() di
+           admin.js tiap ada perubahan struktural (tambah/hapus/reorder/ganti
+           gambar/ubah status). Event listener di-attach SEKALI lewat event
+           delegation ke container ini (dbnBindEvents(), guarded oleh
+           _dbnListenersBound) supaya tidak numpuk listener tiap render ulang. -->
+      <div id="dbnBannerList" class="dbn-banner-list"></div>
 
-              <div class="form-group">
-                <label class="form-label">Sumber Gambar</label>
-                <div class="acz-pill-group" id="dbnImageSourceGroup">
-                  <button type="button" class="acz-pill" data-imgsource="upload">Upload File</button>
-                  <button type="button" class="acz-pill" data-imgsource="url">Link URL</button>
-                </div>
-              </div>
-
-              <div class="form-group" id="dbnImageUploadWrap">
-                <label class="form-label">Upload Gambar <span style="color:var(--text-faint);font-weight:400;">(PNG/JPG/JPEG/WEBP, maks 5MB — drag & drop atau klik)</span></label>
-                <div class="dbn-dropzone" id="dbnDropzone">
-                  <svg class="icon icon-24"><use href="#ic-image"></use></svg>
-                  <span>Drag & drop gambar di sini, atau <u>Pilih File</u></span>
-                  <input class="form-input" type="file" id="dbnImageFile" accept="image/png,image/jpeg,image/webp" style="display:none;">
-                </div>
-              </div>
-              <div class="form-group" id="dbnImageUrlWrap" style="display:none;">
-                <label class="form-label">Link URL Gambar <span style="color:var(--text-faint);font-weight:400;">(langsung ke file gambar, diawali http:// atau https://)</span></label>
-                <input class="form-input" type="text" id="dbnImageUrlInput" placeholder="https://example.com/banner.jpg">
-                <div id="dbnImageUrlStatus" style="margin-top:6px;font-size:12px;color:var(--text-faint);min-height:16px;"></div>
-              </div>
-
-              <div id="dbnImagePreviewWrap" style="display:none;margin-top:4px;position:relative;">
-                <img id="dbnImagePreviewImg" style="width:100%;max-height:200px;object-fit:cover;border-radius:12px;border:1px solid var(--line);">
-                <button type="button" class="btn btn-danger btn-sm" style="position:absolute;top:8px;right:8px;" id="dbnRemoveImageBtn"><svg class="icon icon-16"><use href="#ic-trash-2"></use></svg> Hapus</button>
-              </div>
-            </div>
-          </div>
-
-          <!-- ── KONTEN ── -->
-          <div class="card" style="margin-top:20px;">
-            <div class="card-header">
-              <div class="card-title"><svg class="icon icon-18"><use href="#ic-scroll-text"></use></svg> Konten Banner</div>
-              <div class="card-sub">Teks yang tampil di atas gambar banner.</div>
-            </div>
-            <div class="card-body">
-              <div class="form-group">
-                <label class="form-label">Teks Atas (Eyebrow) <span style="color:var(--text-faint);font-weight:400;">(mis. "Featured This Week")</span></label>
-                <input class="form-input" type="text" id="dbnEyebrowInput" maxlength="60" placeholder="Featured This Week">
-              </div>
-              <div class="form-group">
-                <label class="form-label">Judul</label>
-                <input class="form-input" type="text" id="dbnTitleInput" maxlength="100" placeholder="Elden Ring">
-              </div>
-              <div class="form-group">
-                <label class="form-label">Deskripsi</label>
-                <textarea class="form-input" id="dbnDescInput" maxlength="240" rows="3" placeholder="Deskripsi singkat game/promo yang ditonjolkan..."></textarea>
-                <div class="dbn-char-counter" id="dbnDescCounter">0 / 240</div>
-              </div>
-            </div>
-          </div>
-
-          <!-- ── TOMBOL ── -->
-          <div class="card" style="margin-top:20px;">
-            <div class="card-header">
-              <div class="card-title"><svg class="icon icon-18"><use href="#ic-target"></use></svg> Tombol</div>
-              <div class="card-sub">Teks tombol & ke mana tombol itu membawa user saat diklik.</div>
-            </div>
-            <div class="card-body">
-              <div class="form-group">
-                <label class="form-label">Teks Tombol</label>
-                <input class="form-input" type="text" id="dbnButtonTextInput" maxlength="40" placeholder="Lihat Detail">
-              </div>
-
-              <div class="form-group">
-                <label class="form-label">Tujuan Tombol</label>
-                <div class="acz-pill-group" id="dbnTargetTypeGroup">
-                  <button type="button" class="acz-pill" data-targettype="page">Halaman APP</button>
-                  <button type="button" class="acz-pill" data-targettype="url">Link Eksternal</button>
-                </div>
-              </div>
-
-              <div class="form-group" id="dbnTargetPageWrap">
-                <label class="form-label">Pilih Halaman APP</label>
-                <select class="form-input" id="dbnTargetPageSelect"></select>
-              </div>
-              <div class="form-group" id="dbnTargetUrlWrap" style="display:none;">
-                <label class="form-label">Link Eksternal <span style="color:var(--text-faint);font-weight:400;">(diawali http:// atau https://)</span></label>
-                <input class="form-input" type="text" id="dbnTargetUrlInput" placeholder="https://example.com">
-                <div id="dbnTargetUrlStatus" style="margin-top:6px;font-size:12px;color:var(--text-faint);min-height:16px;"></div>
-              </div>
-            </div>
-          </div>
-
-          <div style="margin-top:20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
-            <button class="btn btn-primary" id="btnSaveDashboardBanner" disabled><svg class="icon icon-18"><use href="#ic-save"></use></svg> Simpan Perubahan</button>
-            <div id="dbnStatus" style="font-size:12px;color:var(--text-dim);"></div>
-          </div>
-        </div>
-
-        <!-- LIVE PREVIEW -->
-        <div class="acz-preview-col">
-          <div class="card acz-preview-card">
-            <div class="card-header">
-              <div class="card-title"><svg class="icon icon-18"><use href="#ic-monitor"></use></svg> Live Preview</div>
-              <div class="card-sub">Berubah langsung saat kamu edit, tidak perlu Save dulu.</div>
-            </div>
-            <div class="card-body">
-              <div class="dbn-preview-frame" id="dbnPreviewFrame">
-                <img class="dbn-preview-img" id="dbnPreviewImg" alt="">
-                <div class="dbn-preview-overlay">
-                  <span class="dbn-preview-eyebrow" id="dbnPreviewEyebrow">Featured This Week</span>
-                  <h2 class="dbn-preview-title" id="dbnPreviewTitle">Elden Ring</h2>
-                  <p class="dbn-preview-desc" id="dbnPreviewDesc">Jelajahi Lands Between, kumpulkan kekuatan runa...</p>
-                  <button type="button" class="dbn-preview-btn" disabled>
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                    <span id="dbnPreviewBtnText">Lihat Detail</span>
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-        </div>
+      <div style="margin-top:18px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
+        <button class="btn btn-primary" id="btnSaveDashboardBanner" disabled><svg class="icon icon-18"><use href="#ic-save"></use></svg> Simpan Perubahan</button>
+        <div id="dbnStatus" style="font-size:12px;color:var(--text-dim);"></div>
+        <div id="dbnCountStatus" style="font-size:12px;color:var(--text-faint);margin-left:auto;"></div>
       </div>
     </section>
 
