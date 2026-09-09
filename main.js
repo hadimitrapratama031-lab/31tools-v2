@@ -424,7 +424,7 @@ function downloadFileWithProgress(url, destPath, onProgress, redirectCount = 0, 
     // jadi url yang sampai ke sini seharusnya selalu server sendiri. Allowlist ini jaga-jaga
     // supaya kalau suatu saat ada bug/kebocoran URL mentah, app tetap menolak download-nya
     // alih-alih diam-diam download dari host sembarangan.
-    const OWN_SERVER_HOST = 'testingapp-production-ad91.up.railway.app'; // domain server sendiri — WAJIB, semua stream lewat sini
+    const OWN_SERVER_HOST = '31store-production.up.railway.app'; // domain server sendiri — WAJIB, semua stream lewat sini
     const ALLOWED_DOWNLOAD_HOSTS = [
       OWN_SERVER_HOST,
       'hubcapmanifest.com',                   // HubCap manifest API — untuk game inject
