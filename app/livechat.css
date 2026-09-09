@@ -1,0 +1,268 @@
+/* ══════════════════════════════════════════════════════════════════════
+   LIVE CHAT SUPPORT — Floating Button + Floating Chat Widget
+   Reuse variabel warna/style dari style.css (--accent, --panel-solid, dst)
+   supaya konsisten dengan tema App, tanpa menyentuh file style.css utama.
+   ══════════════════════════════════════════════════════════════════════ */
+
+/* Icon Live Chat — REDESIGN (permintaan tambahan: "biar lebih keliatan
+   jelas"). Sedikit lebih besar (58->60px), stroke ikon lebih tebal, ditambah
+   ring "pulse" halus (::before) supaya mata langsung tertarik tanpa berlebihan,
+   plus titik status online/offline admin langsung di icon-nya. Posisi
+   left/top di-set lewat JS (lihat repositionFab() di livechat.js) — right/
+   bottom di sini cuma fallback sebelum JS jalan. */
+.lc-fab{
+  position:fixed; right:24px; bottom:24px; z-index:7000;
+  width:60px; height:60px; border-radius:50%; border:none; cursor:pointer;
+  display:flex; align-items:center; justify-content:center;
+  background:linear-gradient(135deg,var(--accent),var(--bg-pink));
+  color:#fff; box-shadow:0 10px 30px rgba(124,92,255,0.45), 0 2px 8px rgba(0,0,0,0.3), 0 0 0 1px rgba(255,255,255,0.08) inset;
+  transition:transform .18s ease, box-shadow .18s ease;
+  touch-action:none; /* pointer drag stabil, tidak ikut gesture scroll/selection */
+}
+.lc-fab::before{
+  content:''; position:absolute; inset:-6px; border-radius:50%;
+  border:2px solid var(--accent); opacity:0; pointer-events:none;
+  animation:lcFabPulse 2.8s ease-out infinite;
+}
+@keyframes lcFabPulse{
+  0%{ opacity:.5; transform:scale(0.92); }
+  70%{ opacity:0; transform:scale(1.3); }
+  100%{ opacity:0; transform:scale(1.3); }
+}
+.lc-fab svg{ position:relative; z-index:1; }
+.lc-fab:hover{ transform:translateY(-2px) scale(1.05); box-shadow:0 14px 36px rgba(124,92,255,0.55), 0 2px 8px rgba(0,0,0,0.35); }
+.lc-fab:active{ transform:translateY(0) scale(0.97); }
+.lc-fab.lc-open{ background:linear-gradient(135deg,#2c2140,#241a3d); }
+.lc-fab.lc-open::before{ display:none; }
+/* Sedang di-drag (poin #11 — subtle, jangan animasi berlebihan). */
+.lc-fab.lc-dragging{ cursor:grabbing; transition:none; transform:scale(1.06); box-shadow:0 18px 40px rgba(124,92,255,0.5), 0 4px 14px rgba(0,0,0,0.4); }
+.lc-fab.lc-dragging::before{ display:none; }
+.lc-fab-status{
+  position:absolute; left:1px; bottom:1px; width:13px; height:13px; border-radius:50%; z-index:2;
+  border:2px solid var(--bg-purple-1, #241a3d); background:#8577a3; transition:background .2s ease;
+}
+.lc-fab-status.online{ background:#3ddc84; box-shadow:0 0 6px rgba(61,220,132,0.8); }
+.lc-fab-badge{
+  position:absolute; top:-2px; right:-2px; min-width:20px; height:20px; padding:0 5px; z-index:2;
+  border-radius:10px; background:#ff4d6d; color:#fff; font-size:11px; font-weight:800;
+  display:flex; align-items:center; justify-content:center; border:2px solid var(--bg-purple-1, #241a3d);
+  box-shadow:0 2px 6px rgba(255,77,109,0.5);
+}
+
+.lc-widget{
+  position:fixed; right:24px; bottom:96px; z-index:7001;
+  width:400px; height:560px; max-height:calc(100vh - 130px);
+  display:flex; flex-direction:column; overflow:hidden;
+  background:rgba(24,17,40,0.92); backdrop-filter:blur(22px); -webkit-backdrop-filter:blur(22px);
+  border:1px solid rgba(255,255,255,0.09); border-radius:var(--radius-lg,22px);
+  box-shadow:0 24px 70px rgba(0,0,0,0.5), 0 4px 16px rgba(0,0,0,0.3);
+  animation:lcWidgetIn .22s cubic-bezier(0.34,1.56,0.64,1);
+}
+@keyframes lcWidgetIn{
+  from{ opacity:0; transform:translateY(16px) scale(0.97); }
+  to{ opacity:1; transform:translateY(0) scale(1); }
+}
+
+/* ── Header ── */
+.lc-header{
+  display:flex; align-items:center; justify-content:space-between;
+  padding:14px 16px; border-bottom:1px solid rgba(255,255,255,0.08);
+  background:linear-gradient(135deg,rgba(124,92,255,0.18),rgba(168,59,143,0.14));
+  flex-shrink:0;
+}
+.lc-header-id{ display:flex; align-items:center; gap:10px; }
+.lc-header-avatar{
+  width:36px; height:36px; border-radius:50%; flex-shrink:0;
+  background:linear-gradient(135deg,var(--accent),var(--bg-pink));
+  color:#fff; font-size:12px; font-weight:800; letter-spacing:.3px;
+  display:flex; align-items:center; justify-content:center;
+}
+.lc-header-title{ font-size:14px; font-weight:700; color:var(--text-main); }
+.lc-header-status{ font-size:11.5px; color:var(--text-dim); display:flex; align-items:center; gap:5px; margin-top:1px; }
+.lc-dot{ width:7px; height:7px; border-radius:50%; display:inline-block; }
+.lc-dot-online{ background:#3ddc84; box-shadow:0 0 6px rgba(61,220,132,0.7); }
+.lc-dot-offline{ background:#8577a3; }
+.lc-header-actions{ display:flex; gap:4px; }
+.lc-header-btn{
+  width:28px; height:28px; border-radius:9px; border:none; cursor:pointer;
+  background:rgba(255,255,255,0.06); color:var(--text-dim);
+  display:flex; align-items:center; justify-content:center; transition:background .15s ease, color .15s ease;
+}
+.lc-header-btn:hover{ background:rgba(255,255,255,0.12); color:var(--text-main); }
+
+/* ── Body / messages ── */
+.lc-body{ flex:1; overflow-y:auto; padding:14px 14px 6px; display:flex; flex-direction:column; min-height:0; }
+.lc-body::-webkit-scrollbar{ width:6px; }
+.lc-body::-webkit-scrollbar-thumb{ background:rgba(255,255,255,0.12); border-radius:6px; }
+
+.lc-empty{ margin:auto; text-align:center; padding:30px 20px; color:var(--text-faint); }
+.lc-empty-icon{ color:var(--accent); margin-bottom:10px; }
+.lc-empty-title{ font-size:15px; font-weight:700; color:var(--text-main); margin-bottom:6px; }
+.lc-empty-sub{ font-size:12.5px; line-height:1.55; max-width:260px; margin:0 auto; }
+
+.lc-messages{ display:flex; flex-direction:column; gap:10px; }
+
+.lc-msg-row{ display:flex; flex-direction:column; max-width:82%; }
+.lc-msg-row.lc-from-user{ align-self:flex-end; align-items:flex-end; }
+.lc-msg-row.lc-from-admin{ align-self:flex-start; align-items:flex-start; }
+
+.lc-bubble{
+  padding:9px 13px; border-radius:16px; font-size:13px; line-height:1.5; word-break:break-word;
+  white-space:pre-wrap; box-shadow:0 2px 10px rgba(0,0,0,0.15);
+}
+.lc-from-user .lc-bubble{
+  background:linear-gradient(135deg,var(--accent),#6c4fe0); color:#fff; border-bottom-right-radius:5px;
+}
+.lc-from-admin .lc-bubble{
+  background:rgba(255,255,255,0.07); color:var(--text-main); border:1px solid rgba(255,255,255,0.07);
+  border-bottom-left-radius:5px;
+}
+.lc-bubble img{ max-width:220px; max-height:220px; border-radius:10px; display:block; cursor:zoom-in; margin-top:4px; }
+.lc-bubble img:first-child{ margin-top:0; }
+
+.lc-msg-meta{ display:flex; align-items:center; gap:4px; margin-top:3px; padding:0 4px; font-size:10.5px; color:var(--text-faint); }
+.lc-msg-meta svg{ width:13px; height:13px; }
+.lc-msg-meta .lc-read{ color:var(--accent-2); }
+
+/* ── Typing indicator ── */
+.lc-typing{ display:flex; gap:4px; padding:8px 13px; align-self:flex-start; }
+.lc-typing-dot{
+  width:6px; height:6px; border-radius:50%; background:var(--text-faint);
+  animation:lcTypingBounce 1.2s infinite ease-in-out;
+}
+.lc-typing-dot:nth-child(2){ animation-delay:.15s; }
+.lc-typing-dot:nth-child(3){ animation-delay:.3s; }
+@keyframes lcTypingBounce{ 0%,60%,100%{ transform:translateY(0); opacity:.5; } 30%{ transform:translateY(-4px); opacity:1; } }
+
+/* ── Loading skeleton ── */
+.lc-skeleton-row{ display:flex; flex-direction:column; gap:10px; padding:2px 0; }
+.lc-skeleton{
+  height:34px; border-radius:14px; background:linear-gradient(90deg,rgba(255,255,255,0.05),rgba(255,255,255,0.11),rgba(255,255,255,0.05));
+  background-size:200% 100%; animation:lcShimmer 1.4s infinite;
+}
+@keyframes lcShimmer{ 0%{ background-position:200% 0; } 100%{ background-position:-200% 0; } }
+
+/* ── Image preview (sebelum kirim) ── */
+.lc-image-preview{
+  margin:0 14px 8px; position:relative; width:fit-content;
+  border:1px solid rgba(255,255,255,0.1); border-radius:12px; overflow:hidden; flex-shrink:0;
+}
+.lc-image-preview img{ display:block; max-height:110px; max-width:180px; }
+.lc-image-preview button{
+  position:absolute; top:4px; right:4px; width:22px; height:22px; border-radius:50%; border:none;
+  background:rgba(0,0,0,0.6); color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer;
+}
+
+/* ── Emoji picker ── */
+.lc-emoji-picker{
+  margin:0 14px 8px; padding:8px; border-radius:12px; background:rgba(255,255,255,0.05);
+  border:1px solid rgba(255,255,255,0.08); display:grid; grid-template-columns:repeat(8,1fr); gap:2px;
+  flex-shrink:0; max-height:120px; overflow-y:auto;
+}
+.lc-emoji-picker button{
+  border:none; background:transparent; font-size:18px; padding:5px; border-radius:8px; cursor:pointer; line-height:1;
+}
+.lc-emoji-picker button:hover{ background:rgba(255,255,255,0.1); }
+
+/* ── Input bar ── */
+.lc-input-bar{
+  display:flex; align-items:flex-end; gap:6px; padding:10px 12px;
+  border-top:1px solid rgba(255,255,255,0.08); background:rgba(255,255,255,0.02); flex-shrink:0;
+}
+.lc-input-btn{
+  width:32px; height:32px; border-radius:10px; border:none; cursor:pointer; flex-shrink:0;
+  background:transparent; color:var(--text-dim); display:flex; align-items:center; justify-content:center;
+  transition:background .15s ease, color .15s ease;
+}
+.lc-input-btn:hover{ background:rgba(255,255,255,0.08); color:var(--text-main); }
+.lc-input-btn.active{ background:rgba(124,92,255,0.18); color:var(--accent); }
+.lc-input-text{
+  flex:1; resize:none; max-height:90px; padding:8px 12px; border-radius:14px;
+  background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08); color:var(--text-main);
+  font-size:13px; font-family:inherit; line-height:1.4; outline:none; transition:border-color .15s ease;
+}
+.lc-input-text:focus{ border-color:var(--accent); background:rgba(124,92,255,0.07); }
+.lc-input-text::placeholder{ color:var(--text-faint); }
+.lc-send-btn{
+  width:36px; height:36px; border-radius:12px; border:none; cursor:pointer; flex-shrink:0;
+  background:linear-gradient(135deg,var(--accent),var(--bg-pink)); color:#fff;
+  display:flex; align-items:center; justify-content:center; transition:transform .12s ease, opacity .12s ease;
+}
+.lc-send-btn:hover{ transform:scale(1.06); }
+.lc-send-btn:disabled{ opacity:.4; cursor:not-allowed; transform:none; }
+
+/* ── Popup notifikasi kecil saat widget tertutup ── */
+.lc-notif-popup{
+  position:fixed; right:24px; bottom:96px; z-index:7002; width:300px;
+  background:rgba(20,14,36,0.97); backdrop-filter:blur(18px); border:1px solid rgba(255,255,255,0.1);
+  border-radius:16px; padding:13px 14px; display:flex; gap:10px; cursor:pointer;
+  box-shadow:0 16px 44px rgba(0,0,0,0.45);
+  opacity:0; transform:translateY(10px); transition:opacity .2s ease, transform .2s ease; pointer-events:none;
+}
+.lc-notif-popup.show{ opacity:1; transform:translateY(0); pointer-events:auto; }
+.lc-notif-popup-icon{
+  width:34px; height:34px; border-radius:50%; flex-shrink:0;
+  background:linear-gradient(135deg,var(--accent),var(--bg-pink)); color:#fff;
+  display:flex; align-items:center; justify-content:center; font-size:13px; font-weight:800;
+}
+.lc-notif-popup-title{ font-size:12.5px; font-weight:700; color:var(--text-main); margin-bottom:2px; }
+.lc-notif-popup-msg{ font-size:12px; color:var(--text-dim); line-height:1.4; max-height:36px; overflow:hidden; }
+.lc-notif-popup-cta{ font-size:11px; color:var(--accent-2); font-weight:700; margin-top:5px; }
+
+/* ── Lightbox sederhana buat perbesar gambar ── */
+.lc-lightbox{
+  position:fixed; inset:0; z-index:9500; background:rgba(0,0,0,0.85);
+  display:flex; align-items:center; justify-content:center; cursor:zoom-out;
+}
+.lc-lightbox img{ max-width:90vw; max-height:90vh; border-radius:8px; box-shadow:0 20px 60px rgba(0,0,0,0.6); }
+
+/* ── Floating hint text di atas icon Live Chat — muncul otomatis 5 detik saat
+   App dibuka lalu hilang sendiri (lihat showFloatingHint()/hideFloatingHint()
+   di livechat.js). Sengaja TIDAK animasi standar (fade polos/blink) — pakai
+   fade+slide halus utk masuk/keluar, ditambah gerakan "mengambang" (floating)
+   yang sangat tipis selagi tampil, supaya terasa modern & premium tanpa
+   berlebihan/mengganggu. ── */
+.lc-hint{
+  position:fixed; right:26px; bottom:94px; z-index:6999; /* fallback awal — posisi asli di-override JS (positionHintBubble()) supaya selalu relatif ke icon Live Chat saat ini, termasuk saat sudah di-drag (poin #13) */
+  max-width:210px; padding:10px 14px;
+  background:rgba(20,14,36,0.96); backdrop-filter:blur(16px); -webkit-backdrop-filter:blur(16px);
+  border:1px solid rgba(255,255,255,0.1); border-radius:14px;
+  box-shadow:0 14px 38px rgba(0,0,0,0.4), 0 0 0 1px rgba(124,92,255,0.1);
+  color:var(--text-main); font-size:12.5px; font-weight:600; line-height:1.4;
+  text-align:center; pointer-events:none; will-change:opacity,transform,left,top;
+  opacity:0; transform:translateY(12px) scale(0.94);
+  transition:opacity .5s cubic-bezier(0.22,1,0.36,1), transform .5s cubic-bezier(0.22,1,0.36,1);
+}
+.lc-hint::after{
+  content:''; position:absolute; left:50%; bottom:-6px; width:11px; height:11px; margin-left:-5.5px;
+  background:rgba(20,14,36,0.96); border-right:1px solid rgba(255,255,255,0.1); border-bottom:1px solid rgba(255,255,255,0.1);
+  transform:rotate(45deg); border-radius:0 0 3px 0;
+}
+/* Varian "muncul di BAWAH icon" — dipakai otomatis saat icon berada di area
+   atas viewport setelah di-drag (poin #14), panah dibalik ke atas. */
+.lc-hint.lc-hint-below::after{
+  bottom:auto; top:-6px;
+  border-right:none; border-bottom:none;
+  border-left:1px solid rgba(255,255,255,0.1); border-top:1px solid rgba(255,255,255,0.1);
+  border-radius:3px 0 0 0;
+}
+.lc-hint.show{ opacity:1; transform:translateY(0) scale(1); }
+.lc-hint.hide{
+  opacity:0; transform:translateY(-6px) scale(0.96);
+  transition:opacity .4s ease, transform .4s ease;
+}
+.lc-hint.lc-hint-below.hide{ transform:translateY(6px) scale(0.96); }
+.lc-hint-inner{ display:inline-block; }
+.lc-hint.show .lc-hint-inner{ animation:lcHintFloat 2.6s ease-in-out .55s infinite; }
+
+@keyframes lcHintFloat{
+  0%,100%{ transform:translateY(0); }
+  50%{ transform:translateY(-3px); }
+}
+
+@media (max-width:460px){
+  .lc-widget{ width:calc(100vw - 24px); right:12px; }
+  .lc-fab{ right:16px; }
+  .lc-notif-popup{ right:12px; width:calc(100vw - 24px); }
+  .lc-hint{ right:14px; max-width:180px; }
+}

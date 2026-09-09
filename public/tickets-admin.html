@@ -1,0 +1,358 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ticket System — 31 Tools Admin</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Sora:wght@600;700;800&family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="admin.css">
+<link rel="stylesheet" href="tickets-admin.css">
+</head>
+<body>
+
+  <!-- ICON SPRITE — Lucide icons (outline, rounded), sama set dengan admin.html biar konsisten -->
+  <svg xmlns="http://www.w3.org/2000/svg" style="display:none" aria-hidden="true">
+<symbol id="ic-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7" />
+  <path d="M19 12H5" /></symbol>
+<symbol id="ic-ticket" viewBox="0 0 24 24"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z" />
+  <path d="M13 5v2" />
+  <path d="M13 17v2" />
+  <path d="M13 11v2" /></symbol>
+<symbol id="ic-puzzle" viewBox="0 0 24 24"><path d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z" /></symbol>
+<symbol id="ic-settings" viewBox="0 0 24 24"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.319-1.915" />
+  <circle cx="12" cy="12" r="3" /></symbol>
+<symbol id="ic-scroll-text" viewBox="0 0 24 24"><path d="M15 12h-5" />
+  <path d="M15 8h-5" />
+  <path d="M19 17V5a2 2 0 0 0-2-2H4" />
+  <path d="M8 21h12a2 2 0 0 0 2-2v-1a1 1 0 0 0-1-1H11a1 1 0 0 0-1 1v1a2 2 0 1 1-4 0V5a2 2 0 1 0-4 0v2a1 1 0 0 0 1 1h3" /></symbol>
+<symbol id="ic-clipboard-list" viewBox="0 0 24 24"><rect width="8" height="4" x="8" y="2" rx="1" ry="1" />
+  <path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2" />
+  <path d="M12 11h4" />
+  <path d="M12 16h4" />
+  <path d="M8 11h.01" />
+  <path d="M8 16h.01" /></symbol>
+<symbol id="ic-star" viewBox="0 0 24 24"><path d="M11.525 2.295a.53.53 0 0 1 .95 0l2.31 4.679a2.123 2.123 0 0 0 1.595 1.16l5.166.756a.53.53 0 0 1 .294.904l-3.736 3.638a2.123 2.123 0 0 0-.611 1.878l.882 5.14a.53.53 0 0 1-.771.56l-4.618-2.428a2.122 2.122 0 0 0-1.973 0L6.396 21.01a.53.53 0 0 1-.77-.56l.881-5.139a2.122 2.122 0 0 0-.611-1.879L2.16 9.795a.53.53 0 0 1 .294-.906l5.165-.755a2.122 2.122 0 0 0 1.597-1.16z" /></symbol>
+<symbol id="ic-refresh-cw" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+  <path d="M21 3v5h-5" />
+  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+  <path d="M8 16H3v5" /></symbol>
+<symbol id="ic-plus" viewBox="0 0 24 24"><path d="M5 12h14" />
+  <path d="M12 5v14" /></symbol>
+<symbol id="ic-save" viewBox="0 0 24 24"><path d="M15.2 3a2 2 0 0 1 1.4.6l3.8 3.8a2 2 0 0 1 .6 1.4V19a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2z" />
+  <path d="M17 21v-7a1 1 0 0 0-1-1H8a1 1 0 0 0-1 1v7" />
+  <path d="M7 3v4a1 1 0 0 0 1 1h7" /></symbol>
+<symbol id="ic-rocket" viewBox="0 0 24 24"><path d="M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5" />
+  <path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91-.09" />
+  <path d="M9 12a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.4 22.4 0 0 1-4 2z" />
+  <path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 .05 5 .05" /></symbol>
+<symbol id="ic-pencil" viewBox="0 0 24 24"><path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z" />
+  <path d="m15 5 4 4" /></symbol>
+<symbol id="ic-trash-2" viewBox="0 0 24 24"><path d="M10 11v6" />
+  <path d="M14 11v6" />
+  <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+  <path d="M3 6h18" />
+  <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /></symbol>
+<symbol id="ic-arrow-down-to-line" viewBox="0 0 24 24"><path d="M12 17V3" />
+  <path d="m6 11 6 6 6-6" />
+  <path d="M19 21H5" /></symbol>
+<symbol id="ic-lock" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+  <path d="M7 11V7a5 5 0 0 1 10 0v4" /></symbol>
+<symbol id="ic-lock-open" viewBox="0 0 24 24"><rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+  <path d="M7 11V7a5 5 0 0 1 9.9-1" /></symbol>
+<symbol id="ic-eye" viewBox="0 0 24 24"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+  <circle cx="12" cy="12" r="3" /></symbol>
+<symbol id="ic-link" viewBox="0 0 24 24"><path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
+  <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" /></symbol>
+<symbol id="ic-send" viewBox="0 0 24 24"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z" />
+  <path d="m21.854 2.147-10.94 10.939" /></symbol>
+  </svg>
+
+  <div class="bg-canvas">
+    <div class="bg-orb bg-orb-1"></div>
+    <div class="bg-orb bg-orb-2"></div>
+  </div>
+
+  <div class="shell">
+    <aside class="sidebar">
+      <div class="brand" style="display:flex;align-items:center;gap:10px;padding:0 8px 22px;">
+        <div style="width:38px;height:38px;border-radius:12px;background:var(--grad-primary);display:flex;align-items:center;justify-content:center;">
+          <svg class="icon icon-20" style="color:#fff;"><use href="#ic-ticket"></use></svg>
+        </div>
+        <div>
+          <div class="brand-name" style="font-size:15px;font-weight:800;">Ticket System</div>
+          <div style="font-size:11px;color:var(--text-dim);">31 Tools Admin</div>
+        </div>
+      </div>
+      <a href="admin.html" class="nav-item" style="margin-bottom:10px;">
+        <span class="nav-icon"><svg class="icon icon-18"><use href="#ic-arrow-left"></use></svg></span> Kembali ke Admin
+      </a>
+      <nav class="nav" id="ticketNav">
+        <button class="nav-item active" data-tab="tickets"><span class="nav-icon"><svg class="icon icon-18"><use href="#ic-ticket"></use></svg></span> Ticket Management</button>
+        <button class="nav-item" data-tab="panels"><span class="nav-icon"><svg class="icon icon-18"><use href="#ic-puzzle"></use></svg></span> Ticket Panel</button>
+        <button class="nav-item" data-tab="config"><span class="nav-icon"><svg class="icon icon-18"><use href="#ic-settings"></use></svg></span> Bot Channel Config</button>
+        <button class="nav-item" data-tab="webhooks"><span class="nav-icon"><svg class="icon icon-18"><use href="#ic-link"></use></svg></span> Notification Channel Settings</button>
+        <button class="nav-item" data-tab="transcripts"><span class="nav-icon"><svg class="icon icon-18"><use href="#ic-scroll-text"></use></svg></span> Transcript</button>
+        <button class="nav-item" data-tab="logs"><span class="nav-icon"><svg class="icon icon-18"><use href="#ic-clipboard-list"></use></svg></span> Logs</button>
+        <button class="nav-item" data-tab="ratings"><span class="nav-icon"><svg class="icon icon-18"><use href="#ic-star"></use></svg></span> Rating</button>
+      </nav>
+      <div id="botStatusBox" style="margin-top:auto;padding:12px;border-radius:12px;background:var(--glass);border:1px solid var(--line);font-size:11.5px;color:var(--text-dim);">
+        Mengecek status bot...
+      </div>
+    </aside>
+
+    <main class="main" style="flex:1;padding:26px 30px;min-width:0;">
+
+      <!-- ═══════════ TICKET MANAGEMENT ═══════════ -->
+      <section class="tab-page" id="tab-tickets">
+        <div class="page-head">
+          <div><h1>Ticket Management</h1><p>Kelola seluruh ticket Discord secara realtime.</p></div>
+          <button class="btn btn-secondary" id="btnRefreshTickets"><svg class="icon icon-16"><use href="#ic-refresh-cw"></use></svg> Refresh</button>
+        </div>
+
+        <div class="filter-bar card">
+          <div class="card-body filter-body">
+            <input type="text" class="form-input" id="fSearch" placeholder="Cari nama channel / user / kategori...">
+            <select class="form-input" id="fStatus">
+              <option value="all">Semua Status</option>
+              <option value="open">Open</option>
+              <option value="closed">Closed</option>
+              <option value="deleted">Deleted</option>
+            </select>
+            <select class="form-input" id="fCategory"><option value="all">Semua Kategori</option></select>
+            <select class="form-input" id="fStaff"><option value="all">Semua Staff</option></select>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:16px;">
+          <div class="card-body" style="padding:0;">
+            <table class="ticket-table">
+              <thead>
+                <tr><th>No.</th><th>Channel</th><th>Dibuka Oleh</th><th>Kategori</th><th>Status</th><th>Rating</th><th>Dibuat</th><th></th></tr>
+              </thead>
+              <tbody id="ticketTableBody">
+                <tr><td colspan="8" class="empty-row">Memuat data...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══════════ TICKET PANEL ═══════════ -->
+      <section class="tab-page hidden" id="tab-panels">
+        <div class="page-head">
+          <div><h1>Ticket Panel</h1><p>Buat panel ticket lengkap dengan Embed Editor visual.</p></div>
+          <button class="btn btn-primary" id="btnNewPanel"><svg class="icon icon-16"><use href="#ic-plus"></use></svg> Buat Panel</button>
+        </div>
+        <div class="panel-grid" id="panelGrid"></div>
+      </section>
+
+      <!-- ═══════════ BOT CHANNEL CONFIG ═══════════ -->
+      <section class="tab-page hidden" id="tab-config">
+        <div class="page-head"><div><h1>Bot Channel Configuration</h1><p>Tentukan server, channel, dan category default untuk ticket.</p></div></div>
+        <div class="card" style="max-width:640px;">
+          <div class="card-body">
+            <div class="form-group">
+              <label class="form-label">Discord Server (Guild)</label>
+              <select class="form-input" id="cfgGuild"></select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Category Discord Default (tempat ticket baru dibuat)</label>
+              <select class="form-input" id="cfgCategory"></select>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Support Role ID (opsional — otomatis punya akses ke tiap ticket)</label>
+              <input type="text" class="form-input" id="cfgSupportRole" placeholder="contoh: 123456789012345678">
+            </div>
+            <div class="form-group">
+              <label class="form-label">Format Nama Channel Ticket</label>
+              <input type="text" class="form-input" id="cfgNameFormat" placeholder="ticket-{username}-{number}">
+              <div class="hint-text">Placeholder tersedia: <code>{username}</code> (nama yang buka ticket), <code>{number}</code> (nomor urut), <code>{category}</code> (nama panel). Contoh: <code>{category}-{username}</code></div>
+            </div>
+            <div class="hint-text" style="margin-top:22px;">🔔 Pengaturan <b>Channel Notifikasi</b> (Transcript, Rating, Ticket Logs) dikelola sepenuhnya di halaman <b>Notification Channel Settings</b>. Bot mengirim notifikasi langsung ke channel tersebut, tanpa Webhook.</div>
+            <button class="btn btn-primary btn-block" id="btnSaveConfig"><svg class="icon icon-16"><use href="#ic-save"></use></svg> Simpan Konfigurasi</button>
+            <div class="hint-text" id="cfgHint"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══════════ NOTIFICATION CHANNEL SETTINGS ═══════════ -->
+      <section class="tab-page hidden" id="tab-webhooks">
+        <div class="page-head">
+          <div><h1>Notification Channel Settings</h1><p>Pilih channel Discord tujuan untuk tiap jenis notifikasi. Bot mengirim Embed langsung ke channel yang dipilih — tanpa Webhook.</p></div>
+        </div>
+        <div class="card" style="max-width:640px;">
+          <div class="card-body">
+            <div class="editor-section-title" style="margin-top:0;">Channel Notifikasi</div>
+            <div class="hint-text" style="margin-top:0;margin-bottom:14px;">Dropdown berisi text channel dari server Discord yang diatur di <b>Bot Channel Configuration</b>. Perubahan langsung berlaku realtime tanpa perlu restart bot.</div>
+            <div class="form-group">
+              <label class="form-label">Ticket Logs</label>
+              <select class="form-input" id="cfgLogsChannel"><option value="">— tidak dipakai —</option></select>
+              <div class="hint-text">Terkirim tiap ada aktivitas modul Ticket System (buka/tutup ticket, panel, config, dll — sama seperti tab Logs).</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Transcript</label>
+              <select class="form-input" id="cfgTranscriptChannel"><option value="">— tidak dipakai —</option></select>
+              <div class="hint-text">Terkirim saat Staff/Admin klik <b>Send Transcript</b>, lengkap dengan file transcript-nya.</div>
+            </div>
+            <div class="form-group">
+              <label class="form-label">Rating &amp; Feedback</label>
+              <select class="form-input" id="cfgRatingChannel"><option value="">— tidak dipakai —</option></select>
+              <div class="hint-text">Terkirim tiap ada <b>rating baru</b> dari user.</div>
+            </div>
+            <button class="btn btn-primary btn-block" id="btnSaveNotif"><svg class="icon icon-16"><use href="#ic-save"></use></svg> Simpan Pengaturan Notifikasi</button>
+            <div class="hint-text" id="notifHint"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ═══════════ TRANSCRIPT ═══════════ -->
+      <section class="tab-page hidden" id="tab-transcripts">
+        <div class="page-head"><div><h1>Transcript</h1><p>Riwayat transcript HTML dari ticket yang sudah pernah ditutup.</p></div></div>
+        <div class="card"><div class="card-body" style="padding:0;">
+          <table class="ticket-table">
+            <thead><tr><th>No.</th><th>Channel</th><th>Dibuka Oleh</th><th>Ditutup</th><th></th></tr></thead>
+            <tbody id="transcriptTableBody"><tr><td colspan="5" class="empty-row">Memuat data...</td></tr></tbody>
+          </table>
+        </div></div>
+      </section>
+
+      <!-- ═══════════ LOGS ═══════════ -->
+      <section class="tab-page hidden" id="tab-logs">
+        <div class="page-head"><div><h1>Logs</h1><p>Aktivitas penting modul Ticket System.</p></div></div>
+        <div class="card"><div class="card-body" style="padding:0;">
+          <table class="ticket-table">
+            <thead><tr><th>Waktu</th><th>Jenis</th><th>Aktor</th><th>Deskripsi</th></tr></thead>
+            <tbody id="logsTableBody"><tr><td colspan="4" class="empty-row">Memuat data...</td></tr></tbody>
+          </table>
+        </div></div>
+      </section>
+
+      <!-- ═══════════ RATING ═══════════ -->
+      <section class="tab-page hidden" id="tab-ratings">
+        <div class="page-head"><div><h1>Rating</h1><p>Feedback ⭐ dari user setelah ticket ditutup.</p></div></div>
+        <div class="rating-summary card">
+          <div class="card-body" style="display:flex;gap:26px;align-items:center;">
+            <div style="font-size:42px;font-weight:800;" id="ratingAvg">-</div>
+            <div>
+              <div style="font-size:20px;" id="ratingStars">-</div>
+              <div style="font-size:12px;color:var(--text-dim);" id="ratingTotal">0 rating</div>
+            </div>
+          </div>
+        </div>
+        <div class="card" style="margin-top:16px;"><div class="card-body" style="padding:0;">
+          <table class="ticket-table">
+            <thead><tr><th>Channel</th><th>Dinilai Oleh</th><th>Rating</th><th>Feedback</th><th>Waktu</th></tr></thead>
+            <tbody id="ratingsTableBody"><tr><td colspan="5" class="empty-row">Memuat data...</td></tr></tbody>
+          </table>
+        </div></div>
+      </section>
+
+    </main>
+  </div>
+
+  <!-- ═══════════ MODAL: Ticket Detail ═══════════ -->
+  <div class="modal-overlay hidden" id="modalTicketDetail">
+    <div class="modal modal-lg">
+      <div class="modal-header">
+        <div><div class="modal-title" id="tdTitle">Detail Ticket</div><div class="modal-subtitle" id="tdSubtitle"></div></div>
+        <button class="modal-close" data-close>✕</button>
+      </div>
+      <div class="modal-body" id="tdBody"></div>
+      <div class="modal-footer" id="tdFooter"></div>
+    </div>
+  </div>
+
+  <!-- ═══════════ MODAL: Konfirmasi Close Ticket ═══════════ -->
+  <div class="modal-overlay hidden" id="modalConfirmClose">
+    <div class="modal">
+      <div class="modal-header">
+        <div><div class="modal-title">Tutup Ticket</div></div>
+        <button class="modal-close" data-close>✕</button>
+      </div>
+      <div class="modal-body">
+        <p>Apakah Anda yakin ingin menutup Ticket ini?</p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" id="btnConfirmCloseNo">Tidak</button>
+        <button class="btn btn-danger" id="btnConfirmCloseYes">Ya</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ═══════════ MODAL: Panel Editor (+ Embed Editor) ═══════════ -->
+  <div class="modal-overlay hidden" id="modalPanel">
+    <div class="modal modal-xl">
+      <div class="modal-header">
+        <div><div class="modal-title" id="panelModalTitle">Buat Panel Ticket</div><div class="modal-subtitle">Embed Editor visual — realtime preview di kanan.</div></div>
+        <button class="modal-close" data-close>✕</button>
+      </div>
+      <div class="modal-body panel-editor-body">
+        <div class="panel-editor-form">
+          <div class="editor-section-title">Pengaturan Panel</div>
+          <div class="form-row">
+            <div class="form-group" style="flex:1;"><label class="form-label">Nama Panel</label><input class="form-input" id="pName" placeholder="Contoh: Support Umum"></div>
+          </div>
+          <div class="form-row">
+            <div class="form-group" style="flex:1;"><label class="form-label">Channel Tujuan Panel</label><select class="form-input" id="pChannel"></select></div>
+            <div class="form-group" style="flex:1;"><label class="form-label">Category Ticket Baru (opsional, override config default)</label><select class="form-input" id="pCategory"><option value="">— pakai default —</option></select></div>
+          </div>
+          <div class="form-group"><label class="form-label">Welcome Message (di dalam channel ticket baru)</label><textarea class="form-input" id="pWelcome" placeholder="Halo {user}, ada yang bisa kami bantu?"></textarea></div>
+
+          <div class="editor-section-title">Tombol "Buka Ticket"</div>
+          <div class="form-row">
+            <div class="form-group" style="flex:2;"><label class="form-label">Label Tombol</label><input class="form-input" id="pBtnLabel" value="Buka Ticket"></div>
+            <div class="form-group" style="flex:1;"><label class="form-label">Emoji</label><input class="form-input" id="pBtnEmoji" value="🎫"></div>
+            <div class="form-group" style="flex:1;"><label class="form-label">Warna</label>
+              <select class="form-input" id="pBtnStyle">
+                <option value="PRIMARY">Blurple</option><option value="SECONDARY">Abu-abu</option>
+                <option value="SUCCESS">Hijau</option><option value="DANGER">Merah</option>
+              </select>
+            </div>
+          </div>
+
+          <div class="editor-section-title">Embed Editor</div>
+          <div class="form-row">
+            <div class="form-group" style="flex:1;"><label class="form-label">Author Name</label><input class="form-input" id="eAuthorName"></div>
+            <div class="form-group" style="flex:1;"><label class="form-label">Author Icon URL</label><input class="form-input" id="eAuthorIcon"></div>
+          </div>
+          <div class="form-group"><label class="form-label">Title</label><input class="form-input" id="eTitle" placeholder="Butuh Bantuan?"></div>
+          <div class="form-group"><label class="form-label">Description</label><textarea class="form-input" id="eDesc" rows="3"></textarea></div>
+          <div class="form-row">
+            <div class="form-group" style="flex:1;"><label class="form-label">Embed Color</label><input type="color" class="form-input color-input" id="eColor" value="#5865f2"></div>
+            <div class="form-group" style="flex:2;"><label class="form-label">Thumbnail URL</label><input class="form-input" id="eThumb"></div>
+          </div>
+          <div class="form-group"><label class="form-label">Banner / Image URL</label><input class="form-input" id="eImage"></div>
+          <div class="form-row">
+            <div class="form-group" style="flex:1;"><label class="form-label">Footer Text</label><input class="form-input" id="eFooterText"></div>
+            <div class="form-group" style="flex:1;"><label class="form-label">Footer Icon URL</label><input class="form-input" id="eFooterIcon"></div>
+          </div>
+
+          <div class="editor-section-title" style="display:flex;align-items:center;justify-content:space-between;">
+            <span>Field Editor</span>
+            <button class="btn btn-ghost btn-sm" id="btnAddField"><svg class="icon icon-16"><use href="#ic-plus"></use></svg> Tambah Field</button>
+          </div>
+          <div id="fieldEditorList"></div>
+        </div>
+
+        <div class="panel-editor-preview">
+          <div class="editor-section-title">Preview Realtime</div>
+          <div class="discord-mock">
+            <div class="discord-mock-embed" id="mockEmbed"></div>
+            <div class="discord-mock-button" id="mockButton"></div>
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" data-close>Batal</button>
+        <button class="btn btn-secondary" id="btnSavePanel"><svg class="icon icon-16"><use href="#ic-save"></use></svg> Simpan</button>
+        <button class="btn btn-primary" id="btnPublishPanel"><svg class="icon icon-16"><use href="#ic-rocket"></use></svg> Publish ke Discord</button>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast-stack" id="toastStack"></div>
+
+  <script src="tickets-admin.js"></script>
+</body>
+</html>

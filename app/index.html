@@ -1,0 +1,2092 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Games — Game Launcher</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cinzel:wght@600;800&display=swap" rel="stylesheet">
+<!-- APP CUSTOMIZATION — Font Style (Brand Text): whitelist font tambahan yang
+     bisa dipilih Admin lewat Admin Web (lihat FONT_WHITELIST di
+     appCustomizationManager.js). Dipasang sebagai <link> Google Fonts SAMA
+     PERSIS dengan pola Inter/Cinzel di atas (sudah ada sebelumnya di App
+     ini). CSS font-family di applyAppBranding() (app.js) SELALU pakai
+     fallback stack ke font sistem ('Segoe UI'/Impact/sans-serif), jadi kalau
+     App kebetulan offline saat font ini gagal dimuat, teks branding TETAP
+     tampil (tidak pernah blank/gagal render) — App tidak bergantung penuh ke
+     internet untuk fitur ini. -->
+<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Roboto:wght@400;500;700&family=Montserrat:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&family=Orbitron:wght@400;500;600;700;800&family=Rajdhani:wght@400;500;600;700&family=Bebas+Neue&family=Oswald:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles.css">
+<!-- LIVE CHAT — CSS terpisah (livechat.css), TIDAK menyentuh styles.css utama
+     sama sekali (lihat catatan di livechat.css/livechat.js). Dimuat SETELAH
+     styles.css supaya bisa reuse variabel warna (--accent, --text-main, dst)
+     tanpa duplikasi. -->
+<link rel="stylesheet" href="livechat.css">
+</head>
+<body>
+
+<!-- Sprite ikon — dipindah dari APP LAMA, HANYA 4 simbol yang dipakai overlay
+     Login (buildLoginOverlay() di app.js). Tidak menyentuh sistem ikon APP
+     DEMO yang sudah ada (inline <svg> per elemen) di tempat lain. -->
+<svg style="display:none" aria-hidden="true">
+  <symbol id="ic-gamepad-2" viewBox="0 0 24 24"><line x1="6" x2="10" y1="11" y2="11" />
+  <line x1="8" x2="8" y1="9" y2="13" />
+  <line x1="15" x2="15.01" y1="12" y2="12" />
+  <line x1="18" x2="18.01" y1="10" y2="10" />
+  <path d="M17.32 5H6.68a4 4 0 0 0-3.978 3.59c-.006.052-.01.101-.017.152C2.604 9.416 2 14.456 2 16a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.414-1.414A2 2 0 0 1 9.828 16h4.344a2 2 0 0 1 1.414.586L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-1.545-.604-6.584-.685-7.258-.007-.05-.011-.1-.017-.151A4 4 0 0 0 17.32 5z" /></symbol>
+  <symbol id="ic-loader-circle" viewBox="0 0 24 24"><path d="M21 12a9 9 0 1 1-6.219-8.56" /></symbol>
+  <symbol id="ic-message-circle" viewBox="0 0 24 24"><path d="M2.992 16.342a2 2 0 0 1 .094 1.167l-1.065 3.29a1 1 0 0 0 1.236 1.168l3.413-.998a2 2 0 0 1 1.099.092 10 10 0 1 0-4.777-4.719" /></symbol>
+  <symbol id="ic-zap" viewBox="0 0 24 24"><path d="M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z" /></symbol>
+  <!-- Ikon tambahan — halaman "Beli Paket" (lihat blok BELI PAKET di app.js/styles.css) -->
+  <symbol id="ic-check" viewBox="0 0 24 24"><path d="M20 6 9 17l-5-5" /></symbol>
+  <symbol id="ic-minus" viewBox="0 0 24 24"><path d="M5 12h14" /></symbol>
+  <symbol id="ic-x" viewBox="0 0 24 24"><path d="M18 6 6 18" />
+  <path d="m6 6 12 12" /></symbol>
+  <symbol id="ic-globe" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" />
+  <path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20" />
+  <path d="M2 12h20" /></symbol>
+  <symbol id="ic-crown" viewBox="0 0 24 24"><path d="M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519l-2.834 10.246a1 1 0 0 1-.956.734H5.81a1 1 0 0 1-.957-.734L2.02 6.02a.5.5 0 0 1 .798-.519l4.276 3.664a1 1 0 0 0 1.516-.294z" />
+  <path d="M5 21h14" /></symbol>
+  <symbol id="ic-gem" viewBox="0 0 24 24"><path d="M6 3h12l4 6-10 13L2 9Z" />
+  <path d="M11 3 8 9l4 13 4-13-3-6" />
+  <path d="M2 9h20" /></symbol>
+  <symbol id="ic-shield-check" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" />
+  <path d="m9 12 2 2 4-4" /></symbol>
+  <symbol id="ic-timer" viewBox="0 0 24 24"><line x1="10" x2="14" y1="2" y2="2" />
+  <line x1="12" x2="15" y1="14" y2="11" />
+  <circle cx="12" cy="14" r="8" /></symbol>
+  <symbol id="ic-circle-check-big" viewBox="0 0 24 24"><path d="M21.801 10A10 10 0 1 1 17 3.335" />
+  <path d="m9 11 3 3L22 4" /></symbol>
+  <symbol id="ic-circle-x" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" />
+  <path d="m15 9-6 6" />
+  <path d="m9 9 6 6" /></symbol>
+  <symbol id="ic-shopping-cart" viewBox="0 0 24 24"><circle cx="8" cy="21" r="1" />
+  <circle cx="19" cy="21" r="1" />
+  <path d="M2.05 2.05h2l2.66 12.42a2 2 0 0 0 2 1.58h9.78a2 2 0 0 0 1.95-1.57l1.65-7.43H5.12" /></symbol>
+  <symbol id="ic-refresh-cw" viewBox="0 0 24 24"><path d="M3 12a9 9 0 0 1 9-9 9.75 9.75 0 0 1 6.74 2.74L21 8" />
+  <path d="M21 3v5h-5" />
+  <path d="M21 12a9 9 0 0 1-9 9 9.75 9.75 0 0 1-6.74-2.74L3 16" />
+  <path d="M8 16H3v5" /></symbol>
+  <symbol id="ic-arrow-down-to-line" viewBox="0 0 24 24"><path d="M12 17V3" />
+  <path d="m6 11 6 6 6-6" />
+  <path d="M19 21H5" /></symbol>
+  <symbol id="ic-sparkles" viewBox="0 0 24 24"><path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z" />
+  <path d="M20 2v4" />
+  <path d="M22 4h-4" />
+  <circle cx="4" cy="20" r="2" /></symbol>
+  <!-- Ikon tambahan — Fitur A (Notifikasi Akses Paket) & Fitur B/C (Transaksi),
+       lihat blok "PACKAGE ACCESS MODAL" dan "HALAMAN TRANSAKSI" di app.js/styles.css. -->
+  <symbol id="ic-receipt" viewBox="0 0 24 24"><path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z" />
+  <path d="M8 7h8" /><path d="M8 11h8" /><path d="M8 15h5" /></symbol>
+  <!-- Redeem Voucher — lihat blok "REDEEM VOUCHER" di app.js/styles.css (menu
+       Profile Dropdown + popup premium). Backend/model voucher 100% existing
+       (voucherManager.js, endpoint /api/voucher/*), ikon ini murni tambahan
+       visual, bukan bagian dari sistem voucher itu sendiri. -->
+  <symbol id="ic-ticket" viewBox="0 0 24 24"><path d="M2 9a3 3 0 0 1 0 6v2a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-2a3 3 0 0 1 0-6V7a2 2 0 0 0-2-2H4a2 2 0 0 0-2 2Z" />
+  <path d="M13 5v2" /><path d="M13 17v2" /><path d="M13 11v2" /></symbol>
+  <symbol id="ic-wallet" viewBox="0 0 24 24"><path d="M19 7V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2" />
+  <path d="M18 12a2 2 0 0 0 0 4h4v-4Z" /></symbol>
+  <symbol id="ic-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2" ry="2" />
+  <path d="M7 11V7a5 5 0 0 1 10 0v4" /></symbol>
+  <symbol id="ic-inbox" viewBox="0 0 24 24"><path d="M22 12h-6l-2 3h-4l-2-3H2" />
+  <path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11Z" /></symbol>
+  <symbol id="ic-eye" viewBox="0 0 24 24"><path d="M2.062 12.348a1 1 0 0 1 0-.696 10.75 10.75 0 0 1 19.876 0 1 1 0 0 1 0 .696 10.75 10.75 0 0 1-19.876 0" />
+  <circle cx="12" cy="12" r="3" /></symbol>
+  <!-- Ikon tambahan — halaman "Tutorial" (lihat blok TUTORIAL di app.js/styles.css).
+       Data Tutorial 100% dari GET /api/tutorials existing (server.js), TIDAK
+       ada API/backend/Socket baru — ikon ini murni UI. -->
+  <symbol id="ic-book-open" viewBox="0 0 24 24"><path d="M12 7v14" />
+  <path d="M3 18a1 1 0 0 1-1-1V4a1 1 0 0 1 1-1h5a4 4 0 0 1 4 4 4 4 0 0 1 4-4h5a1 1 0 0 1 1 1v13a1 1 0 0 1-1 1h-6a3 3 0 0 0-3 3 3 3 0 0 0-3-3z" /></symbol>
+  <symbol id="ic-play" viewBox="0 0 24 24"><polygon points="6 3 20 12 6 21 6 3" /></symbol>
+  <!-- MARKETPLACE — 5 simbol tambahan (shopping-bag/tag/package/arrow-left/
+       arrow-right), dipindah APA ADANYA (path sama persis) dari sprite ikon
+       APP LAMA (PROJECT_SEBELUMNYA/app/index.html) — TIDAK menyentuh/mengubah
+       symbol yang sudah ada di atas. Dipakai halaman Marketplace baru
+       (#page-marketplace/#page-marketplace-detail) di bawah. -->
+  <symbol id="ic-shopping-bag" viewBox="0 0 24 24"><path d="M16 10a4 4 0 0 1-8 0" />
+  <path d="M3.103 6.034h17.794" />
+  <path d="M3.4 5.467a2 2 0 0 0-.4 1.2V20a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6.667a2 2 0 0 0-.4-1.2l-2-2.667A2 2 0 0 0 17 2H7a2 2 0 0 0-1.6.8z" /></symbol>
+  <symbol id="ic-tag" viewBox="0 0 24 24"><path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z" />
+  <circle cx="7.5" cy="7.5" r=".5" fill="currentColor" /></symbol>
+  <symbol id="ic-package" viewBox="0 0 24 24"><path d="M11 21.73a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16V8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73z" />
+  <path d="M12 22V12" />
+  <polyline points="3.29 7 12 12 20.71 7" />
+  <path d="m7.5 4.27 9 5.15" /></symbol>
+  <symbol id="ic-arrow-left" viewBox="0 0 24 24"><path d="m12 19-7-7 7-7" />
+  <path d="M19 12H5" /></symbol>
+  <symbol id="ic-arrow-right" viewBox="0 0 24 24"><path d="M5 12h14" />
+  <path d="m12 5 7 7-7 7" /></symbol>
+  <!-- STEAM ACCOUNT — 3 simbol tambahan (log-in/key-round/copy), dipakai tombol
+       "LOGIN AKUN", modal progres auto-login, dan fallback kredensial manual
+       (lihat blok STEAM ACCOUNT di app.js/styles.css di bawah). -->
+  <symbol id="ic-log-in" viewBox="0 0 24 24"><path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4" />
+  <polyline points="10 17 15 12 10 7" />
+  <line x1="15" x2="3" y1="12" y2="12" /></symbol>
+  <symbol id="ic-key-round" viewBox="0 0 24 24"><path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z" />
+  <circle cx="16.5" cy="7.5" r=".5" fill="currentColor" /></symbol>
+  <symbol id="ic-copy" viewBox="0 0 24 24"><rect width="14" height="14" x="8" y="8" rx="2" ry="2" />
+  <path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2" /></symbol>
+  <!-- LIVE CHAT — 4 simbol tambahan (send/image/smile/check-check) dipakai
+       Floating Chat Widget (lihat livechat.js/livechat.css). Icon Lucide
+       standar, TIDAK pakai emoji sesuai poin #2/#8 permintaan ("jangan
+       menggunakan emoji sebagai icon utama/tombol"). -->
+  <symbol id="ic-send" viewBox="0 0 24 24"><path d="M14.536 21.686a.5.5 0 0 0 .937-.024l6.5-19a.496.496 0 0 0-.635-.635l-19 6.5a.5.5 0 0 0-.024.937l7.93 3.18a2 2 0 0 1 1.112 1.11z" />
+  <path d="m21.854 2.147-10.94 10.939" /></symbol>
+  <symbol id="ic-image" viewBox="0 0 24 24"><rect width="18" height="18" x="3" y="3" rx="2" ry="2" />
+  <circle cx="9" cy="9" r="2" />
+  <path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21" /></symbol>
+  <symbol id="ic-smile" viewBox="0 0 24 24"><circle cx="12" cy="12" r="10" />
+  <path d="M8 14s1.5 2 4 2 4-2 4-2" />
+  <line x1="9" x2="9.01" y1="9" y2="9" />
+  <line x1="15" x2="15.01" y1="9" y2="9" /></symbol>
+  <symbol id="ic-check-check" viewBox="0 0 24 24"><path d="M18 6 7 17l-5-5" />
+  <path d="m22 10-7.5 7.5L13 16" /></symbol>
+</svg>
+
+<!-- APP CUSTOMIZATION — GLOBAL background layer (Solid/Gradient/Image + Overlay),
+     diatur dari Admin Web (App Customization) & realtime lewat WebSocket
+     'app-customization:update' (lihat applyAppBackground() di app.js).
+     FIX: dipindah keluar dari #app (dulu ditaruh sebagai child #app dengan
+     display:none sebelum login, jadi TIDAK PERNAH terlihat di layar Login,
+     dan #nvLoginOverlay punya background hardcode sendiri yang terpisah
+     total). Sekarang jadi SATU-SATUNYA sumber background, sibling dari #app
+     & #nvLoginOverlay, position:fixed menutupi seluruh window — dengan
+     begitu Login, Dashboard, Games, Bypass, dst — SEMUA halaman — otomatis
+     memakai background global yang sama tanpa perlu sistem background
+     kedua. Elemen/id (#appBgLayer/#appBgImage/#appBgOverlay) & JS
+     applyAppBackground() yang menulisinya TIDAK berubah sama sekali, cuma
+     posisi DOM & CSS positioning-nya yang disesuaikan (lihat .app-bg-layer
+     di styles.css). -->
+<div class="app-bg-layer" id="appBgLayer" aria-hidden="true">
+  <div class="app-bg-image" id="appBgImage"></div>
+  <div class="app-bg-overlay" id="appBgOverlay"></div>
+</div>
+
+<!-- AUTO DARK READING OVERLAY — layer TERPISAH dari #appBgOverlay di atas
+     (yang itu punya Admin Web untuk tint Image mode). Layer ini otomatis
+     digelapkan HANYA saat halaman aktif memang panjang/penuh text (Tutorial
+     baca, Detail Game/Bypass, Detail Marketplace — lihat
+     READING_OVERLAY_PAGE_IDS & initReadingOverlay() di app.js), supaya text
+     lebih nyaman dibaca di atas background terang. Sibling #appBgLayer &
+     #app, position:fixed, pointer-events:none, DI BAWAH #app (seluruh UI
+     asli: navbar/sidebar/modal/notification/Live Chat/floating button tetap
+     terang total, tidak pernah ikut gelap). -->
+<div class="app-reading-overlay" id="appReadingOverlay" aria-hidden="true"></div>
+
+<div class="app maximized" id="app" style="display:none">
+
+  <!-- Title bar -->
+  <div class="titlebar">
+    <!-- APP CUSTOMIZATION — branding (logo + teks, default "31 Tools"), kiri
+         atas titlebar, diatur dari Admin Web & realtime (applyAppBranding()
+         di app.js). Belum ada component branding sebelumnya di App Demo ini
+         (titlebar cuma berisi window controls), jadi ditambahkan baru
+         di sini, BUKAN duplikat dari component lain. -->
+    <div class="app-brand" id="appBrand">
+      <img class="app-brand-logo" id="appBrandLogo" alt="" style="display:none;">
+      <span class="app-brand-text" id="appBrandText">31 Tools</span>
+    </div>
+    <div class="win-controls">
+      <button class="min" title="Minimize" aria-label="Minimize" onclick="minimizeApp()">
+        <svg viewBox="0 0 12 12" fill="none"><line x1="1" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1.2"/></svg>
+      </button>
+      <button class="max" title="Maximize" aria-label="Maximize / Restore" onclick="toggleMaximize()">
+        <svg id="maxIcon" viewBox="0 0 12 12" fill="none"><rect x="1.5" y="1.5" width="9" height="9" stroke="currentColor" stroke-width="1.2"/></svg>
+      </button>
+      <button class="close" title="Close" aria-label="Close" onclick="requestClose()">
+        <svg viewBox="0 0 12 12" fill="none"><line x1="1" y1="1" x2="11" y2="11" stroke="currentColor" stroke-width="1.2"/><line x1="11" y1="1" x2="1" y2="11" stroke="currentColor" stroke-width="1.2"/></svg>
+      </button>
+    </div>
+  </div>
+
+  <!-- Nav bar -->
+  <div class="navbar">
+    <div class="nav-items" role="tablist">
+      <button class="nav-item" data-page="home" onclick="setNav('home')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
+        <span>Dashboard</span>
+      </button>
+      <button class="nav-item active" data-page="mygames" onclick="setNav('mygames')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17.3 5H6.7a4 4 0 0 0-4 3.6c-.3 2.7-.7 6.7-.7 7.4a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.4-1.4A2 2 0 0 1 9.8 16h4.4a2 2 0 0 1 1.4.6L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-.7-.4-4.7-.7-7.4a4 4 0 0 0-4-3.6z"/><line x1="6.2" y1="10.2" x2="6.2" y2="13.2"/><line x1="4.7" y1="11.7" x2="7.7" y2="11.7"/><circle cx="14.5" cy="10.8" r=".55" fill="currentColor" stroke="none"/><circle cx="16.8" cy="9" r=".55" fill="currentColor" stroke="none"/><circle cx="16.8" cy="12.6" r=".55" fill="currentColor" stroke="none"/><circle cx="19.1" cy="10.8" r=".55" fill="currentColor" stroke="none"/></svg>
+        <span>Games</span>
+      </button>
+      <button class="nav-item" data-page="explore" onclick="setNav('explore')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="11" width="16" height="10" rx="2.2"/><path d="M7 11V7a5 5 0 0 1 9.5-2.3"/></svg>
+        <span>Bypass</span>
+      </button>
+      <button class="nav-item" data-page="belipaket" onclick="setNav('belipaket')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>
+        <span>Beli Paket</span>
+      </button>
+      <!-- MARKETPLACE — nav baru, halaman utama produk digital. Backend
+           (marketplaceManager.js/marketplaceOrderManager.js/klikqrisManager.js
+           existing, route /api/marketplace/* di server.js) TIDAK diubah sama
+           sekali. Fokus pengerjaan SEKARANG cuma bagian "Marketplace"; bagian
+           "Steam Account" (konsep 2 tab di halaman ini) SENGAJA belum dibuat —
+           lihat #mktSectionTabs di bawah untuk struktur yang sudah disiapkan
+           supaya tab itu bisa ditambah nanti tanpa merombak Marketplace. -->
+      <button class="nav-item" data-page="marketplace" onclick="setNav('marketplace')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-shopping-bag"></use></svg>
+        <span>Marketplace</span>
+      </button>
+      <!-- REQUEST GAME — nav baru, tepat setelah Marketplace. Backend
+           (endpoint /api/requests/*, gameRequest_settings di server.js, HubCap
+           browse existing) TIDAK diubah sama sekali — App ini murni
+           menyambungkan UI ke sistem yang sudah aktif & sudah dipakai Admin
+           Web (halaman "Request Game" Admin Web sudah matang duluan). -->
+      <button class="nav-item" data-page="requestgame" onclick="setNav('requestgame')">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-send"></use></svg>
+        <span>Request Game</span>
+      </button>
+    </div>
+
+    <span class="nav-divider" aria-hidden="true"></span>
+
+    <button class="profile" id="profileBtn" aria-haspopup="true" aria-expanded="false" onclick="toggleProfileMenu()">
+      <span class="avatar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg>
+      </span>
+      <span class="profile-info">
+        <span class="profile-name">John Smith</span>
+        <span class="profile-meta">
+          <!-- ADMIN badge — role dari backend existing (user.role === 'admin'),
+               lihat applyAdminBadge()/ADMIN_BADGE di app.js. Menempati slot yang
+               sama dengan #profilePkgBadge: keduanya saling exclusive lewat
+               [hidden], TIDAK PERNAH ditampilkan bersamaan (satu user.role,
+               lihat catatan di styles.css). -->
+          <span class="admin-badge" id="profileAdminBadge" title="Role Admin" hidden></span>
+          <span class="pkg-badge" data-tier="public" id="profilePkgBadge" title="Paket kamu saat ini"></span>
+          <span class="profile-expiry" id="profileExpiry" hidden>
+            <svg class="ic-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <svg class="ic-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16.5 14.5"/></svg>
+            <span class="profile-expiry-text" id="profileExpiryText"></span>
+          </span>
+        </span>
+      </span>
+      <svg class="chevron" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="6 9 12 15 18 9"/></svg>
+    </button>
+  </div>
+  <div class="profile-menu" id="profileMenu">
+    <button class="pm-close" id="pmCloseBtn" type="button" aria-label="Tutup menu" onclick="closeProfileMenu()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+    </button>
+    <div class="profile-menu-header">
+      <span class="pm-avatar" id="pmAvatar">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg>
+      </span>
+      <div class="pm-header-info">
+        <div class="pm-name" id="pmName">John Smith</div>
+        <div class="pm-pkg-row">
+          <span class="admin-badge" id="pmAdminBadge" title="Role Admin" hidden></span>
+          <span class="pkg-badge" data-tier="public" id="pmPkgBadge"></span>
+        </div>
+        <div class="pm-expiry" id="pmExpiry" hidden>
+          <svg class="ic-calendar" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="18" rx="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+          <svg class="ic-clock" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16.5 14.5"/></svg>
+          <span class="pm-expiry-text" id="pmExpiryText"></span>
+        </div>
+      </div>
+    </div>
+    <div class="profile-menu-divider"></div>
+    <button class="pm-item" onclick="alert('Profile page — not part of this demo.')">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+      <span>Profile</span>
+    </button>
+    <button class="pm-item" data-page="setting" onclick="setNav('setting'); toggleProfileMenu();">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+      <span>Settings</span>
+    </button>
+    <button class="pm-item" data-page="transaksi" onclick="setNav('transaksi'); toggleProfileMenu();">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-receipt"></use></svg>
+      <span>Transaksi</span>
+    </button>
+    <!-- Redeem Voucher — buka popup (BUKAN halaman baru), lihat #redeemVoucherModal
+         di bawah & blok "REDEEM VOUCHER" di app.js/styles.css. Sistem voucher
+         (data/validasi/redeem/reward) 100% existing (voucherManager.js +
+         endpoint /api/voucher/* di server.js), popup ini cuma UI-nya di App. -->
+    <button class="pm-item" data-page="redeem-voucher" onclick="openRedeemVoucherModal(); toggleProfileMenu();">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-ticket"></use></svg>
+      <span>Redeem Voucher</span>
+    </button>
+    <!-- Tutorial — data 100% dari Admin Web/backend existing (GET /api/tutorials),
+         realtime lewat WebSocket 'tutorials:update' existing. Lihat blok
+         TUTORIAL di app.js/styles.css & #page-tutorial di bawah. -->
+    <button class="pm-item" data-page="tutorial" onclick="setNav('tutorial'); toggleProfileMenu();">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-book-open"></use></svg>
+      <span>Tutorial</span>
+    </button>
+    <button class="pm-item" data-page="history" onclick="setNav('history'); toggleProfileMenu();">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.5 8A9 9 0 1 1 5 16.5"/><path d="M12 7.5v5l4 2.2"/></svg>
+      <span>History</span>
+    </button>
+    <div class="profile-menu-divider"></div>
+    <button class="pm-item pm-danger" onclick="signOut()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
+      <span>Sign out</span>
+    </button>
+  </div>
+
+  <!-- Home page — Dashboard: Banner + Top Installer Mingguan (1 row, sejajar,
+       tinggi sama), lalu New Games di bawahnya. -->
+  <section class="page" id="page-home">
+    <div class="page-header">
+      <h1 class="page-title">Dashboard</h1>
+    </div>
+
+    <div class="grid-wrap dash-wrap">
+
+      <!-- ROW 1: Banner (kiri) + Top Installer Mingguan (kanan) — sejajar, tinggi sama -->
+      <div class="dash-top-row">
+        <!-- DASHBOARD HERO BANNER — SATU banner (bukan carousel), sekarang
+             diatur penuh dari Admin Web ("Setting Banner") & realtime lewat
+             WS event 'dashboard-banner:update' existing. Isi awal di bawah
+             ini HANYA fallback statis (dirender sebelum GET pertama
+             selesai) — begitu loadDashboardBanner() di app.js jalan, semua
+             field ini ditimpa data dari backend/database (source of truth).
+             Lihat blok DASHBOARD BANNER di app.js. -->
+        <div class="dash-banner">
+          <img id="dashBannerImg" src="https://cdn.akamai.steamstatic.com/steam/apps/1245620/header.jpg" alt="Featured banner">
+          <div class="dash-banner-overlay">
+            <span class="dash-banner-eyebrow" id="dashBannerEyebrow">Featured This Week</span>
+            <h2 class="dash-banner-title" id="dashBannerTitle">Elden Ring</h2>
+            <p class="dash-banner-desc" id="dashBannerDesc">Jelajahi Lands Between, kumpulkan kekuatan runa, dan hadapi para Demigod dalam dunia terbuka yang luas.</p>
+            <button class="dash-banner-btn" id="dashBannerBtn" onclick="handleDashboardBannerClick()">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+              <span id="dashBannerBtnText">Lihat Detail</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="dash-top-installer">
+          <div class="dash-ti-header">
+            <span class="dash-ti-icon">🏆</span>
+            <div class="dash-ti-heading">
+              <span class="dash-ti-title">Top Installer</span>
+              <span class="dash-ti-sub">Mingguan</span>
+            </div>
+          </div>
+          <div class="dash-ti-list">
+            <div class="dash-ti-row dash-ti-row--1">
+              <span class="dash-ti-rank">01</span>
+              <span class="dash-ti-avatar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg></span>
+              <span class="dash-ti-info">
+                <span class="dash-ti-name">Rafael K.</span>
+                <span class="dash-ti-count">24 Install</span>
+              </span>
+            </div>
+            <div class="dash-ti-row dash-ti-row--2">
+              <span class="dash-ti-rank">02</span>
+              <span class="dash-ti-avatar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg></span>
+              <span class="dash-ti-info">
+                <span class="dash-ti-name">Siti N.</span>
+                <span class="dash-ti-count">19 Install</span>
+              </span>
+            </div>
+            <div class="dash-ti-row dash-ti-row--3">
+              <span class="dash-ti-rank">03</span>
+              <span class="dash-ti-avatar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg></span>
+              <span class="dash-ti-info">
+                <span class="dash-ti-name">Budi P.</span>
+                <span class="dash-ti-count">15 Install</span>
+              </span>
+            </div>
+            <div class="dash-ti-row">
+              <span class="dash-ti-rank">04</span>
+              <span class="dash-ti-avatar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg></span>
+              <span class="dash-ti-info">
+                <span class="dash-ti-name">Maya A.</span>
+                <span class="dash-ti-count">11 Install</span>
+              </span>
+            </div>
+            <div class="dash-ti-row">
+              <span class="dash-ti-rank">05</span>
+              <span class="dash-ti-avatar"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="8" r="4"/><path d="M4 20c0-4 4-6 8-6s8 2 8 6"/></svg></span>
+              <span class="dash-ti-info">
+                <span class="dash-ti-name">Doni S.</span>
+                <span class="dash-ti-count">8 Install</span>
+              </span>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- ROW 2: New Games — di bawah row Banner + Top Installer.
+           Grid ini SENGAJA dikosongkan di HTML: isinya di-generate otomatis
+           oleh populateDashboardNewGames() di app.js dengan meng-clone
+           SEMUA game yang ada di halaman Games (#page-mygames .grid), supaya
+           Dashboard selalu sinkron 1:1 dengan katalog Games — tidak ada
+           daftar game terpisah yang harus di-update manual di dua tempat. -->
+      <div class="dash-section-head">
+        <div class="dash-section-title"><span class="dash-section-icon">✦</span> New Games</div>
+        <button class="dash-see-all" onclick="setNav('mygames')">See All <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg></button>
+      </div>
+      <div class="grid dash-new-games-grid" id="dashNewGamesGrid"></div>
+    </div>
+  </section>
+
+  <!-- Games page -->
+  <section class="page active" id="page-mygames">
+    <div class="page-header">
+      <h1 class="page-title">Games</h1>
+    </div>
+
+    <!-- Toolbar 2 baris: Baris 1 = Search + Package (sejajar, dipisah .sep),
+         Baris 2 = Mode filter sendiri di bawahnya. Cardless, tanpa
+         view-toggle (Grid/List view sudah dihapus — Game Grid adalah
+         satu-satunya tampilan). Label "Package"/"Mode" sengaja dihilangkan —
+         filter-group.segmented sendiri sudah cukup jelas tanpa label
+         section. -->
+    <div class="toolbar toolbar-2row">
+      <div class="toolbar-row">
+        <div class="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" placeholder="Search Game...">
+        </div>
+
+        <div class="sep"></div>
+
+        <div class="filter-group segmented" data-filter-group="difficulty">
+          <button class="filter-tab active" data-value="all"><span class="ftab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg></span><span class="ftab-label">All</span></button>
+          <button class="filter-tab" data-value="Gratis"><span class="ftab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg></span><span class="ftab-label">Gratis</span></button>
+          <button class="filter-tab" data-value="Gold"><span class="ftab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519l-2.834 10.246a1 1 0 0 1-.956.734H5.81a1 1 0 0 1-.957-.734L2.02 6.02a.5.5 0 0 1 .798-.519l4.276 3.664a1 1 0 0 0 1.516-.294z"/><path d="M5 21h14"/></svg></span><span class="ftab-label">Gold</span></button>
+          <button class="filter-tab" data-value="Platinum"><span class="ftab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12l4 6-10 13L2 9Z"/><path d="M11 3 8 9l4 13 4-13-3-6"/><path d="M2 9h20"/></svg></span><span class="ftab-label">Platinum</span></button>
+        </div>
+      </div>
+
+      <!-- Mode filter — 3 pilihan eksplisit (Semua Mode/Online/Offline),
+           exclusive-selection, klik "Semua Mode" langsung kembali ke semua
+           game (tidak perlu klik dua kali). Lihat initGameListPage() di
+           app.js — logic filtering TIDAK diubah, hanya posisi baris ini
+           yang dipindah ke bawah Search+Package. -->
+      <div class="toolbar-row">
+        <div class="filter-group segmented" data-filter-group="mode">
+          <button class="filter-tab active" data-value="all"><span class="ftab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg></span><span class="ftab-label">Semua Mode</span></button>
+          <button class="filter-tab" data-value="online"><span class="ftab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8.82a15 15 0 0 1 20 0"/><path d="M5 12.86a10 10 0 0 1 14 0"/><path d="M8.5 16.9a5 5 0 0 1 7 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg></span><span class="ftab-label">Online Mode</span></button>
+          <button class="filter-tab" data-value="offline"><span class="ftab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 16.9a5 5 0 0 1 7 0"/><path d="M2 8.82a15 15 0 0 1 4.17-2.65M19.83 6.17A15 15 0 0 1 22 8.82M5 12.86a10 10 0 0 1 2.24-1.94m9.52 0A10 10 0 0 1 19 12.86"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/><line x1="1" y1="1" x2="23" y2="23"/></svg></span><span class="ftab-label">Offline Mode</span></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-wrap">
+      <div class="grid">
+      </div>
+
+      <div class="empty-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <div>No games match your filters.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Bypass page -->
+  <section class="page" id="page-explore">
+    <div class="page-header">
+      <h1 class="page-title">Bypass</h1>
+    </div>
+
+    <!-- Toolbar 2 baris: Baris 1 = Search + Package (sejajar, dipisah .sep),
+         Baris 2 = Mode filter sendiri di bawahnya. Cardless, tanpa
+         view-toggle (Grid/List view sudah dihapus — Game Grid adalah
+         satu-satunya tampilan). Label "Package"/"Mode" sengaja dihilangkan —
+         filter-group.segmented sendiri sudah cukup jelas tanpa label
+         section. -->
+    <div class="toolbar toolbar-2row">
+      <div class="toolbar-row">
+        <div class="search">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" placeholder="Search Game...">
+        </div>
+
+        <div class="sep"></div>
+
+        <div class="filter-group segmented" data-filter-group="difficulty">
+          <button class="filter-tab active" data-value="all"><span class="ftab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg></span><span class="ftab-label">All</span></button>
+          <button class="filter-tab" data-value="Gratis"><span class="ftab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/></svg></span><span class="ftab-label">Gratis</span></button>
+          <button class="filter-tab" data-value="Gold"><span class="ftab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M11.562 3.266a.5.5 0 0 1 .876 0L15.39 8.87a1 1 0 0 0 1.516.294L21.183 5.5a.5.5 0 0 1 .798.519l-2.834 10.246a1 1 0 0 1-.956.734H5.81a1 1 0 0 1-.957-.734L2.02 6.02a.5.5 0 0 1 .798-.519l4.276 3.664a1 1 0 0 0 1.516-.294z"/><path d="M5 21h14"/></svg></span><span class="ftab-label">Gold</span></button>
+          <button class="filter-tab" data-value="Platinum"><span class="ftab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12l4 6-10 13L2 9Z"/><path d="M11 3 8 9l4 13 4-13-3-6"/><path d="M2 9h20"/></svg></span><span class="ftab-label">Platinum</span></button>
+        </div>
+      </div>
+
+      <!-- Mode filter — 3 pilihan eksplisit (Semua Mode/Online/Offline),
+           exclusive-selection, klik "Semua Mode" langsung kembali ke semua
+           bypass (tidak perlu klik dua kali). Lihat initGameListPage() di
+           app.js — logic filtering TIDAK diubah, hanya posisi baris ini
+           yang dipindah ke bawah Search+Package. -->
+      <div class="toolbar-row">
+        <div class="filter-group segmented" data-filter-group="mode">
+          <button class="filter-tab active" data-value="all"><span class="ftab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m12.83 2.18a2 2 0 0 0-1.66 0L2.6 6.08a1 1 0 0 0 0 1.83l8.58 3.91a2 2 0 0 0 1.66 0l8.58-3.9a1 1 0 0 0 0-1.83Z"/><path d="m22 17.65-9.17 4.16a2 2 0 0 1-1.66 0L2 17.65"/><path d="m22 12.65-9.17 4.16a2 2 0 0 1-1.66 0L2 12.65"/></svg></span><span class="ftab-label">Semua Mode</span></button>
+          <button class="filter-tab" data-value="online"><span class="ftab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2 8.82a15 15 0 0 1 20 0"/><path d="M5 12.86a10 10 0 0 1 14 0"/><path d="M8.5 16.9a5 5 0 0 1 7 0"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/></svg></span><span class="ftab-label">Online Mode</span></button>
+          <button class="filter-tab" data-value="offline"><span class="ftab-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M8.5 16.9a5 5 0 0 1 7 0"/><path d="M2 8.82a15 15 0 0 1 4.17-2.65M19.83 6.17A15 15 0 0 1 22 8.82M5 12.86a10 10 0 0 1 2.24-1.94m9.52 0A10 10 0 0 1 19 12.86"/><circle cx="12" cy="20" r="1" fill="currentColor" stroke="none"/><line x1="1" y1="1" x2="23" y2="23"/></svg></span><span class="ftab-label">Offline Mode</span></button>
+        </div>
+      </div>
+    </div>
+
+    <div class="grid-wrap">
+      <div class="grid">
+      </div>
+      <div class="empty-state">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <div>No bypasses match your filters.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Histori page -->
+  <section class="page" id="page-history">
+    <div class="page-header">
+      <h1 class="page-title">Histori</h1>
+    </div>
+
+    <div class="stats-row">
+      <div class="stat-card" data-stat="total">
+        <span class="stat-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>
+        </span>
+        <span class="stat-body">
+          <span class="stat-label">Total Histori</span>
+          <span class="stat-value" id="statTotal">0</span>
+        </span>
+      </div>
+      <div class="stat-card" data-stat="games">
+        <span class="stat-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="8" width="20" height="10" rx="5"/><line x1="6" y1="11" x2="6" y2="15"/><line x1="4" y1="13" x2="8" y2="13"/><circle cx="16" cy="11" r=".6"/><circle cx="18" cy="14" r=".6"/></svg>
+        </span>
+        <span class="stat-body">
+          <span class="stat-label">Game Diinstall</span>
+          <span class="stat-value" id="statGames">0</span>
+        </span>
+      </div>
+      <div class="stat-card" data-stat="bypass">
+        <span class="stat-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 4 14h6l-1 8 9-12h-6l1-8z"/></svg>
+        </span>
+        <span class="stat-body">
+          <span class="stat-label">Bypass Dipakai</span>
+          <span class="stat-value" id="statBypass">0</span>
+        </span>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" id="historySearchInput" placeholder="Search history...">
+      </div>
+
+      <div class="sep"></div>
+
+      <div class="filter-group" data-filter-group="type" id="historyFilterGroup">
+        <button class="filter-tab active" data-value="all">All</button>
+        <button class="filter-tab" data-value="game">Games</button>
+        <button class="filter-tab" data-value="bypass">Bypass</button>
+      </div>
+
+      <div class="toolbar-spacer"></div>
+
+      <div class="sort-toggle" id="historySortToggle">
+        <span class="sort-caption">Sort</span>
+        <button class="active" data-sort="newest">Newest</button>
+        <button data-sort="oldest">Oldest</button>
+      </div>
+    </div>
+
+    <div class="grid-wrap">
+      <div class="history-list" id="historyList"></div>
+
+      <div class="empty-state" id="historyEmptyState">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 3v5h5"/><path d="M3.05 13A9 9 0 1 0 6 5.3L3 8"/><path d="M12 7v5l4 2"/></svg>
+        <div class="empty-title">Belum Ada Histori</div>
+        <div class="empty-sub">Game atau bypass yang kamu install akan muncul di sini.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Halaman "Transaksi" — riwayat SELURUH transaksi user via KlikQRIS
+       (Upgrade Paket, Steam Account, Marketplace, Gold Trial), diambil dari
+       GET /api/transactions (endpoint gabungan yang SUDAH ADA di server.js,
+       menggabungkan transactionManager/steamAccountOrderManager/
+       marketplaceOrderManager/goldTrialManager — TIDAK ada backend baru
+       dibuat di sini, murni disambungkan ke UI). Style premium "Gaming
+       Transaction Center" — prefix class "tx-" baru, reuse token warna/
+       radius yang sama dengan halaman lain (lihat blok TRANSAKSI di
+       styles.css). Update realtime lewat WS 'transaction:update' yang
+       sudah ada (lihat handleTxRealtimeUpdate() di app.js). -->
+  <section class="page tx-page" id="page-transaksi">
+    <div class="page-header">
+      <h1 class="page-title">Transaksi</h1>
+      <p class="page-sub">Kelola dan lihat seluruh riwayat pembelian paket kamu.</p>
+    </div>
+
+    <div class="stats-row tx-summary" id="txSummaryRow">
+      <div class="stat-card" data-stat="total">
+        <span class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-receipt"></use></svg></span>
+        <span class="stat-body">
+          <span class="stat-label">Total Transaksi</span>
+          <span class="stat-value" id="txStatTotal">0</span>
+        </span>
+      </div>
+      <div class="stat-card tx-stat-success" data-stat="success">
+        <span class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-circle-check-big"></use></svg></span>
+        <span class="stat-body">
+          <span class="stat-label">Berhasil</span>
+          <span class="stat-value" id="txStatSuccess">0</span>
+        </span>
+      </div>
+      <div class="stat-card tx-stat-pending" data-stat="pending">
+        <span class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-timer"></use></svg></span>
+        <span class="stat-body">
+          <span class="stat-label">Pending</span>
+          <span class="stat-value" id="txStatPending">0</span>
+        </span>
+      </div>
+      <div class="stat-card tx-stat-failed" data-stat="failed">
+        <span class="stat-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-circle-x"></use></svg></span>
+        <span class="stat-body">
+          <span class="stat-label">Gagal / Dibatalkan</span>
+          <span class="stat-value" id="txStatFailed">0</span>
+        </span>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <div class="filter-group" data-filter-group="status" id="txFilterGroup">
+        <button class="filter-tab active" data-value="all">Semua</button>
+        <button class="filter-tab" data-value="completed">Berhasil</button>
+        <button class="filter-tab" data-value="pending">Menunggu</button>
+        <button class="filter-tab" data-value="cancelled">Dibatalkan</button>
+        <button class="filter-tab" data-value="expired">Kedaluwarsa</button>
+        <button class="filter-tab" data-value="failed">Gagal</button>
+      </div>
+      <div class="toolbar-spacer"></div>
+      <button class="tx-refresh-btn" id="txRefreshBtn" title="Muat ulang">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-refresh-cw"></use></svg>
+      </button>
+    </div>
+
+    <div class="grid-wrap">
+      <div class="tx-list" id="txList"></div>
+
+      <div class="empty-state" id="txEmptyState">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><use href="#ic-inbox"></use></svg>
+        <div class="empty-title">Belum Ada Transaksi</div>
+        <div class="empty-sub">Kamu belum memiliki riwayat pembelian paket.</div>
+        <button class="tx-empty-cta" onclick="setNav('belipaket')">Lihat Paket</button>
+      </div>
+
+      <div class="empty-state" id="txFilterEmptyState" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><use href="#ic-receipt"></use></svg>
+        <div class="empty-title">Tidak Ada Transaksi</div>
+        <div class="empty-sub">Tidak ada transaksi dengan status ini.</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Modal Detail Transaksi — dibuka dari tombol "Lihat Detail" tiap kartu
+       transaksi. Isinya murni menampilkan field yang SUDAH dikirim
+       GET /api/transactions/:orderId (transactionManager.publicTransaction,
+       lihat transactionManager.js) — TIDAK ADA endpoint/data baru. Payment
+       reference/QR/secret sensitif TIDAK ditampilkan di sini. -->
+  <div class="confirm-overlay pmc-modal-backdrop" id="txDetailModal">
+    <div class="confirm-box pmc-confirm-box tx-detail-box">
+      <button type="button" class="pmc-modal-close" id="txDetailCloseBtn" aria-label="Tutup">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-x"></use></svg>
+      </button>
+      <div class="pmc-confirm-title">Detail Transaksi</div>
+      <div class="tx-detail-status" id="txDetailStatusBadge">—</div>
+      <div class="pmc-confirm-row"><span>Transaction ID</span><strong id="txDetailOrderId">—</strong></div>
+      <div class="pmc-confirm-row"><span>Item</span><strong id="txDetailItem">—</strong></div>
+      <div class="pmc-confirm-row" id="txDetailDurationRow" hidden><span>Durasi</span><strong id="txDetailDuration">—</strong></div>
+      <div class="pmc-confirm-row"><span>Harga</span><strong id="txDetailPrice">—</strong></div>
+      <div class="pmc-confirm-row"><span>Metode Pembayaran</span><strong id="txDetailMethod">—</strong></div>
+      <div class="pmc-confirm-row"><span>Tanggal</span><strong id="txDetailDate">—</strong></div>
+      <div class="pmc-confirm-row" id="txDetailActiveRow" hidden><span>Masa Aktif Sampai</span><strong id="txDetailActiveUntil">—</strong></div>
+      <div class="pmc-confirm-divider"></div>
+      <div class="tx-detail-note" id="txDetailNote" hidden></div>
+      <button type="button" class="btn-primary pmc-confirm-btn" id="txDetailContinueBtn" hidden>Lanjutkan Pembayaran</button>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════════
+       HALAMAN TUTORIAL — 100% data dari sistem Tutorial EXISTING
+       (GET /api/tutorials, dikelola Admin Web di menu "Kelola Tutorial",
+       lihat blok TUTORIAL di server.js — backend TIDAK diubah/dibuat baru).
+       Realtime lewat WebSocket 'tutorials:update' yang SUDAH di-broadcast
+       server setiap Admin Tambah/Edit/Hapus/ubah status Tutorial (lihat
+       connectRealtime() & loadTutorials() di app.js) — tidak ada polling,
+       tidak ada API/Socket baru. TIDAK ADA data dummy/hardcode di sini,
+       semua container di bawah kosong dan diisi murni oleh JS dari server.
+       ══════════════════════════════════════════════════════════════════════ -->
+  <section class="page" id="page-tutorial">
+    <div class="page-header">
+      <h1 class="page-title">Tutorial</h1>
+      <p class="page-sub" id="tutorialPageSub">Panduan lengkap penggunaan 31 Tools</p>
+    </div>
+
+    <!-- "Semua Tutorial" (dulu "Tutorial Terbaru") — satu-satunya section di
+         halaman ini, menampilkan 6 tutorial published paling baru (data
+         sudah terurut createdAt desc dari server, lihat GET /api/tutorials).
+         Search & filter kategori serta section grid lama sudah dihapus.
+         Disembunyikan lewat [hidden] kalau datanya kosong (loadTutorials()
+         di app.js), bukan ditampilkan kosong tanpa isi. -->
+    <section class="tut-section" id="tutorialLatestSection" hidden>
+      <div class="tut-section-head">
+        <h3 class="tut-section-title">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-book-open"></use></svg>
+          Semua Tutorial
+        </h3>
+      </div>
+      <div class="tutorial-row" id="tutorialLatestRow"></div>
+    </section>
+  </section>
+
+  <!-- Halaman detail baca Tutorial — dibuka dari kartu di #page-tutorial.
+       `content` (rich text) sudah disanitasi KETAT di server sebelum
+       disimpan (sanitizeTutorialContent, lihat server.js — <script>/
+       <iframe>/<img> dibuang total di sana), jadi aman dirender sebagai
+       innerHTML di sini tanpa proses tambahan. -->
+  <section class="page" id="page-tutorial-detail">
+    <div class="detail-back-row">
+      <button class="detail-back-btn" id="tutorialDetailBackBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+        <span>Kembali ke Tutorial</span>
+      </button>
+    </div>
+
+    <div class="detail-body tut-reader-body">
+      <div class="tut-reader">
+        <span class="tut-reader-category" id="tutorialDetailCategory">Umum</span>
+        <h1 class="detail-title tut-reader-title" id="tutorialDetailTitle">—</h1>
+        <p class="tut-reader-desc" id="tutorialDetailDesc" hidden></p>
+
+        <!-- Video (YouTube/TikTok) — di-embed pakai <webview> (BUKAN <iframe>),
+             sesuai konfigurasi webviewTag:true & UA spoofing yang SUDAH ADA
+             di main.js khusus untuk video tutorial ini. Aspect ratio 16:9
+             dikunci lewat CSS (.tut-video-inner), tidak pernah menggeser
+             layout/navbar/sidebar saat video dimainkan. -->
+        <div class="tut-video-wrap" id="tutorialDetailVideoWrap" hidden>
+          <div class="tut-video-inner">
+            <webview id="tutorialDetailVideo" src="" allowpopups useragent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"></webview>
+          </div>
+        </div>
+
+        <div class="tut-image-wrap" id="tutorialDetailImageWrap" hidden>
+          <img id="tutorialDetailImage" alt="">
+        </div>
+
+        <div class="tut-reader-content" id="tutorialDetailContent"></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Beli Paket page — REDESIGN TOTAL v2 ("Premium Membership Center",
+       prefix class baru "pmc-" menggantikan "pkg-" lama sepenuhnya, struktur
+       layout dibangun ulang dari nol — lihat blok "PREMIUM MEMBERSHIP
+       CENTER" di styles.css). Backend TIDAK disentuh: endpoint
+       /api/packages, /api/packages/purchase, /api/packages/purchase/:orderId
+       (/cancel) dan modul packageManager.js/klikqrisManager.js/
+       transactionManager.js dipakai apa adanya. Semua harga/durasi/benefit
+       di bawah ini murni hasil render JS dari data server (Admin Web =
+       source of truth) — TIDAK ADA yang di-hardcode di HTML. -->
+  <section class="page pmc-page" id="page-belipaket">
+    <div class="pmc-page-body" id="pkgPageBody">
+      <!-- Header — kicker + judul di kiri, status paket user ASLI (lihat
+           renderPkgStatusWidget() di app.js) sebagai chip ringkas di kanan,
+           sejajar dalam satu baris supaya header tetap ringkas/tidak makan
+           tempat (lihat requirement header tidak boleh tinggi). -->
+      <div class="pmc-header">
+        <div class="pmc-header-text">
+          <div class="pmc-kicker">Membership</div>
+          <h1 class="pmc-title">Beli Paket</h1>
+          <p class="pmc-subtitle">Pilih akses yang sesuai dengan kebutuhan gaming kamu.</p>
+        </div>
+        <div class="pmc-status" id="pkgStatusCard">
+          <span class="pmc-status-icon" id="pkgStatusIcon"></span>
+          <div class="pmc-status-text">
+            <span class="pmc-status-label">Paket Saat Ini</span>
+            <span class="pmc-status-tier" id="pkgStatusTier">—</span>
+          </div>
+          <span class="pmc-status-expiry" id="pkgStatusExpiry"></span>
+        </div>
+      </div>
+
+      <div class="pmc-error" id="pkgLoadError" hidden></div>
+
+      <!-- ADMIN ACCOUNT PANEL — pengganti seluruh flow pembelian (Gold Trial +
+           3 kartu paket + Bandingkan Paket) untuk role Admin (lihat
+           applyPkgAdminState() di app.js). Admin BUKAN bagian hierarchy
+           Gratis/Gold/Platinum jadi tidak ditawari beli/upgrade apa pun di
+           sini — panel ini murni informasi, tidak ada CTA pembelian. -->
+      <div class="pmc-admin-panel" id="pkgAdminPanel" hidden>
+        <span class="pmc-admin-panel-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M3.85 8.62a4 4 0 0 1 4.78-4.77 4 4 0 0 1 6.74 0 4 4 0 0 1 4.78 4.78 4 4 0 0 1 0 6.74 4 4 0 0 1-4.77 4.78 4 4 0 0 1-6.75 0 4 4 0 0 1-4.78-4.77 4 4 0 0 1 0-6.76Z"/><path d="m9 12 2 2 4-4"/></svg>
+        </span>
+        <div class="pmc-admin-panel-text">
+          <div class="pmc-admin-panel-title">ADMIN ACCOUNT</div>
+          <div class="pmc-admin-panel-desc">Akun ini menggunakan akses Administrator, bukan paket Gratis/Gold/Platinum. Seluruh akses game &amp; bypass mengikuti permission Admin dari backend.</div>
+        </div>
+      </div>
+
+      <!-- GOLD TRIAL — kartu promo/status, diisi renderGoldTrialCard() di
+           app.js. Disembunyikan (hidden) sampai data /api/gold-trial
+           menentukan ada sesuatu yang layak ditampilkan (tawaran eligible
+           ATAU trial yang sedang aktif) — lihat blok "GOLD TRIAL" di app.js. -->
+      <div class="gt-card" id="goldTrialCard" hidden>
+        <span class="gt-card-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-crown"></use></svg></span>
+        <div class="gt-card-body">
+          <div class="gt-card-kicker">Gold Trial</div>
+          <div class="gt-card-title" id="gtCardTitle">Coba Gold, Gratis</div>
+          <div class="gt-card-desc" id="gtCardDesc">Akses Gold secara gratis selama masa trial berlangsung.</div>
+          <div class="gt-card-meta" id="gtCardMeta" hidden></div>
+        </div>
+        <button type="button" class="gt-claim-btn" id="gtClaimBtn" onclick="claimGoldTrial()">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-sparkles"></use></svg>
+          <span id="gtClaimBtnLabel">Claim Gold Trial</span>
+        </button>
+      </div>
+
+      <!-- 3 kartu paket — diisi renderPkgCards() di app.js (skeleton dulu
+           selagi loading, lihat .pmc-tier--skeleton di styles.css). Grid
+           dijamin sejajar (align-items:stretch) & lebar terkontrol
+           (max-width + minmax) supaya tidak raksasa di layar lebar. -->
+      <div class="pmc-tiers" id="pkgCardsGrid">
+        <div class="pmc-tier pmc-tier--skeleton"></div>
+        <div class="pmc-tier pmc-tier--skeleton"></div>
+        <div class="pmc-tier pmc-tier--skeleton"></div>
+      </div>
+
+      <!-- Bandingkan Paket — diisi renderPkgCompare() di app.js dari data
+           package config yang sama, bukan tabel/data baru. -->
+      <div class="pmc-compare" id="pkgCompare" hidden>
+        <h2 class="pmc-compare-title">Bandingkan Paket</h2>
+        <div class="pmc-compare-table" id="pkgCompareTable"></div>
+      </div>
+
+      <!-- Strip layanan — statis (bukan data paket), murni memberi kesan
+           "premium service", ditata sebagai satu strip bergaris pemisah
+           (bukan 3 kotak terpisah) supaya terasa lebih editorial. -->
+      <div class="pmc-perks">
+        <div class="pmc-perk">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-shopping-cart"></use></svg>
+          <div>
+            <div class="pmc-perk-h">Pembayaran Mudah</div>
+            <div class="pmc-perk-p">QRIS — semua e-wallet &amp; m-banking</div>
+          </div>
+        </div>
+        <div class="pmc-perk">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-sparkles"></use></svg>
+          <div>
+            <div class="pmc-perk-h">Aktivasi Otomatis</div>
+            <div class="pmc-perk-p">Langsung aktif setelah pembayaran terkonfirmasi</div>
+          </div>
+        </div>
+        <div class="pmc-perk">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-shield-check"></use></svg>
+          <div>
+            <div class="pmc-perk-h">Transaksi Aman</div>
+            <div class="pmc-perk-p">Status diverifikasi otomatis oleh sistem</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Modal Konfirmasi Pembelian — muncul saat klik Upgrade/Perpanjang di
+       salah satu kartu paket. Satu-satunya metode pembayaran adalah QRIS
+       (klikqrisManager PAYMENT_METHODS cuma punya 1 opsi), jadi TIDAK ada
+       langkah "pilih metode" terpisah — langsung konfirmasi lalu buat order. -->
+  <div class="confirm-overlay pmc-modal-backdrop" id="pkgConfirmModal">
+    <div class="confirm-box pmc-confirm-box">
+      <button type="button" class="pmc-modal-close" id="pkgConfirmCloseBtn" aria-label="Tutup">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-x"></use></svg>
+      </button>
+      <div class="pmc-confirm-title">Konfirmasi Pembelian</div>
+      <div class="pmc-confirm-row"><span>Paket</span><strong id="pkgConfirmTier">—</strong></div>
+      <div class="pmc-confirm-row"><span>Durasi</span><strong id="pkgConfirmDuration">—</strong></div>
+      <div class="pmc-confirm-row"><span>Harga</span><strong id="pkgConfirmPrice">—</strong></div>
+      <div class="pmc-confirm-divider"></div>
+      <div class="pmc-confirm-row pmc-confirm-total"><span>Total</span><strong id="pkgConfirmTotal">—</strong></div>
+      <div class="pmc-confirm-method">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-shopping-cart"></use></svg>
+        <span>QRIS (semua e-wallet &amp; m-banking)</span>
+      </div>
+      <button type="button" class="btn-primary pmc-confirm-btn" id="pkgConfirmPayBtn">Bayar Sekarang</button>
+    </div>
+  </div>
+
+  <!-- Modal Pembayaran QRIS — status realtime (WS 'transaction:update')
+       + fallback polling tiap 5 detik (lihat blok BELI PAKET di app.js).
+       Frontend TIDAK PERNAH mengubah role/status sendiri — semua state di
+       sini murni menampilkan apa yang dikirim backend. -->
+  <div class="confirm-overlay pmc-modal-backdrop" id="pkgPaymentModal">
+    <div class="confirm-box pmc-pay-box">
+      <div class="pmc-pay-head">
+        <div class="pmc-pay-title" id="pkgPayTitle">Pembayaran QRIS</div>
+        <div class="pmc-pay-status" id="pkgPayStatusBadge">Menunggu Pembayaran</div>
+      </div>
+      <div class="pmc-pay-order">Order ID: <span id="pkgPayOrderId">—</span></div>
+
+      <div class="pmc-pay-qr" id="pkgPayQrWrap">
+        <img id="pkgPayQrImg" alt="QRIS" />
+        <div class="pmc-pay-qr-error" id="pkgPayQrError" hidden>QR tidak tersedia — coba refresh atau buat transaksi baru.</div>
+        <div class="pmc-pay-amount" id="pkgPayAmount">—</div>
+        <div class="pmc-pay-hint">Scan QRIS menggunakan aplikasi pembayaran kamu.</div>
+        <div class="pmc-pay-countdown"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-timer"></use></svg> <span id="pkgPayCountdown">10:00</span></div>
+        <div class="pmc-pay-warn">Jangan tutup halaman ini sampai pembayaran selesai.</div>
+      </div>
+
+      <div class="pmc-pay-result" id="pkgPayResult" hidden></div>
+
+      <div class="pmc-pay-actions">
+        <button type="button" class="pmc-pay-cancel" id="pkgPayCancelBtn">Batalkan Pembayaran</button>
+        <button type="button" class="btn-primary pmc-pay-close" id="pkgPayCloseBtn" hidden>Tutup</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Fitur A — Modal "Akses Paket Diperlukan". Muncul SEBELUM download/install
+       dimulai (dipanggil dari renderDetailActions() di app.js, MENGGANTIKAN
+       showToast() teks biasa yang sebelumnya dipakai untuk kasus ini — access
+       check-nya SENDIRI tidak berubah sama sekali, masih 100% pakai
+       hasAccess()/isMktGated()/mktOrRoleLocked() yang sudah ada). Accent warna
+       (netral/gold/platinum) diatur lewat atribut data-accent, diisi dinamis
+       oleh openPackageAccessModal() — TIDAK ADA teks "Gold"/"Platinum" yang
+       di-hardcode di HTML ini. -->
+  <div class="confirm-overlay pmc-modal-backdrop" id="pkgAccessModal" data-accent="gold">
+    <div class="confirm-box pmc-confirm-box pkgacc-box">
+      <button type="button" class="pmc-modal-close" id="pkgAccessCloseBtn" aria-label="Tutup">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-x"></use></svg>
+      </button>
+      <div class="pkgacc-icon" id="pkgAccessIcon"></div>
+      <div class="pkgacc-title">Akses Paket Diperlukan</div>
+      <p class="pkgacc-desc" id="pkgAccessDesc"></p>
+      <!-- Kartu requirement — cuma dipakai untuk kasus gated (Marketplace),
+           reuse style .mktlock-req-* (sama persis dengan mktLockedModal)
+           supaya kedua modal gating ini konsisten secara visual. Disembunyikan
+           default, ditampilkan lewat JS di openPackageAccessModal() kalau
+           gated===true dan ada productId requirement-nya. -->
+      <div class="mktlock-req-card" id="pkgAccessReqCard" style="display:none;">
+        <div class="mktlock-req-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-shopping-bag"></use></svg></div>
+        <div class="mktlock-req-info">
+          <div class="mktlock-req-name" id="pkgAccessReqName">—</div>
+          <div class="mktlock-req-status"><span class="mktlock-status-dot"></span> Belum dimiliki</div>
+        </div>
+      </div>
+      <div class="pkgacc-compare">
+        <div class="pkgacc-compare-item">
+          <span class="pkgacc-compare-label">Paket kamu saat ini</span>
+          <span class="pkg-badge" id="pkgAccessCurrentBadge" data-tier="public"></span>
+        </div>
+        <svg class="pkgacc-compare-arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>
+        <div class="pkgacc-compare-item">
+          <span class="pkgacc-compare-label">Paket yang diperlukan</span>
+          <span class="pkg-badge" id="pkgAccessRequiredBadge" data-tier="gold"></span>
+        </div>
+      </div>
+      <button type="button" class="btn-primary pkgacc-cta" id="pkgAccessCtaBtn">Upgrade Sekarang</button>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════════
+       MARKETPLACE — halaman utama produk digital. Data 100% dari
+       GET /api/marketplace/products (Admin Web = source of truth), realtime
+       lewat WS 'marketplace:products:update'/'marketplace:access:update'/
+       'marketplace:order:update' (lihat blok MARKETPLACE di app.js). Beli
+       pakai KlikQRIS existing yang SAMA dengan Beli Paket — makanya modal
+       konfirmasi & modal pembayaran QRIS di bawah reuse class pmc-* /
+       confirm-overlay yang sudah ada (bukan style baru), cuma id yang beda.
+
+       Konsep halaman ini punya 2 bagian (Marketplace & Steam Account) —
+       #mktSectionTabs di bawah SUDAH menyiapkan struktur tab supaya Steam
+       Account bisa ditambah belakangan sebagai tab kedua TANPA merombak
+       markup/CSS/JS Marketplace ini. UNTUK SEKARANG cuma tab "Marketplace"
+       yang ada & aktif — TIDAK ada tab/konten Steam Account sama sekali. ══ -->
+  <section class="page mkt-page" id="page-marketplace">
+    <div class="mkt-page-body" id="mktPageBody">
+      <div class="mkt-header">
+        <div class="mkt-header-text">
+          <div class="mkt-kicker">Digital Store</div>
+          <h1 class="mkt-title">Marketplace</h1>
+          <p class="mkt-subtitle">Produk digital premium — beli sekali, akses langsung aktif.</p>
+        </div>
+        <!-- Struktur tab — sekarang 2 tab aktif: Marketplace & Steam Account.
+             Backend Steam Account (steamAccountManager.js/steamAccountOrderManager.js,
+             route /api/steam-accounts/*, IPC 'steam-account-login' di main.js)
+             SUDAH ADA & matang, TIDAK diubah sama sekali — bagian ini murni
+             menyambungkan ke UI. -->
+        <div class="mkt-section-tabs" id="mktSectionTabs">
+          <button type="button" class="mkt-section-tab active" data-mkt-section="marketplace">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-shopping-bag"></use></svg>
+            <span>Marketplace</span>
+          </button>
+          <button type="button" class="mkt-section-tab" data-mkt-section="steam-account">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-gamepad-2"></use></svg>
+            <span>Steam Account</span>
+          </button>
+        </div>
+      </div>
+
+      <!-- ── Sub-halaman "Marketplace" ── -->
+      <div class="mkt-section-panel" id="mktSectionMarketplace" data-mkt-panel="marketplace">
+        <div class="mkt-error" id="mktLoadError" hidden></div>
+
+        <!-- Skeleton — ditampilkan sebelum data pertama datang -->
+        <div class="mkt-grid" id="mktGrid">
+          <div class="mkt-card mkt-card--skeleton"></div>
+          <div class="mkt-card mkt-card--skeleton"></div>
+          <div class="mkt-card mkt-card--skeleton"></div>
+          <div class="mkt-card mkt-card--skeleton"></div>
+        </div>
+
+        <!-- Empty state — belum ada produk aktif sama sekali dari Admin Web -->
+        <div class="mkt-empty" id="mktEmptyState" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-shopping-bag"></use></svg>
+          <div class="mkt-empty-title">Belum Ada Produk</div>
+          <p class="mkt-empty-desc">Admin belum menambahkan produk Marketplace. Cek lagi nanti.</p>
+        </div>
+      </div>
+
+      <!-- ── Sub-halaman "Steam Account" — struktur & pola SAMA PERSIS dengan
+           Marketplace di atas (grid/skeleton/empty/error), cuma sumber data
+           beda (GET /api/steam-accounts, bukan /api/marketplace/products).
+           Disembunyikan (hidden) kalau tab Marketplace yang aktif — lihat
+           switchMktSection() di app.js. ── -->
+      <div class="mkt-section-panel" id="mktSectionSteamAccount" data-mkt-panel="steam-account" hidden>
+        <div class="mkt-error" id="staLoadError" hidden></div>
+
+        <div class="mkt-grid" id="staGrid">
+          <div class="mkt-card mkt-card--skeleton"></div>
+          <div class="mkt-card mkt-card--skeleton"></div>
+          <div class="mkt-card mkt-card--skeleton"></div>
+          <div class="mkt-card mkt-card--skeleton"></div>
+        </div>
+
+        <div class="mkt-empty" id="staEmptyState" hidden>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-gamepad-2"></use></svg>
+          <div class="mkt-empty-title">Belum Ada Akun</div>
+          <p class="mkt-empty-desc">Admin belum menambahkan akun Steam. Cek lagi nanti.</p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- REQUEST GAME — halaman baru, backend 100% existing (server.js:
+       GET /api/requests/browse [HubCap], GET /api/requests/limit-info,
+       POST /api/requests/games, event WS 'gameRequest:update' &
+       'request-game-settings:update') — App ini murni UI + wiring, TIDAK
+       ada endpoint/Socket.IO/limit system baru. SENGAJA TIDAK ADA halaman
+       detail (requirement eksplisit) — satu-satunya aksi per game adalah
+       tombol "Request Game" yang langsung membuka popup konfirmasi.
+
+       REDESIGN: struktur halaman ini sekarang PERSIS mengikuti pola
+       Games (#page-mygames) / Bypass (#page-explore) — .page-header,
+       .toolbar (cardless), .grid-wrap > .grid + .empty-state — BUKAN lagi
+       gaya Marketplace (.mkt-page-body/.mkt-grid/.mkt-card). Grid item
+       reuse .card/.thumb/.card-info yang sama persis dengan Games/Bypass
+       (artwork + judul overlay), hanya footer aksinya beda: tombol
+       "Request Game" (.rg-card-actions), bukan install/detail — lihat
+       renderRgCardHtml() di app.js. Pagination sekarang 80 game/halaman,
+       numbered (bukan "Muat Lebih Banyak" infinite-load lagi) — lihat
+       #rgPagination & renderRgPagination() di app.js. -->
+  <section class="page rg-page" id="page-requestgame">
+    <div class="page-header rg-page-header">
+      <div class="rg-header-text">
+        <h1 class="page-title">Request Game</h1>
+        <p class="page-sub">Cari game yang belum tersedia di 31 Tools dan kirim permintaan ke Admin untuk ditinjau.</p>
+      </div>
+      <div class="rg-limit-inline" id="rgLimitBox" hidden>
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-send"></use></svg>
+        <span id="rgLimitValue">-</span>
+        <span class="rg-limit-reset" id="rgLimitReset" hidden></span>
+      </div>
+    </div>
+
+    <div class="toolbar">
+      <div class="search">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <input type="text" id="rgSearchInput" placeholder="Cari nama game...">
+      </div>
+    </div>
+
+    <div class="mkt-error rg-error" id="rgLoadError" hidden></div>
+
+    <!-- Notice tipis (BUKAN section besar di tengah halaman) — dipakai kalau
+         fitur dimatikan Admin, paket user tidak eligible, atau limit harian
+         habis. Search/grid/pagination di bawah TIDAK PERNAH ikut disembunyikan
+         oleh notice ini (requirement #1: visibility != access, requirement #2:
+         tidak ada hero/text section besar yang mendorong grid ke bawah). -->
+    <div class="rg-notice" id="rgAccessNotice" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-lock"></use></svg>
+      <span id="rgAccessNoticeText"></span>
+      <button type="button" class="rg-notice-cta" id="rgAccessNoticeCta" hidden onclick="setNav('belipaket')">Lihat Paket</button>
+    </div>
+
+    <div class="grid-wrap" id="rgGridWrap">
+      <div class="grid rg-grid" id="rgGrid"></div>
+      <div class="empty-state" id="rgEmptyState">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="11" cy="11" r="7"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        <div id="rgEmptyText">Game tidak ditemukan.</div>
+      </div>
+    </div>
+
+    <!-- Pagination — numbered, dihitung otomatis dari totalData/80 yang
+         dikembalikan backend (Math.ceil(totalData/80)), TIDAK pernah
+         hardcode jumlah halaman. Lihat renderRgPagination() di app.js. -->
+    <div class="pagination" id="rgPagination" hidden></div>
+  </section>
+
+  <!-- Popup konfirmasi Request Game — reuse .confirm-overlay/.confirm-box
+       existing (sama komponen dgn uninstallConfirmOverlay dkk), TIDAK ada
+       modal system baru. -->
+  <div class="confirm-overlay" id="rgConfirmOverlay">
+    <div class="confirm-box rg-confirm-box">
+      <p>Request Game</p>
+      <div class="rg-confirm-thumb-wrap"><img id="rgConfirmThumb" class="rg-confirm-thumb" alt=""></div>
+      <div class="rg-confirm-name" id="rgConfirmName"></div>
+      <div class="confirm-desc">Apakah kamu yakin ingin request game ini? Request akan dikirim ke Admin untuk ditinjau — game tidak otomatis langsung tersedia setelah request dikirim.</div>
+      <div class="confirm-actions">
+        <button class="cancel" id="rgConfirmNoBtn" onclick="closeRgConfirm()">Tidak</button>
+        <button class="confirm" id="rgConfirmYesBtn" onclick="submitRgRequest()">Ya, Request Game</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── MARKETPLACE — Detail Produk. Layout HORIZONTAL (kiri = gambar HD +
+       "Barang yang Didapatkan", kanan = judul/harga/deskripsi/status), sesuai
+       requirement — BUKAN halaman detail generik (#page-detail) yang dipakai
+       Games/Bypass, supaya kedua sistem itu tetap terpisah total & aman. ── -->
+  <section class="page mkt-detail-page" id="page-marketplace-detail">
+    <div class="detail-back-row">
+      <button class="detail-back-btn" id="mktDetailBackBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-arrow-left"></use></svg>
+        <span>Kembali ke Marketplace</span>
+      </button>
+    </div>
+
+    <div class="mkt-detail-body" id="mktDetailBody">
+      <!-- Skeleton selagi GET /api/marketplace/products/:id berjalan -->
+      <div class="mkt-detail-skeleton" id="mktDetailSkeleton">
+        <div class="mkt-sk-left">
+          <div class="mkt-sk-block mkt-sk-hero"></div>
+          <div class="mkt-sk-block mkt-sk-content"></div>
+        </div>
+        <div class="mkt-sk-right">
+          <div class="mkt-sk-block mkt-sk-title"></div>
+          <div class="mkt-sk-block mkt-sk-line"></div>
+          <div class="mkt-sk-block mkt-sk-line" style="width:80%"></div>
+          <div class="mkt-sk-block mkt-sk-card"></div>
+          <div class="mkt-sk-block mkt-sk-card"></div>
+        </div>
+      </div>
+
+      <div class="mkt-detail-content" id="mktDetailContent" style="display:none;">
+        <!-- KIRI — gambar HD (besar, horizontal/landscape) + "Barang yang Didapatkan" -->
+        <div class="mkt-detail-left">
+          <div class="mkt-hero" id="mktHeroWrap">
+            <div class="mkt-hero-fade"></div>
+            <div class="mkt-hero-badge-slot" id="mktHeroBadgeSlot"></div>
+          </div>
+
+          <!-- Kategori kosong (games/bypasses) TIDAK dirender ke DOM sama sekali. -->
+          <div class="mkt-content-section" id="mktContentSection"></div>
+        </div>
+
+        <!-- KANAN — judul, harga, deskripsi, status pembelian, info produk -->
+        <div class="mkt-detail-right">
+          <h1 class="mkt-detail-title" id="mktDetailTitle">—</h1>
+          <div class="mkt-detail-price-row">
+            <span class="mkt-detail-price" id="mktDetailPriceText">Rp0</span>
+            <span class="mkt-badge-status" id="mktSideStatusBadge">—</span>
+          </div>
+
+          <div class="mkt-side-card mkt-description-card">
+            <div class="mkt-side-card-head"><h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-package"></use></svg> Deskripsi</h4></div>
+            <div class="mkt-text-block" id="mktDetailDescription">—</div>
+          </div>
+
+          <div class="mkt-side-card">
+            <div class="mkt-side-card-head"><h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-tag"></use></svg> Info Produk</h4></div>
+            <div class="mkt-side-rows" id="mktSideInfoRows"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- FLOATING/STICKY BUY BAR — fixed, tetap kelihatan walau .mkt-detail-body
+         di-scroll (pola sama dgn .detail-action-bar Games/Bypass di atas). -->
+    <div class="mkt-float-bar" id="mktFloatBar">
+      <div class="mkt-float-bar-inner">
+        <div class="mkt-float-bar-price-col">
+          <span class="mkt-float-bar-price-label" id="mktFloatPriceLabel">Harga</span>
+          <span class="mkt-float-bar-price-value" id="mktFloatPriceValue">Rp0</span>
+        </div>
+        <button class="mkt-float-bar-btn" id="mktDetailBuyBtn">
+          <span id="mktDetailBuyLabel">Beli Sekarang</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-arrow-right"></use></svg>
+        </button>
+      </div>
+      <div class="mkt-float-bar-status" id="mktBuyStatus"><span class="mkt-status-dot"></span> Tersedia</div>
+    </div>
+  </section>
+
+  <!-- MARKETPLACE — Modal Konfirmasi Pembelian. Satu-satunya metode
+       pembayaran adalah QRIS (klikqrisManager.PAYMENT_METHODS cuma 1 opsi),
+       jadi TIDAK ada langkah "pilih metode" terpisah — sama persis pola Beli
+       Paket. Reuse class pmc-*/confirm-overlay yang sudah ada. -->
+  <div class="confirm-overlay pmc-modal-backdrop" id="mktConfirmModal">
+    <div class="confirm-box pmc-confirm-box">
+      <button type="button" class="pmc-modal-close" id="mktConfirmCloseBtn" aria-label="Tutup">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-x"></use></svg>
+      </button>
+      <div class="pmc-confirm-title">Konfirmasi Pembelian</div>
+      <div class="pmc-confirm-row"><span>Produk</span><strong id="mktConfirmProductName">—</strong></div>
+      <div class="pmc-confirm-row"><span>Harga</span><strong id="mktConfirmPrice">—</strong></div>
+      <div class="pmc-confirm-divider"></div>
+      <div class="pmc-confirm-row pmc-confirm-total"><span>Total</span><strong id="mktConfirmTotal">—</strong></div>
+      <div class="pmc-confirm-method">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-shopping-cart"></use></svg>
+        <span>QRIS (semua e-wallet &amp; m-banking)</span>
+      </div>
+      <button type="button" class="btn-primary pmc-confirm-btn" id="mktConfirmPayBtn">Bayar Sekarang</button>
+    </div>
+  </div>
+
+  <!-- MARKETPLACE — Modal Pembayaran QRIS. Status realtime (WS
+       'marketplace:order:update') + fallback polling tiap 5 detik (lihat
+       blok MARKETPLACE di app.js). Frontend TIDAK PERNAH mengubah status
+       sendiri — murni menampilkan apa yang dikirim backend. -->
+  <div class="confirm-overlay pmc-modal-backdrop" id="mktPaymentModal">
+    <div class="confirm-box pmc-pay-box">
+      <div class="pmc-pay-head">
+        <div class="pmc-pay-title" id="mktPayTitle">Pembayaran QRIS</div>
+        <div class="pmc-pay-status" id="mktPayStatusBadge">Menunggu Pembayaran</div>
+      </div>
+      <div class="pmc-pay-order">Order ID: <span id="mktPayOrderId">—</span></div>
+
+      <div class="pmc-pay-qr" id="mktPayQrWrap">
+        <img id="mktPayQrImg" alt="QRIS" />
+        <div class="pmc-pay-qr-error" id="mktPayQrError" hidden>QR tidak tersedia — coba refresh atau buat pesanan baru.</div>
+        <div class="pmc-pay-amount" id="mktPayAmount">—</div>
+        <div class="pmc-pay-hint">Scan QRIS menggunakan aplikasi pembayaran kamu.</div>
+        <div class="pmc-pay-countdown"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-timer"></use></svg> <span id="mktPayCountdown">10:00</span></div>
+        <div class="pmc-pay-warn">Jangan tutup halaman ini sampai pembayaran selesai.</div>
+      </div>
+
+      <div class="pmc-pay-result" id="mktPayResult" hidden></div>
+
+      <div class="pmc-pay-actions">
+        <button type="button" class="pmc-pay-cancel" id="mktPayCancelBtn">Batalkan Pesanan</button>
+        <button type="button" class="btn-primary pmc-pay-close" id="mktPayCloseBtn" hidden>Tutup</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- MARKETPLACE — Modal "Akses Belum Tersedia" (product gating). Muncul
+       dari openMktConfirm() di app.js SEBELUM order dibuat, kalau produk yang
+       mau dibeli mensyaratkan produk Game/Bypass lain yang belum
+       dimiliki/tersedia (lihat getMktRequirement()/openMktLockedModal()).
+       CTA utama routing ke halaman detail produk requirement lewat
+       openMarketplaceDetail() yang SUDAH ADA (pakai productId dari data
+       backend, TIDAK ADA URL hardcode/halaman baru). Tombol "Tutup" murni
+       menutup modal — tidak membuat order/mengubah entitlement apapun.
+       Catatan: ini TIDAK mengubah gating Game/Bypass existing lewat
+       marketplaceProductIds (itu kasus terpisah, sudah ditangani
+       openPackageAccessModal()). -->
+  <div class="confirm-overlay pmc-modal-backdrop" id="mktLockedModal">
+    <div class="confirm-box mktlock-box">
+      <button type="button" class="pmc-modal-close" id="mktLockedXBtn" aria-label="Tutup">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-x"></use></svg>
+      </button>
+      <div class="mktlock-icon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-lock"></use></svg>
+      </div>
+      <div class="mktlock-title">Akses Belum Tersedia</div>
+      <p class="mktlock-desc" id="mktLockedDesc">Produk ini membutuhkan Game/Bypass tertentu sebelum dapat dibeli.</p>
+
+      <div class="mktlock-req-card">
+        <div class="mktlock-req-icon" id="mktLockedReqIcon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-shield-check"></use></svg>
+        </div>
+        <div class="mktlock-req-info">
+          <div class="mktlock-req-name" id="mktLockedReqName">—</div>
+          <div class="mktlock-req-status"><span class="mktlock-status-dot"></span> Belum tersedia</div>
+        </div>
+      </div>
+
+      <p class="mktlock-hint" id="mktLockedHint">Dapatkan requirement tersebut terlebih dahulu untuk melanjutkan pembelian produk ini.</p>
+
+      <div class="mktlock-actions">
+        <button type="button" class="mktlock-btn-secondary" id="mktLockedCloseBtn">Tutup</button>
+        <button type="button" class="mktlock-btn-primary" id="mktLockedCtaBtn">Dapatkan Requirement</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════════════════════════════════════════════════════════════════════
+       STEAM ACCOUNT — tab kedua di halaman Marketplace (#mktSectionTabs).
+       Backend TIDAK diubah sama sekali — GET /api/steam-accounts,
+       GET /api/steam-accounts/:id, POST /api/steam-accounts/purchase, dst
+       (steamAccountManager.js/steamAccountOrderManager.js/klikqrisManager.js)
+       dipakai apa adanya. Model kepemilikan BEDA dari Marketplace: akun
+       bersifat UNLIMITED USER (banyak user bisa "memiliki" akun yang sama),
+       jadi tombol setelah lunas bukan "Sudah Dibeli" tapi "LOGIN AKUN" (auto
+       login ke Steam via IPC 'steam-account-login' yang SUDAH ADA di
+       main.js/preload.js — lihat openSteamAccountLogin() di app.js).
+       Layout detail SAMA horizontal dengan Marketplace, cuma "Barang yang
+       Didapatkan" diganti "Daftar Game" (dari product.games, snapshot Steam
+       API yang sudah tersimpan admin — TIDAK fetch Steam lagi di App). ══ -->
+  <section class="page mkt-detail-page" id="page-steam-account-detail">
+    <div class="detail-back-row">
+      <button class="detail-back-btn" id="staDetailBackBtn">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-arrow-left"></use></svg>
+        <span>Kembali ke Marketplace</span>
+      </button>
+    </div>
+
+    <div class="mkt-detail-body" id="staDetailBody">
+      <div class="mkt-detail-skeleton" id="staDetailSkeleton">
+        <div class="mkt-sk-left">
+          <div class="mkt-sk-block mkt-sk-hero"></div>
+          <div class="mkt-sk-block mkt-sk-content"></div>
+        </div>
+        <div class="mkt-sk-right">
+          <div class="mkt-sk-block mkt-sk-title"></div>
+          <div class="mkt-sk-block mkt-sk-line"></div>
+          <div class="mkt-sk-block mkt-sk-line" style="width:80%"></div>
+          <div class="mkt-sk-block mkt-sk-card"></div>
+          <div class="mkt-sk-block mkt-sk-card"></div>
+        </div>
+      </div>
+
+      <div class="mkt-detail-content" id="staDetailContent" style="display:none;">
+        <!-- KIRI — gambar HD akun + "Daftar Game" (dari product.games) -->
+        <div class="mkt-detail-left">
+          <div class="mkt-hero" id="staHeroWrap">
+            <div class="mkt-hero-fade"></div>
+            <div class="mkt-hero-badge-slot" id="staHeroBadgeSlot"></div>
+          </div>
+          <div class="mkt-content-section" id="staContentSection"></div>
+        </div>
+
+        <!-- KANAN — judul, harga, deskripsi, status, cara bermain/info penting (kalau diisi admin) -->
+        <div class="mkt-detail-right">
+          <h1 class="mkt-detail-title" id="staDetailTitle">—</h1>
+          <div class="mkt-detail-price-row">
+            <span class="mkt-detail-price" id="staDetailPriceText">Rp0</span>
+            <span class="mkt-badge-status" id="staSideStatusBadge">—</span>
+          </div>
+
+          <div class="mkt-side-card mkt-description-card">
+            <div class="mkt-side-card-head"><h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-package"></use></svg> Deskripsi</h4></div>
+            <div class="mkt-text-block" id="staDetailDescription">—</div>
+          </div>
+
+          <!-- "Cara Bermain"/"Info Penting" cuma dirender kalau memang diisi
+               admin (caraBermain/importantInfo) — TIDAK ada teks default. -->
+          <div class="mkt-side-card" id="staCaraBermainCard" hidden>
+            <div class="mkt-side-card-head"><h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-play"></use></svg> Cara Bermain</h4></div>
+            <div class="mkt-text-block" id="staCaraBermainText">—</div>
+          </div>
+          <div class="mkt-side-card" id="staImportantInfoCard" hidden>
+            <div class="mkt-side-card-head"><h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-shield-check"></use></svg> Info Penting</h4></div>
+            <div class="mkt-text-block" id="staImportantInfoText">—</div>
+          </div>
+
+          <div class="mkt-side-card">
+            <div class="mkt-side-card-head"><h4><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-tag"></use></svg> Info Produk</h4></div>
+            <div class="mkt-side-rows" id="staSideInfoRows"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- FLOATING/STICKY BAR — tombol berubah jadi "LOGIN AKUN" begitu isOwner
+         (BUKAN "Sudah Dibeli" seperti Marketplace, karena produk ini
+         unlimited-user & aksinya beda: jalankan Steam, bukan cuma tanda
+         kepemilikan). -->
+    <div class="mkt-float-bar" id="staFloatBar">
+      <div class="mkt-float-bar-inner">
+        <div class="mkt-float-bar-price-col">
+          <span class="mkt-float-bar-price-label" id="staFloatPriceLabel">Harga</span>
+          <span class="mkt-float-bar-price-value" id="staFloatPriceValue">Rp0</span>
+        </div>
+        <button class="mkt-float-bar-btn" id="staDetailActionBtn">
+          <span id="staDetailActionLabel">Beli Sekarang</span>
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-arrow-right"></use></svg>
+        </button>
+      </div>
+      <div class="mkt-float-bar-status" id="staBuyStatus"><span class="mkt-status-dot"></span> Tersedia</div>
+    </div>
+  </section>
+
+  <!-- STEAM ACCOUNT — Modal Konfirmasi Pembelian (reuse pmc-*/confirm-overlay,
+       pola SAMA PERSIS dengan mktConfirmModal — cuma id berbeda). -->
+  <div class="confirm-overlay pmc-modal-backdrop" id="staConfirmModal">
+    <div class="confirm-box pmc-confirm-box">
+      <button type="button" class="pmc-modal-close" id="staConfirmCloseBtn" aria-label="Tutup">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-x"></use></svg>
+      </button>
+      <div class="pmc-confirm-title">Konfirmasi Pembelian</div>
+      <div class="pmc-confirm-row"><span>Akun</span><strong id="staConfirmProductName">—</strong></div>
+      <div class="pmc-confirm-row"><span>Harga</span><strong id="staConfirmPrice">—</strong></div>
+      <div class="pmc-confirm-divider"></div>
+      <div class="pmc-confirm-row pmc-confirm-total"><span>Total</span><strong id="staConfirmTotal">—</strong></div>
+      <div class="pmc-confirm-method">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-shopping-cart"></use></svg>
+        <span>QRIS (semua e-wallet &amp; m-banking)</span>
+      </div>
+      <button type="button" class="btn-primary pmc-confirm-btn" id="staConfirmPayBtn">Bayar Sekarang</button>
+    </div>
+  </div>
+
+  <!-- STEAM ACCOUNT — Modal Pembayaran QRIS (pola SAMA PERSIS dengan
+       mktPaymentModal — status realtime WS 'steamAccounts:order:update' +
+       fallback polling). -->
+  <div class="confirm-overlay pmc-modal-backdrop" id="staPaymentModal">
+    <div class="confirm-box pmc-pay-box">
+      <div class="pmc-pay-head">
+        <div class="pmc-pay-title" id="staPayTitle">Pembayaran QRIS</div>
+        <div class="pmc-pay-status" id="staPayStatusBadge">Menunggu Pembayaran</div>
+      </div>
+      <div class="pmc-pay-order">Order ID: <span id="staPayOrderId">—</span></div>
+
+      <div class="pmc-pay-qr" id="staPayQrWrap">
+        <img id="staPayQrImg" alt="QRIS" />
+        <div class="pmc-pay-qr-error" id="staPayQrError" hidden>QR tidak tersedia — coba refresh atau buat pesanan baru.</div>
+        <div class="pmc-pay-amount" id="staPayAmount">—</div>
+        <div class="pmc-pay-hint">Scan QRIS menggunakan aplikasi pembayaran kamu.</div>
+        <div class="pmc-pay-countdown"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-timer"></use></svg> <span id="staPayCountdown">10:00</span></div>
+        <div class="pmc-pay-warn">Jangan tutup halaman ini sampai pembayaran selesai.</div>
+      </div>
+
+      <div class="pmc-pay-result" id="staPayResult" hidden></div>
+
+      <div class="pmc-pay-actions">
+        <button type="button" class="pmc-pay-cancel" id="staPayCancelBtn">Batalkan Pesanan</button>
+        <button type="button" class="btn-primary pmc-pay-close" id="staPayCloseBtn" hidden>Tutup</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- STEAM ACCOUNT — Modal Progres "LOGIN AKUN" — menampilkan tahapan dari
+       channel 'steam-account-login-progress' (main.js): preparing/closing/
+       restarting/logging_in/done/error. Kredensial TIDAK PERNAH ditulis ke
+       DOM di sini — cuma dikirim langsung ke electronAPI.steamAccountLogin(). -->
+  <div class="confirm-overlay pmc-modal-backdrop" id="staLoginProgressModal">
+    <div class="confirm-box sta-login-box">
+      <div class="sta-login-icon" id="staLoginIcon">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round" class="sta-login-spinner"><use href="#ic-loader-circle"></use></svg>
+      </div>
+      <div class="sta-login-title" id="staLoginTitle">Menyiapkan Steam...</div>
+      <p class="sta-login-desc" id="staLoginDesc">Mohon tunggu, jangan tutup aplikasi ini.</p>
+      <button type="button" class="btn-primary pmc-pay-close" id="staLoginCloseBtn" hidden>Tutup</button>
+    </div>
+  </div>
+
+  <!-- STEAM ACCOUNT — Fallback Kredensial Manual — HANYA muncul kalau Steam
+       tidak terdeteksi di PC ini (electronAPI.getSteamPath() null), supaya
+       pembeli yang sah tetap bisa login manual walau auto-login tidak bisa
+       jalan. Kredensial cuma tampil sekali per klik tombol (fetch ulang tiap
+       dibuka), TIDAK disimpan di localStorage/variabel permanen. -->
+  <div class="confirm-overlay pmc-modal-backdrop" id="staCredentialsModal">
+    <div class="confirm-box sta-cred-box">
+      <button type="button" class="pmc-modal-close" id="staCredCloseBtn" aria-label="Tutup">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-x"></use></svg>
+      </button>
+      <div class="pmc-confirm-title">Login Manual</div>
+      <p class="sta-cred-hint">Steam tidak terdeteksi di PC ini, jadi auto-login tidak bisa dijalankan. Gunakan kredensial di bawah untuk login manual ke Steam.</p>
+      <div class="sta-cred-row">
+        <span>Username</span>
+        <div class="sta-cred-value"><code id="staCredUsername">—</code><button type="button" class="sta-cred-copy" data-copy-target="staCredUsername"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-copy"></use></svg></button></div>
+      </div>
+      <div class="sta-cred-row">
+        <span>Password</span>
+        <div class="sta-cred-value"><code id="staCredPassword">—</code><button type="button" class="sta-cred-copy" data-copy-target="staCredPassword"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-copy"></use></svg></button></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Settings page — section Active Tools (migrasi dari PROJECT LAMA:
+       activeToolsManager.js di backend TIDAK diubah sama sekali; IPC handler
+       'active-tools-install'/'active-tools-check-status'/'active-tools-run-powershell'
+       di main.js juga TIDAK diubah. Yang baru cuma UI premium ini + logic
+       client di app.js — lihat blok "ACTIVE TOOLS" di app.js. -->
+  <section class="page" id="page-setting">
+    <div class="page-header">
+      <h1 class="page-title">Settings</h1>
+    </div>
+
+    <div class="settings-body">
+      <div class="settings-section-label">General</div>
+
+      <div class="at-card" id="activeToolsCard" style="display:none;">
+        <div class="at-card-icon">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+        </div>
+        <div class="at-card-body">
+          <div class="at-card-top">
+            <span class="at-card-title">Active Tools</span>
+            <span class="at-status-pill" id="atStatusPill">Not Active</span>
+          </div>
+          <div class="at-card-desc" id="atCardDesc">Jalankan Active Tools sebelum download/install game agar game dapat terdeteksi di Steam Library.</div>
+          <div class="at-card-version" id="atCardVersion" hidden></div>
+        </div>
+        <div class="at-card-action">
+          <button class="at-btn" id="btnActiveTools">Install</button>
+        </div>
+      </div>
+
+      <!-- Konfirmasi "Install Ulang" — reuse pola generik confirm-overlay/
+           confirm-box/confirm-actions yang SUDAH ADA (persis sama dengan
+           #uninstallConfirmOverlay di bawah), BUKAN komponen baru. Cuma
+           muncul saat klik "Install Ulang" (Active Tools sudah pernah
+           terpasang sebelumnya) — klik "Install" pertama kali TIDAK melalui
+           popup ini (langsung jalan, sesuai requirement). -->
+      <div class="confirm-overlay" id="atReinstallConfirmOverlay">
+        <div class="confirm-box">
+          <p>Install Ulang Active Tools</p>
+          <div class="confirm-desc">Active Tools akan dipasang ulang menggunakan konfigurasi dan metode aktivasi yang berlaku.</div>
+          <div class="confirm-actions">
+            <button class="cancel" id="atReinstallCancelBtn" onclick="cancelAtReinstallConfirm()">Batal</button>
+            <button class="confirm at-reinstall-confirm" id="atReinstallConfirmBtn" onclick="confirmAtReinstallConfirm()">Install Ulang</button>
+          </div>
+        </div>
+      </div>
+
+      <div class="empty-state" id="settingsEmptyState">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><line x1="4" y1="21" x2="4" y2="14"/><line x1="4" y1="10" x2="4" y2="3"/><line x1="12" y1="21" x2="12" y2="12"/><line x1="12" y1="8" x2="12" y2="3"/><line x1="20" y1="21" x2="20" y2="16"/><line x1="20" y1="12" x2="20" y2="3"/><line x1="1" y1="14" x2="7" y2="14"/><line x1="9" y1="8" x2="15" y2="8"/><line x1="17" y1="16" x2="23" y2="16"/></svg>
+        <div>Active Tools belum diaktifkan admin untuk aplikasi ini.</div>
+      </div>
+
+      <!-- BACKGROUND APLIKASI (PERSONAL) — Settings, terpisah dari App
+           Customization GLOBAL Admin Web. Hanya IMAGE (tidak ada Solid/
+           Gradient/Color Picker/HEX, sesuai requirement). Logic upload,
+           validasi, preview, apply & prioritas ada di initBackgroundSettings()
+           dkk di app.js. -->
+      <div class="settings-section-label">Tampilan</div>
+      <div class="bgset-card">
+        <div class="bgset-head">
+          <div class="bgset-head-icon">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+          </div>
+          <div>
+            <div class="bgset-title">Background Aplikasi</div>
+            <div class="bgset-desc">Gunakan gambar pilihan Anda sebagai background aplikasi.</div>
+          </div>
+        </div>
+
+        <div class="bgset-preview">
+          <img class="bgset-preview-img" id="bgsetPreviewImg" alt="Preview background" style="display:none;">
+          <div class="bgset-preview-empty" id="bgsetPreviewEmpty">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>
+            <span>Belum ada background personal</span>
+          </div>
+        </div>
+
+        <div class="bgset-meta" id="bgsetMeta" style="display:none;">
+          <span class="bgset-meta-name" id="bgsetFileName">—</span>
+          <span class="bgset-meta-size" id="bgsetFileSize">—</span>
+        </div>
+
+        <input type="file" id="bgsetFileInput" accept="image/png,image/jpeg,image/webp" style="display:none;">
+
+        <div class="bgset-actions" id="bgsetUploadRow">
+          <button type="button" class="at-btn" id="bgsetUploadBtn">Upload Gambar</button>
+        </div>
+        <div class="bgset-actions" id="bgsetManageRow" style="display:none;">
+          <button type="button" class="at-btn" id="bgsetChangeBtn">Ganti Gambar</button>
+          <button type="button" class="at-btn at-btn-ghost" id="bgsetRemoveBtn">Hapus Background</button>
+          <button type="button" class="at-btn at-btn-ghost" id="bgsetDefaultBtn">Gunakan Background Default</button>
+        </div>
+
+        <div class="bgset-info">Format: PNG, JPG, JPEG, WEBP &middot; Maksimal ukuran: 8 MB</div>
+      </div>
+    </div>
+  </section>
+
+  <!-- Detail page (Game / Bypass) — demo -->
+  <section class="page" id="page-detail">
+    <div class="detail-back-row">
+      <button class="detail-back-btn" onclick="closeDetailPage()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="12" x2="5" y2="12"/><polyline points="12 19 5 12 12 5"/></svg>
+        <span id="detailBackLabel">Back to Games</span>
+      </button>
+    </div>
+
+    <div class="detail-body" id="detailBody">
+
+      <div class="detail-skeleton" id="detailSkeleton">
+        <div class="skeleton-left">
+          <div class="sk-block sk-artwork"></div>
+          <div class="sk-grid">
+            <div class="sk-block sk-card"></div>
+            <div class="sk-block sk-card"></div>
+            <div class="sk-block sk-card"></div>
+            <div class="sk-block sk-card"></div>
+          </div>
+          <div class="sk-block sk-panel"></div>
+        </div>
+        <div class="skeleton-right">
+          <div class="sk-block sk-title"></div>
+          <div class="sk-block sk-line"></div>
+          <div class="sk-block sk-line" style="width:90%"></div>
+          <div class="sk-block sk-line" style="width:75%"></div>
+          <div class="sk-block sk-tagsrow"></div>
+          <div class="sk-block sk-reqs"></div>
+        </div>
+      </div>
+
+      <div class="detail-content" id="detailContent" style="display:none;">
+        <div class="detail-left">
+          <div class="detail-artwork">
+            <img id="detailImage" src="" alt="">
+          </div>
+
+          <div class="detail-info-grid">
+            <div class="info-card"><span class="info-label" id="infoLabel1"></span><span class="info-value" id="infoValue1"></span></div>
+            <div class="info-card"><span class="info-label" id="infoLabel2"></span><span class="info-value" id="infoValue2"></span></div>
+            <div class="info-card"><span class="info-label" id="infoLabel3"></span><span class="info-value" id="infoValue3"></span></div>
+            <div class="info-card"><span class="info-label" id="infoLabel4"></span><span class="info-value" id="infoValue4"></span></div>
+          </div>
+
+          <div class="detail-status-panel">
+            <span class="status-panel-icon" id="detailStatusIcon"></span>
+            <div class="status-panel-text">
+              <span class="status-panel-title" id="detailStatusTitle"></span>
+              <p class="status-panel-desc" id="detailStatusDesc"></p>
+            </div>
+          </div>
+        </div>
+
+        <div class="detail-right">
+          <h1 class="detail-title" id="detailTitle"></h1>
+          <span class="detail-steamid" id="detailSteamId"></span>
+          <p class="detail-description" id="detailDescription"></p>
+          <div class="detail-tags" id="detailTags"></div>
+
+          <div class="detail-requirements" id="detailRequirements">
+            <h2 class="req-heading">System Requirements</h2>
+            <div class="req-grid">
+              <div class="req-card req-minimum">
+                <span class="req-card-label">Minimum</span>
+                <ul id="reqMinimumList"></ul>
+              </div>
+              <div class="req-card req-recommended">
+                <span class="req-card-label">Recommended</span>
+                <ul id="reqRecommendedList"></ul>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div class="detail-action-bar" id="detailActionBar">
+      <button class="detail-btn-primary" id="detailPrimaryBtn"></button>
+      <button class="detail-btn-secondary" id="detailSecondaryBtn"></button>
+    </div>
+
+    <div class="install-progress-bar" id="installProgressBar">
+      <span class="install-progress-icon" id="installProgressIcon"></span>
+      <div class="install-progress-info">
+        <div class="install-progress-toprow">
+          <span class="install-progress-name" id="installProgressName"></span>
+          <span class="install-progress-percent" id="installProgressPercent">0%</span>
+        </div>
+        <div class="install-progress-track"><div class="install-progress-fill" id="installProgressFill"></div></div>
+        <div class="install-progress-meta" id="installProgressMeta"></div>
+      </div>
+      <button class="install-progress-cancel" id="installProgressCancel">Cancel</button>
+    </div>
+  </section>
+</div>
+
+<!-- Minimized pill -->
+<div class="taskbar-pill" id="taskbarPill" onclick="restoreApp()">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+  <span>Game Launcher — click to restore</span>
+</div>
+
+<!-- Closed screen -->
+<div class="closed-screen" id="closedScreen">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M3 7a2 2 0 012-2h4l2 2h8a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V7z"/></svg>
+  <div>The application was closed.</div>
+  <button class="reopen-btn" onclick="reopenApp()">Reopen</button>
+</div>
+
+<!-- Close confirmation -->
+<div class="confirm-overlay" id="confirmOverlay">
+  <div class="confirm-box">
+    <p>Close the game launcher?</p>
+    <div class="confirm-actions">
+      <button class="cancel" onclick="cancelClose()">Cancel</button>
+      <button class="confirm" onclick="confirmClose()">Close</button>
+    </div>
+  </div>
+</div>
+
+<!-- Uninstall confirmation -->
+<div class="confirm-overlay" id="uninstallConfirmOverlay">
+  <div class="confirm-box">
+    <p id="uninstallConfirmTitle">Uninstall this item?</p>
+    <div class="confirm-desc" id="uninstallConfirmDesc"></div>
+    <div class="confirm-actions">
+      <button class="cancel" id="uninstallCancelBtn" onclick="cancelUninstall()">Cancel</button>
+      <button class="confirm" id="uninstallConfirmBtn" onclick="confirmUninstall()">Uninstall</button>
+    </div>
+  </div>
+</div>
+
+<!-- Active Tools Required — muncul saat user klik Download/Install Game/Bypass
+     tapi Active Tools belum aktif (lihat ensureActiveToolsActiveOrPrompt() di
+     app.js). Overlay terpusat (bukan toast), TIDAK pernah menutupi NAV/
+     Profile/Avatar/Badge karena posisinya full-screen-center seperti
+     confirm-overlay lain — bukan menempel di pojok. Isi diisi/diupdate lewat
+     JS (renderActiveToolsRequiredModal()) supaya bisa menampilkan progress
+     realtime saat proses aktivasi berjalan tanpa membangun ulang DOM. -->
+<div class="confirm-overlay at-overlay" id="activeToolsRequiredOverlay">
+  <div class="confirm-box at-req-box">
+    <div class="at-req-icon" id="atReqIcon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M14.7 6.3a1 1 0 0 0 0 1.4l1.6 1.6a1 1 0 0 0 1.4 0l3.77-3.77a6 6 0 0 1-7.94 7.94l-6.91 6.91a2.12 2.12 0 0 1-3-3l6.91-6.91a6 6 0 0 1 7.94-7.94l-3.76 3.76z"/></svg>
+    </div>
+    <p id="atReqTitle">Active Tools Belum Aktif</p>
+    <div class="confirm-desc" id="atReqDesc">Game ini membutuhkan Active Tools sebelum proses download dapat dilanjutkan.</div>
+
+    <!-- Progress premium — SEMUA angka/step di sini diisi dari proses Active
+         Tools sebenarnya (download-progress/active-tools-ps-progress IPC),
+         TIDAK ADA setInterval/setTimeout yang mensimulasikan progress. Lihat
+         resetAtProgressUI()/setAtStep()/setAtBarPercent()/setAtBarIndeterminate()
+         di app.js. -->
+    <div class="at-req-progress" id="atReqProgress" hidden>
+      <div class="at-prog-top">
+        <span class="at-prog-status" id="atProgStatus">Memproses...</span>
+        <span class="at-prog-percent" id="atProgPercent" hidden>0%</span>
+      </div>
+      <div class="at-prog-bar" id="atProgBarWrap">
+        <div class="at-prog-bar-fill" id="atProgBarFill"></div>
+      </div>
+      <div class="at-prog-meta" id="atProgMeta" hidden></div>
+
+      <!-- Step indicator — CUMA dirender untuk metode Link (4 tahap yang
+           benar-benar ada di sistem lama: download -> extract&pasang ->
+           verifikasi -> aktivasi). Metode PowerShell tidak punya tahapan
+           granular dari sistem lama, jadi container ini disembunyikan total
+           utk metode itu (bukan diisi tahap palsu). -->
+      <div class="at-prog-steps" id="atProgSteps" hidden>
+        <div class="at-prog-step" data-step="download"><span class="at-step-icon"></span><span class="at-step-label">Download</span></div>
+        <div class="at-prog-step" data-step="process"><span class="at-step-icon"></span><span class="at-step-label">Ekstrak &amp; Pasang</span></div>
+        <div class="at-prog-step" data-step="verify"><span class="at-step-icon"></span><span class="at-step-label">Verifikasi</span></div>
+        <div class="at-prog-step" data-step="activate"><span class="at-step-icon"></span><span class="at-step-label">Aktivasi</span></div>
+      </div>
+    </div>
+
+    <div class="confirm-actions">
+      <button class="cancel" id="atReqCancelBtn" onclick="cancelActiveToolsRequired()">Batal</button>
+      <!-- Tombol batal KHUSUS selama tahap download (metode Link) — satu-
+           satunya tahap yang punya cancellation nyata di sistem lama
+           (electronAPI.cancelDownload(), lihat main.js 'cancel-download').
+           Tahap lain TIDAK ditawari batal supaya tidak memaksakan
+           cancellation yang bisa merusak proses (sesuai instruksi). -->
+      <button class="cancel" id="atReqAbortBtn" onclick="abortActiveToolsDownload()" hidden>Batalkan</button>
+      <button class="confirm at-req-confirm" id="atReqActivateBtn" onclick="activateToolsFromRequiredModal()">Aktifkan Tools</button>
+    </div>
+  </div>
+</div>
+
+<!-- Toast stack — top-center area content (BUKAN top-right lagi, supaya
+     tidak menutupi profile/nav), notification baru ditumpuk ke bawah (lihat
+     .toast-stack di styles.css). Kosong di HTML, isinya di-generate oleh
+     showToast() di app.js setiap dipanggil (function/signature-nya TIDAK
+     berubah, cuma sekarang bikin+append elemen .toast baru ke sini alih-alih
+     menimpa 1 elemen statis). -->
+<div class="toast-stack" id="toastStack" aria-live="polite" aria-atomic="false"></div>
+
+<!-- Package-change notification stack — TERPISAH dari toast-stack di atas,
+     ditaruh top-center lewat CSS (.pkg-toast-stack) supaya tidak pernah
+     menutupi avatar/nama/profile di kanan-atas. Kosong di HTML, isinya
+     di-generate oleh showPackageChangeToast() di app.js setiap paket user
+     berubah (upgrade/downgrade) lewat event realtime yang sudah ada. -->
+<div class="pkg-toast-stack" id="pkgToastStack" aria-live="polite" aria-atomic="false"></div>
+
+<!-- Widget Limit Download Harian — fixed kiri-bawah (lihat .dl-limit-widget
+     di styles.css), TIDAK bentrok dengan toast/notification (semua di atas,
+     top-center) ataupun .detail-action-bar (kanan-bawah). Markup di bawah
+     cuma KERANGKA kosong — SEMUA angka/teks diisi renderDownloadLimitWidget()
+     di app.js dari currentUser.accountStatus.download (field ASLI dari
+     accountStatusSummary() di server.js APP LAMA, backend TIDAK diubah sama
+     sekali) — bukan hardcode/dummy. Disembunyikan (hidden) sampai user login
+     & data pertama kali terisi, supaya tidak sempat kelihatan kosong.
+     Dibuat ulang jadi 1 baris ringkas per tipe (label+angka+bar tipis+sisa
+     dalam 1 baris) supaya tidak berasa seperti panel besar — lihat revisi
+     compact widget. Tombol × = fitur Hide (persist ke localStorage), muncul
+     lagi lewat tombol kecil #dlLimitReopenBtn di pojok yang sama. -->
+<div class="dl-limit-widget" id="dlLimitWidget" hidden aria-live="polite">
+  <button class="dl-limit-hide" id="dlLimitHideBtn" type="button" title="Sembunyikan" aria-label="Sembunyikan widget limit download">
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+  </button>
+  <div class="dl-limit-top">
+    <span class="dl-limit-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="m7 10 5 5 5-5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg>
+    </span>
+    <span class="pkg-badge dl-limit-pkg" data-tier="public" id="dlLimitPkgBadge"></span>
+    <span class="admin-badge dl-limit-pkg" id="dlLimitAdminBadge" hidden></span>
+  </div>
+  <div class="dl-limit-row" id="dlLimitRowGame" data-type="game">
+    <span class="dl-limit-label">Game</span>
+    <span class="dl-limit-count" id="dlLimitGameCount"></span>
+    <div class="dl-limit-track" id="dlLimitGameTrack"><div class="dl-limit-fill" id="dlLimitGameFill"></div></div>
+    <span class="dl-limit-sub" id="dlLimitGameSub"></span>
+  </div>
+  <div class="dl-limit-row" id="dlLimitRowBypass" data-type="bypass">
+    <span class="dl-limit-label">Bypass</span>
+    <span class="dl-limit-count" id="dlLimitBypassCount"></span>
+    <div class="dl-limit-track" id="dlLimitBypassTrack"><div class="dl-limit-fill" id="dlLimitBypassFill"></div></div>
+    <span class="dl-limit-sub" id="dlLimitBypassSub"></span>
+  </div>
+</div>
+<!-- Muncul menggantikan widget di atas begitu user menekan Hide — klik lagi
+     buat menampilkan widget (lihat showDownloadLimitWidget() di app.js). -->
+<button class="dl-limit-reopen" id="dlLimitReopenBtn" type="button" hidden title="Tampilkan limit download" aria-label="Tampilkan widget limit download">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 15V3"/><path d="m7 10 5 5 5-5"/><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/></svg>
+</button>
+
+<!-- GOLD TRIAL — Modal Notifikasi Tawaran (menggantikan toast lama). Dipakai
+     untuk 2 jalur (lihat blok "GOLD TRIAL" di app.js):
+       Flow A (normal)      -> dipicu checkGoldTrialAutoOffer()/loadGoldTrialOffer()
+                                saat login (enterApp()) & tiap Socket.IO reconnect,
+                                HANYA kalau GET /api/gold-trial bilang eligible:true.
+       Flow B (Admin FORCE) -> dipicu event WS 'notification' type 'gold_trial_offer'
+                                (Admin Web "Kirim Notifikasi"/"TEST") lewat
+                                handleGoldTrialPushNotification() — SELALU tampil
+                                terlepas dari eligibility (server memang sengaja
+                                tidak mengecek eligibility utk jalur force ini).
+     Ditempatkan di level root (bukan di dalam #page-belipaket) supaya bisa
+     muncul di halaman App manapun, sama seperti app-update-overlay/nvLoginOverlay
+     di bawah ini. Semua teks (deskripsi & durasi) 100% dinamis dari backend —
+     TIDAK ADA copy Gold Trial yang di-hardcode di sini. Tombol Claim SELALU
+     lewat POST /api/gold-trial/claim yang sama (claimGoldTrialFromModal()) ->
+     validasi normal backend (eligibility/anti-double-claim) tetap berlaku
+     penuh walau modal ini dipicu dari FORCE notification Admin. -->
+<!-- WELCOME POPUP — popup selamat datang, tampil SEKALI per akun sesudah login
+     pertama (lihat welcomePopupManager.js/server.js: GET /api/welcome-popup,
+     POST /api/welcome-popup/seen — server yang menentukan tampil/tidaknya,
+     bukan App). Realtime lewat WS event 'welcome-popup:update' (checkWelcomePopup()
+     di app.js, pola sama seperti app-customization:update: sinyal ringan lalu
+     fetch ulang). Ditempatkan SEBELUM #goldTrialOfferModal di DOM & memakai
+     z-index (68) SEDIKIT LEBIH TINGGI dari .gt-offer-modal (65) supaya Welcome
+     Popup selalu di atas/tampil lebih dulu daripada Gold Trial Notification
+     untuk user baru (requirement urutan) — App yang mengatur urutan PEMANGGILAN
+     (checkWelcomePopup() baru memanggil loadGoldTrialOffer() setelah popup ini
+     ditutup, lihat enterApp()), z-index di sini cuma jaring pengaman kalau
+     keduanya somehow diminta tampil bersamaan. Semua teks 100% dinamis dari
+     Admin Web — TIDAK ADA copy yang di-hardcode di sini. -->
+<div class="wp-modal" id="welcomePopupModal">
+  <div class="wp-box">
+    <img class="wp-banner" id="wpBannerImg" src="" alt="" hidden>
+    <div class="wp-body">
+      <div class="wp-title" id="wpModalTitle">—</div>
+      <div class="wp-desc" id="wpModalDesc"></div>
+      <ul class="wp-items" id="wpModalItems"></ul>
+      <div class="wp-actions">
+        <button type="button" class="wp-primary-btn" id="wpPrimaryBtn" onclick="closeWelcomePopup('primary')">Mulai Sekarang</button>
+        <button type="button" class="wp-secondary-btn" id="wpSecondaryBtn" onclick="closeWelcomePopup('secondary')">Jangan Tampilkan Lagi</button>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="gt-offer-modal" id="goldTrialOfferModal">
+  <div class="gt-offer-box">
+    <span class="gt-offer-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-crown"></use></svg>
+    </span>
+    <div class="gt-offer-title">Gold Trial Tersedia</div>
+    <div class="gt-offer-desc" id="gtOfferDesc">—</div>
+    <div class="gt-offer-duration" id="gtOfferDuration" hidden>
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-timer"></use></svg>
+      <span>Nikmati akses Gold Trial selama: <strong id="gtOfferDurationLabel">—</strong></span>
+    </div>
+    <div class="gt-offer-actions">
+      <button type="button" class="gt-offer-claim-btn" id="gtOfferClaimBtn" onclick="claimGoldTrialFromModal()">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-sparkles"></use></svg>
+        <span id="gtOfferClaimBtnLabel">Claim Gold Trial</span>
+      </button>
+      <button type="button" class="gt-offer-later-btn" id="gtOfferLaterBtn" onclick="dismissGoldTrialOfferModal()">Nanti Saja</button>
+    </div>
+  </div>
+</div>
+
+<!-- REDEEM VOUCHER — popup premium dibuka dari Profile Dropdown (lihat button
+     data-page="redeem-voucher" di atas). Sistem voucher (data, validasi, klaim,
+     reward, notifikasi, realtime account:update) 100% pakai existing
+     voucherManager.js + endpoint /api/voucher/available & /api/voucher/claim
+     di server.js — popup ini murni UI, TIDAK ADA voucher/model/API baru.
+     Struktur & bahasa visual sengaja disamakan dengan .gt-offer-modal/.wp-modal
+     (dark surface, subtle border, soft shadow, rounded corner, tanpa emoji).
+     z-index (65) sama dengan .gt-offer-modal — dibuka lewat aksi user sendiri
+     jadi wajar sejajar, tetap di bawah .app-update-overlay (Force Update selalu
+     menang). Lihat blok "REDEEM VOUCHER" di app.js/styles.css. -->
+<div class="rv-modal" id="redeemVoucherModal">
+  <div class="rv-box">
+    <button type="button" class="rv-close-btn" id="rvCloseBtn" aria-label="Tutup" onclick="closeRedeemVoucherModal()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-x"></use></svg>
+    </button>
+    <span class="rv-icon">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-ticket"></use></svg>
+    </span>
+    <div class="rv-title">Redeem Voucher</div>
+    <div class="rv-desc">Masukkan kode voucher untuk mendapatkan benefit yang tersedia.</div>
+
+    <!-- "VOUCHER TERSEDIA" — HANYA muncul kalau memang ada voucher aktif &
+         eligible dari backend (GET /api/voucher/available). Kosong -> section
+         disembunyikan sepenuhnya, TIDAK PERNAH menampilkan placeholder palsu. -->
+    <div class="rv-available" id="rvAvailableSection" hidden>
+      <div class="rv-available-label" id="rvAvailableLabel">Voucher Tersedia</div>
+      <div class="rv-available-list" id="rvAvailableList"></div>
+    </div>
+
+    <div class="rv-field">
+      <input type="text" class="rv-input" id="rvCodeInput" placeholder="Masukkan kode voucher" autocomplete="off" spellcheck="false" maxlength="32">
+    </div>
+    <div class="rv-error" id="rvError" hidden></div>
+
+    <button type="button" class="rv-submit-btn" id="rvSubmitBtn" onclick="submitRedeemVoucher()">
+      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-ticket"></use></svg>
+      <span id="rvSubmitLabel">Redeem Voucher</span>
+    </button>
+    <button type="button" class="rv-tutup-btn" id="rvTutupBtn" onclick="closeRedeemVoucherModal()">Tutup</button>
+  </div>
+</div>
+
+<!-- APP UPDATE / AUTO UPDATE — migrasi dari APP LAMA (backend appUpdateManager.js
+     + endpoint /api/app-update + Socket.IO/WS event 'app-update:config', semua
+     SUDAH ADA dan TIDAK diubah). Overlay ini diisi/diupdate dinamis lewat JS
+     (renderAppUpdateOverlay()/hideAppUpdateOverlay() di app.js), full-screen-
+     center seperti confirm-overlay/at-req-box lain di App ini, sehingga TIDAK
+     PERNAH menutupi NAV/Profile/Avatar/Sidebar/tombol penting. Kalau Force
+     Update aktif, tidak ada tombol close/skip/kembali sama sekali. -->
+<div class="app-update-overlay" id="appUpdateOverlay" style="display:none;"></div>
+
+<!-- PREMIUM CLEANUP (Auto Remove Installed Premium Content) — migrasi dari
+     APP LAMA, terhubung ke sistem existing (backend: schedulePremiumCleanup/
+     sweepPendingPremiumCleanups + endpoint /api/premium-cleanup/* di
+     server.js, dan tombol "Hapus Manual" di Admin Web — SEMUA SUDAH ADA,
+     TIDAK ada backend/Socket.IO baru dibuat di sini). Overlay ini diisi/
+     diupdate dinamis lewat JS (showPremiumCleanupModal()/
+     closePremiumCleanupModal() di app.js, dipicu dari
+     handlePremiumCleanup() lewat event WS 'premium:cleanup' ATAU
+     checkPendingPremiumCleanups() saat App dibuka kembali). z-index (lihat
+     .pcm-overlay di styles.css) sengaja LEBIH TINGGI dari App Update
+     (10000) supaya penghapusan konten yang sedang berjalan selalu terlihat
+     user walau ada Force Update tertunda juga, tapi TETAP di bawah
+     Maintenance (20000) yang memang mengunci seluruh App. Sama seperti
+     modal peringatan Force Update, state 'start' TIDAK PUNYA tombol
+     tutup/batal — proses hapus file tidak bisa dibatalkan user. -->
+<div class="pcm-overlay" id="premiumCleanupOverlay" style="display:none;"></div>
+
+<!-- MAINTENANCE MODE — terhubung ke sistem existing (backend
+     maintenanceManager.js + endpoint /api/maintenance-status + WS event
+     'maintenance:config', SEMUA SUDAH ADA, TIDAK ada backend/Socket.IO
+     baru). Overlay ini diisi/diupdate dinamis lewat JS
+     (renderMaintenanceOverlay()/hideMaintenanceOverlay() di app.js).
+     z-index (lihat .maintenance-overlay di styles.css) sengaja LEBIH
+     TINGGI dari overlay/notification manapun di App ini (termasuk App
+     Update di atas) supaya Maintenance SELALU jadi prioritas visual
+     tertinggi tanpa perlu mengubah notification system existing. -->
+<div class="maintenance-overlay" id="maintenanceOverlay" style="display:none;"></div>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     LIVE CHAT SUPPORT — Floating Chat Widget (App Desktop)
+     Mengaktifkan sistem Live Chat yang SUDAH ADA & aktif di Backend +
+     Admin Web (liveChatManager.js/liveChatRoutes.js/server.js, halaman
+     livechat-admin.html) — TIDAK ada database/API/Socket.IO/upload/
+     notification baru dibuat di sini, App ini murni jadi client/interface
+     tambahan dari sistem existing tsb (lihat komentar lengkap di
+     livechat.js). Markup sengaja ditaruh sebagai elemen terpisah paling
+     bawah (di luar halaman/nav manapun) & fixed-position, supaya floating
+     button + panel selalu ada di atas SEMUA halaman App tanpa mengganggu
+     sidebar/NAV/tombol Install-Download/notification existing (lihat
+     z-index di livechat.css — tetap di bawah App Update/Maintenance
+     overlay yang memang harus selalu jadi prioritas visual tertinggi). -->
+
+<!-- Floating hint "Butuh bantuan? Chat admin disini" — loop TERUS TANPA
+     BATAS selama App aktif dengan siklus show 5 detik / hide 5 detik (lihat
+     startHintLoop()/hintTick() di livechat.js). Cuma di-PAUSE (bukan
+     dihentikan) selagi Chat Window terbuka atau icon sedang di-drag, lalu
+     lanjut normal lagi setelahnya. Posisinya juga otomatis mengikuti icon
+     Live Chat kalau sudah dipindahkan (lihat positionHintBubble()). -->
+<div class="lc-hint hide" id="lcHint"><span class="lc-hint-inner">Butuh bantuan? Chat admin disini</span></div>
+
+<!-- Popup notifikasi kecil (pesan Admin baru) saat widget sedang tertutup. -->
+<div class="lc-notif-popup" id="lcNotifPopup"></div>
+
+<!-- Floating Action Button — disembunyikan sampai user benar-benar login
+     (lihat pollSessionState() di livechat.js), floating fixed kanan-bawah,
+     aman di semua resolusi target (1280×720 s/d 1920×1080). -->
+<button type="button" class="lc-fab" id="lcFabBtn" style="display:none;" aria-label="Live Chat — tekan untuk chat, tahan &amp; geser untuk pindahkan" title="Live Chat (drag untuk memindahkan)">
+  <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-message-circle"></use></svg>
+  <span class="lc-fab-status" id="lcFabStatus" title="Status Admin"></span>
+  <span class="lc-fab-badge" id="lcFabBadge" style="display:none;">0</span>
+</button>
+
+<!-- Chat Window/Panel premium — bukan browser alert/popup standar. -->
+<div class="lc-widget" id="lcWidget" style="display:none;">
+  <div class="lc-header">
+    <div class="lc-header-id">
+      <div class="lc-header-avatar">31</div>
+      <div>
+        <div class="lc-header-title">Live Chat</div>
+        <div class="lc-header-status" id="lcHeaderStatus"><span class="lc-dot lc-dot-offline"></span> Offline</div>
+      </div>
+    </div>
+    <div class="lc-header-actions">
+      <button type="button" class="lc-header-btn" id="lcMinimizeBtn" title="Minimize" aria-label="Minimize">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-minus"></use></svg>
+      </button>
+      <button type="button" class="lc-header-btn" id="lcCloseBtn" title="Tutup" aria-label="Tutup">
+        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-x"></use></svg>
+      </button>
+    </div>
+  </div>
+
+  <div class="lc-body" id="lcBody">
+    <div class="lc-empty" id="lcEmpty" style="display:none;">
+      <svg class="lc-empty-icon" width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-message-circle"></use></svg>
+      <div class="lc-empty-title">Mulai percakapan</div>
+      <div class="lc-empty-sub">Ada pertanyaan atau butuh bantuan? Kirim pesan ke Admin, kami akan segera membalas.</div>
+    </div>
+    <div class="lc-messages" id="lcMessages"></div>
+    <div class="lc-typing" id="lcTypingIndicator" style="display:none;">
+      <span class="lc-typing-dot"></span><span class="lc-typing-dot"></span><span class="lc-typing-dot"></span>
+    </div>
+  </div>
+
+  <div class="lc-image-preview" id="lcImagePreview" style="display:none;">
+    <img id="lcImagePreviewImg" alt="Preview">
+    <button type="button" id="lcImagePreviewRemove" aria-label="Hapus gambar">
+      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-x"></use></svg>
+    </button>
+  </div>
+
+  <div class="lc-emoji-picker" id="lcEmojiPicker" style="display:none;"></div>
+
+  <div class="lc-input-bar">
+    <button type="button" class="lc-input-btn" id="lcImageBtn" title="Kirim gambar" aria-label="Kirim gambar">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-image"></use></svg>
+    </button>
+    <input type="file" id="lcImageInput" accept="image/*" style="display:none;">
+    <button type="button" class="lc-input-btn" id="lcEmojiBtn" title="Emoji" aria-label="Emoji">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-smile"></use></svg>
+    </button>
+    <textarea class="lc-input-text" id="lcInputText" rows="1" placeholder="Tulis pesan..." maxlength="2000"></textarea>
+    <button type="button" class="lc-send-btn" id="lcSendBtn" title="Kirim" aria-label="Kirim">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-send"></use></svg>
+    </button>
+  </div>
+</div>
+
+<script src="app.js"></script>
+<!-- Dimuat SETELAH app.js — reuse global scope yang sama (SERVER_URL, api(),
+     currentUser, escapeHtml(), _ws), lihat catatan di livechat.js. -->
+<script src="livechat.js"></script>
+</body>
+</html>

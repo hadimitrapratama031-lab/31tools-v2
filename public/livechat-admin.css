@@ -1,0 +1,209 @@
+/* ══════════════════════════════════════════════════════════════════════
+   LIVE CHAT SUPPORT (Admin Web) — reuse variabel warna/radius admin.css,
+   di sini cuma style tambahan. Revisi layout: lebih lega, jelas
+   pemisahan antar-bagian (sidebar / header chat / body / input), dan
+   scroll area yang jelas batasnya supaya tetap rapi walau banyak user
+   sedang chat bersamaan.
+   ══════════════════════════════════════════════════════════════════════ */
+
+.lc-admin-main{
+  display:flex; flex-direction:column; height:100vh; max-height:100vh;
+  overflow:hidden; padding-bottom:28px;
+}
+.lc-admin-main .page-head{ margin-bottom:22px; flex-shrink:0; }
+
+.lc-admin-layout{
+  flex:1; display:flex; min-height:0; overflow:hidden; padding:0 !important;
+  border-radius:var(--radius-lg); box-shadow:0 20px 50px rgba(0,0,0,.22);
+}
+
+/* ══════════════════════════ SIDEBAR PERCAKAPAN ══════════════════════════ */
+.lc-convo-panel{
+  width:340px; flex-shrink:0; border-right:1px solid var(--line);
+  display:flex; flex-direction:column; min-height:0; background:rgba(255,255,255,.015);
+}
+
+.lc-convo-search{
+  display:flex; align-items:center; gap:9px; margin:18px 18px 14px; padding:11px 14px;
+  border-radius:var(--radius-md); background:var(--glass); border:1px solid var(--line);
+  color:var(--text-dim); transition:border-color .15s ease, background .15s ease;
+}
+.lc-convo-search:focus-within{ border-color:var(--violet); background:var(--glass-md); }
+.lc-convo-search svg{ flex-shrink:0; opacity:.75; }
+.lc-convo-search input{
+  flex:1; border:none; background:transparent; outline:none; color:var(--text-main);
+  font-size:13.5px; font-family:inherit;
+}
+.lc-convo-search input::placeholder{ color:var(--text-faint); }
+
+.lc-convo-filters{ display:flex; gap:7px; padding:0 18px 16px; flex-wrap:wrap; }
+.lc-filter-chip{
+  padding:6.5px 13px; border-radius:999px; font-size:11.5px; font-weight:700; cursor:pointer;
+  border:1px solid var(--line); background:transparent; color:var(--text-dim);
+  transition:all .15s ease; white-space:nowrap;
+}
+.lc-filter-chip:hover{ background:var(--glass); color:var(--text-main); border-color:var(--line-hi); }
+.lc-filter-chip.active{
+  background:var(--grad-primary); color:#fff; border-color:transparent;
+  box-shadow:0 6px 16px rgba(123,92,255,.4);
+}
+
+.lc-convo-list-wrap{ flex:1; min-height:0; border-top:1px solid var(--line); }
+.lc-convo-list{
+  height:100%; overflow-y:auto; padding:10px 12px 16px; scrollbar-gutter:stable;
+}
+.lc-convo-list::-webkit-scrollbar, .lc-chat-body::-webkit-scrollbar{ width:7px; }
+.lc-convo-list::-webkit-scrollbar-thumb, .lc-chat-body::-webkit-scrollbar-thumb{
+  background:var(--glass-hi); border-radius:8px;
+}
+.lc-convo-list::-webkit-scrollbar-track, .lc-chat-body::-webkit-scrollbar-track{ background:transparent; }
+
+.lc-convo-empty{ text-align:center; color:var(--text-faint); font-size:12.5px; padding:40px 16px; line-height:1.6; }
+
+.lc-convo-item{
+  display:flex; gap:12px; padding:12px 12px; border-radius:var(--radius-md); cursor:pointer;
+  position:relative; transition:background .15s ease, transform .1s ease; margin-bottom:4px;
+}
+.lc-convo-item:hover{ background:var(--glass); }
+.lc-convo-item.active{
+  background:var(--glass-md); box-shadow:inset 0 0 0 1px rgba(123,92,255,.35);
+}
+.lc-convo-avatar-wrap{ position:relative; flex-shrink:0; }
+.lc-convo-avatar{ width:46px; height:46px; border-radius:50%; object-fit:cover; background:var(--grad-dark); display:block; }
+.lc-convo-online-dot{
+  position:absolute; bottom:0; right:0; width:12px; height:12px; border-radius:50%;
+  border:2.5px solid var(--navy-800); background:var(--text-faint);
+}
+.lc-convo-online-dot.online{ background:var(--green); box-shadow:0 0 6px rgba(74,222,128,.55); }
+
+.lc-convo-main{ flex:1; min-width:0; padding-top:1px; }
+.lc-convo-top{ display:flex; justify-content:space-between; align-items:baseline; gap:8px; }
+.lc-convo-name{ font-size:13.5px; font-weight:700; color:var(--text-main); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+.lc-convo-time{ font-size:10.5px; color:var(--text-faint); flex-shrink:0; }
+.lc-convo-last{ font-size:12.5px; color:var(--text-dim); white-space:nowrap; overflow:hidden; text-overflow:ellipsis; margin-top:4px; line-height:1.4; }
+.lc-convo-badge{
+  position:absolute; top:12px; right:10px; min-width:19px; height:19px; padding:0 5px; border-radius:10px;
+  background:#f87171; color:#fff; font-size:10.5px; font-weight:800;
+  display:flex; align-items:center; justify-content:center; box-shadow:0 2px 8px rgba(248,113,113,.45);
+}
+
+/* ══════════════════════════ PANEL CHAT ══════════════════════════ */
+.lc-chat-panel{ flex:1; display:flex; flex-direction:column; min-width:0; min-height:0; background:rgba(0,0,0,.06); }
+
+.lc-chat-empty-state{ margin:auto; text-align:center; color:var(--text-faint); padding:40px; }
+.lc-chat-empty-state svg{
+  width:56px; height:56px; padding:14px; border-radius:50%; background:var(--glass);
+  color:var(--violet); opacity:.9; box-sizing:content-box;
+}
+.lc-chat-empty-title{ font-size:16px; font-weight:800; color:var(--text-main); margin:16px 0 7px; }
+.lc-chat-empty-sub{ font-size:12.5px; max-width:280px; margin:0 auto; line-height:1.6; }
+
+.lc-chat-active{ display:flex; flex-direction:column; flex:1; min-height:0; }
+
+.lc-chat-header{
+  display:flex; align-items:center; justify-content:space-between; padding:16px 24px;
+  border-bottom:1px solid var(--line); flex-shrink:0; background:rgba(255,255,255,.015);
+}
+.lc-chat-header-user{ display:flex; align-items:center; gap:12px; }
+.lc-chat-avatar{ width:42px; height:42px; border-radius:50%; object-fit:cover; background:var(--grad-dark); }
+.lc-chat-username{ font-size:14.5px; font-weight:800; color:var(--text-main); }
+.lc-chat-userstatus{ font-size:11.5px; color:var(--text-dim); display:flex; align-items:center; gap:6px; margin-top:3px; }
+.lc-dot{ width:7px; height:7px; border-radius:50%; display:inline-block; }
+.lc-dot-online{ background:var(--green); box-shadow:0 0 6px rgba(74,222,128,.6); }
+.lc-dot-offline{ background:var(--text-faint); }
+
+.lc-chat-body{
+  flex:1; overflow-y:auto; padding:26px 28px 10px; display:flex; flex-direction:column;
+  min-height:0; scrollbar-gutter:stable;
+}
+.lc-messages{ display:flex; flex-direction:column; gap:16px; }
+
+.lc-msg-row{ display:flex; flex-direction:column; max-width:62%; }
+.lc-msg-row.lc-from-admin{ align-self:flex-end; align-items:flex-end; }
+.lc-msg-row.lc-from-user{ align-self:flex-start; align-items:flex-start; }
+.lc-bubble{
+  padding:11px 16px; border-radius:18px; font-size:13.5px; line-height:1.55; word-break:break-word;
+  white-space:pre-wrap; box-shadow:0 3px 12px rgba(0,0,0,.16);
+}
+.lc-from-admin .lc-bubble{ background:var(--grad-primary); color:#fff; border-bottom-right-radius:6px; }
+.lc-from-user .lc-bubble{ background:var(--glass-md); color:var(--text-main); border:1px solid var(--line); border-bottom-left-radius:6px; }
+.lc-bubble img{ max-width:270px; max-height:270px; border-radius:12px; display:block; cursor:zoom-in; margin-top:6px; }
+.lc-bubble img:first-child{ margin-top:0; }
+.lc-msg-meta{ display:flex; align-items:center; gap:5px; margin-top:5px; padding:0 5px; font-size:10.5px; color:var(--text-faint); }
+.lc-msg-meta svg{ width:13px; height:13px; }
+.lc-msg-meta .lc-read{ color:var(--cyan); }
+
+.lc-typing{ display:flex; gap:4px; padding:10px 16px; align-self:flex-start; }
+.lc-typing-dot{ width:6px; height:6px; border-radius:50%; background:var(--text-faint); animation:lcaTypingBounce 1.2s infinite ease-in-out; }
+.lc-typing-dot:nth-child(2){ animation-delay:.15s; }
+.lc-typing-dot:nth-child(3){ animation-delay:.3s; }
+@keyframes lcaTypingBounce{ 0%,60%,100%{ transform:translateY(0); opacity:.5; } 30%{ transform:translateY(-4px); opacity:1; } }
+
+/* ── Preview gambar sebelum kirim ── */
+.lc-image-preview{
+  margin:0 24px 12px; position:relative; width:fit-content; border:1px solid var(--line);
+  border-radius:var(--radius-md); overflow:hidden; flex-shrink:0; box-shadow:0 4px 14px rgba(0,0,0,.2);
+}
+.lc-image-preview img{ display:block; max-height:120px; max-width:210px; }
+.lc-image-preview button{
+  position:absolute; top:6px; right:6px; width:24px; height:24px; border-radius:50%; border:none;
+  background:rgba(0,0,0,.65); color:#fff; display:flex; align-items:center; justify-content:center; cursor:pointer;
+  transition:background .15s ease;
+}
+.lc-image-preview button:hover{ background:rgba(0,0,0,.85); }
+
+/* ── Emoji picker ── */
+.lc-emoji-picker{
+  margin:0 24px 12px; padding:10px; border-radius:var(--radius-md); background:var(--glass); border:1px solid var(--line);
+  display:grid; grid-template-columns:repeat(10,1fr); gap:3px; flex-shrink:0; max-height:130px; overflow-y:auto;
+}
+.lc-emoji-picker button{ border:none; background:transparent; font-size:19px; padding:6px; border-radius:9px; cursor:pointer; line-height:1; }
+.lc-emoji-picker button:hover{ background:var(--glass-hi); }
+
+/* ── Input balasan ── */
+.lc-input-bar{
+  display:flex; align-items:flex-end; gap:8px; padding:16px 22px;
+  border-top:1px solid var(--line); flex-shrink:0; background:rgba(255,255,255,.015);
+}
+.lc-input-btn{
+  width:36px; height:36px; border-radius:11px; border:none; cursor:pointer; flex-shrink:0;
+  background:transparent; color:var(--text-dim); display:flex; align-items:center; justify-content:center;
+  transition:background .15s ease, color .15s ease;
+}
+.lc-input-btn:hover{ background:var(--glass); color:var(--text-main); }
+.lc-input-btn.active{ background:rgba(123,92,255,.18); color:var(--violet); }
+.lc-input-text{
+  flex:1; resize:none; max-height:110px; padding:11px 16px; border-radius:16px;
+  background:var(--glass); border:1px solid var(--line); color:var(--text-main);
+  font-size:13.5px; font-family:inherit; line-height:1.5; outline:none; transition:border-color .15s ease, background .15s ease;
+}
+.lc-input-text:focus{ border-color:var(--violet); background:var(--glass-md); }
+.lc-input-text::placeholder{ color:var(--text-faint); }
+.lc-send-btn{
+  width:42px; height:42px; border-radius:13px; border:none; cursor:pointer; flex-shrink:0;
+  background:var(--grad-primary); color:#fff; display:flex; align-items:center; justify-content:center;
+  box-shadow:0 6px 16px rgba(123,92,255,.35); transition:transform .12s ease, opacity .12s ease, box-shadow .12s ease;
+}
+.lc-send-btn:hover{ transform:scale(1.06); box-shadow:0 8px 20px rgba(123,92,255,.45); }
+.lc-send-btn:disabled{ opacity:.4; cursor:not-allowed; transform:none; box-shadow:none; }
+
+/* ── Lightbox ── */
+.lc-lightbox{
+  position:fixed; inset:0; z-index:9500; background:rgba(0,0,0,.85);
+  display:flex; align-items:center; justify-content:center; cursor:zoom-out;
+}
+.lc-lightbox img{ max-width:90vw; max-height:90vh; border-radius:10px; box-shadow:0 20px 60px rgba(0,0,0,.6); }
+
+/* ── Skeleton loading ── */
+.lc-skeleton-row{ display:flex; flex-direction:column; gap:14px; padding:4px 0; }
+.lc-skeleton{
+  height:36px; border-radius:16px; background:linear-gradient(90deg,var(--glass),var(--glass-hi),var(--glass));
+  background-size:200% 100%; animation:lcaShimmer 1.4s infinite;
+}
+@keyframes lcaShimmer{ 0%{ background-position:200% 0; } 100%{ background-position:-200% 0; } }
+
+/* ── Responsif — jendela admin sempit tetap proporsional ── */
+@media (max-width:1180px){
+  .lc-convo-panel{ width:290px; }
+  .lc-msg-row{ max-width:74%; }
+}
