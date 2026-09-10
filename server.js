@@ -1698,20 +1698,39 @@ const CATALOG_EMBED_COPY = {
 // Fallback ke APP_LOGO_URL (.env) kalau logo App Customization belum
 // diaktifkan/belum diisi. TIDAK PERNAH fallback ke URL logo statis dari JSON
 // template referensi.
+//
+// PENTING (fix "Invalid Form Body" dari Discord): branding.logo.url BISA
+// berupa data URI base64 (`data:image/png;base64,...`) kalau admin upload
+// file logo langsung lewat Admin Web (lihat sanitizeImageUrl() di
+// appCustomizationManager.js — sengaja mendukung 2 bentuk: URL http(s) ATAU
+// upload/data URI). Discord Embed cuma menerima URL http(s) biasa untuk
+// author.icon_url/footer.icon_url — kalau dikirim data URI base64, Discord
+// menolak SELURUH request dengan error "Invalid Form Body" (bukan cuma
+// icon-nya yang gagal, seluruh notifikasi ikut gagal terkirim). Makanya di
+// sini WAJIB di-filter dulu lewat cleanCatalogUrl() — kalau logo yang
+// tersimpan ternyata data URI (hasil upload, bukan Image URL), dilewati sama
+// sekali (fallback ke APP_LOGO_URL/tanpa icon), BUKAN dikirim mentah ke
+// Discord.
 async function getCatalogBrandIconUrl() {
   try {
     const cfg = await appCustomizationManager.getConfig();
     const logo = cfg?.branding?.logo;
-    if (logo?.enabled && logo?.url) return logo.url;
+    if (logo?.enabled && logo?.url) {
+      const httpLogoUrl = cleanCatalogUrl(logo.url);
+      if (httpLogoUrl) return httpLogoUrl;
+      // Logo aktif tapi bentuknya upload/data URI (bukan Image URL http/https)
+      // -> tidak bisa dipakai Discord, fallback di bawah (bukan error).
+    }
   } catch (e) {
     console.warn('[CatalogEmbed] Gagal ambil logo App Customization, pakai fallback APP_LOGO_URL:', e.message);
   }
-  return APP_LOGO_URL || null;
+  return cleanCatalogUrl(APP_LOGO_URL) || null;
 }
 
-// Guard kecil khusus buildCatalogEmbed — Discord menolak field url/author.url
-// kalau bukan http(s), jadi link yang belum diisi admin (null/kosong) atau
-// bukan http(s) dilewati sama sekali (bukan dikirim sebagai link mati).
+// Guard kecil khusus buildCatalogEmbed — Discord menolak field url/author.url/
+// icon_url kalau bukan http(s) (termasuk data URI base64 hasil upload logo
+// App Customization — lihat getCatalogBrandIconUrl() di atas), jadi apapun
+// yang bukan http(s) dilewati sama sekali (bukan dikirim mentah ke Discord).
 function cleanCatalogUrl(u) {
   const s = String(u || '').trim();
   return /^https?:\/\//i.test(s) ? s : null;
