@@ -42,7 +42,13 @@ try {
 }
 
 const FALLBACK_COLOR = 0xA05BB4; // = 10509236, warna default 4 template JSON ("style 31 Tools")
-const FETCH_TIMEOUT_MS = 6000;
+// Diturunkan dari 6000 -> 4000ms (fix "notifikasi Add/Update Game/Bypass
+// delay"): ekstraksi warna ini jalan SEBELUM notif dikirim (lihat
+// buildCatalogEmbed di server.js) — network lambat/timeout di sini menunda
+// notifikasi Discord ikut lambat. 4 detik masih lebih dari cukup untuk
+// unduh 1 gambar header/hero Steam, tapi memangkas skenario terburuk kalau
+// koneksi ke CDN gambar lagi lambat.
+const FETCH_TIMEOUT_MS = 4000;
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8MB — cukup lega untuk hero/header image Steam
 const CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 jam — banner utk App ID yang sama jarang berubah
 const CACHE_MAX_ENTRIES = 500;

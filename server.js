@@ -1695,31 +1695,39 @@ const CATALOG_EMBED_COPY = {
 // branding.logo — data yang sama dipakai watermark logo App Desktop),
 // dibaca ULANG dari DB tiap kali notif dikirim (bukan cache lama) supaya
 // kalau admin ganti logo, notifikasi berikutnya langsung pakai logo baru.
-// Fallback ke APP_LOGO_URL (.env) kalau logo App Customization belum
-// diaktifkan/belum diisi. TIDAK PERNAH fallback ke URL logo statis dari JSON
-// template referensi.
+// Fallback ke APP_LOGO_URL (.env) HANYA kalau logo App Customization belum
+// diaktifkan/belum diisi sama sekali. TIDAK PERNAH fallback ke URL logo
+// statis dari JSON template referensi, dan TIDAK PERNAH hardcode.
 //
-// PENTING (fix "Invalid Form Body" dari Discord): branding.logo.url BISA
-// berupa data URI base64 (`data:image/png;base64,...`) kalau admin upload
-// file logo langsung lewat Admin Web (lihat sanitizeImageUrl() di
-// appCustomizationManager.js — sengaja mendukung 2 bentuk: URL http(s) ATAU
-// upload/data URI). Discord Embed cuma menerima URL http(s) biasa untuk
-// author.icon_url/footer.icon_url — kalau dikirim data URI base64, Discord
-// menolak SELURUH request dengan error "Invalid Form Body" (bukan cuma
-// icon-nya yang gagal, seluruh notifikasi ikut gagal terkirim). Makanya di
-// sini WAJIB di-filter dulu lewat cleanCatalogUrl() — kalau logo yang
-// tersimpan ternyata data URI (hasil upload, bukan Image URL), dilewati sama
-// sekali (fallback ke APP_LOGO_URL/tanpa icon), BUKAN dikirim mentah ke
-// Discord.
+// PENTING (fix "Author/Footer logo tidak muncul" & "Invalid Form Body" dari
+// Discord): branding.logo.url di Admin Web SELALU tersimpan sebagai data URI
+// base64 (`data:image/png;base64,...`) karena Admin Web cuma punya tombol
+// upload file (lihat aczLogoFile di admin.js) — TIDAK ada opsi "Image URL"
+// untuk logo. Discord Embed cuma menerima URL http(s) biasa untuk
+// author.icon_url/footer.icon_url — kalau dikirim data URI base64 mentah,
+// Discord menolak SELURUH request dengan error "Invalid Form Body" (bukan
+// cuma icon-nya yang gagal, seluruh notifikasi ikut gagal terkirim).
+// SEBELUMNYA logo data URI langsung dilewati (fallback APP_LOGO_URL/tanpa
+// icon) — akibatnya logo App Customization TIDAK PERNAH benar-benar tampil
+// di Discord walau admin sudah upload & aktifkan. SEKARANG: data URI itu
+// diubah jadi URL http(s) publik lewat endpoint
+// GET /api/app-customization/logo (lihat route-nya, dekat endpoint App
+// Customization lain) yang men-decode data URI YANG SAMA dari DB — jadi
+// sumbernya tetap 100% App Customization, cuma "dibungkus" jadi URL supaya
+// Discord bisa mengaksesnya. `?v=` diisi updatedAt (versi config) supaya
+// URL-nya berubah tiap kali admin ganti logo (cache-busting) — Discord tidak
+// akan menampilkan logo lama yang ke-cache.
 async function getCatalogBrandIconUrl() {
   try {
     const cfg = await appCustomizationManager.getConfig();
     const logo = cfg?.branding?.logo;
     if (logo?.enabled && logo?.url) {
       const httpLogoUrl = cleanCatalogUrl(logo.url);
-      if (httpLogoUrl) return httpLogoUrl;
-      // Logo aktif tapi bentuknya upload/data URI (bukan Image URL http/https)
-      // -> tidak bisa dipakai Discord, fallback di bawah (bukan error).
+      if (httpLogoUrl) return httpLogoUrl; // sudah URL http(s) biasa (jarang, tapi didukung)
+      if (String(logo.url).startsWith('data:image/')) {
+        const version = cfg.updatedAt ? new Date(cfg.updatedAt).getTime() : Date.now();
+        return `${SERVER_URL}/api/app-customization/logo?v=${version}`;
+      }
     }
   } catch (e) {
     console.warn('[CatalogEmbed] Gagal ambil logo App Customization, pakai fallback APP_LOGO_URL:', e.message);
@@ -1773,7 +1781,15 @@ async function resolveLiveHeroImageUrl(appId) {
   const heroUrl = `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${appId}/library_hero.jpg`;
   let resolved = null;
   try {
-    const res = await axios.head(heroUrl, { timeout: 8000, validateStatus: () => true });
+    // Timeout diturunkan dari 8000 -> 3500ms (fix "notifikasi Add/Update
+    // Game/Bypass delay"): ini live HEAD-check ke Steam CDN yang jalan
+    // SEBELUM notif Discord dikirim (lihat pickCatalogBanner dipanggil di
+    // titik pengiriman notif game_new/game_edit/bypass_new/bypass_edit) —
+    // kalau lambat/timeout, notifnya ikut telat terkirim. 3.5 detik cukup
+    // untuk HEAD request biasa, dan hasilnya di-cache 6 jam (lihat
+    // CATALOG_HERO_CACHE_TTL_MS) jadi App ID yang sama tidak akan kena
+    // delay ini berulang-ulang.
+    const res = await axios.head(heroUrl, { timeout: 3500, validateStatus: () => true });
     if (res.status === 200) resolved = heroUrl;
   } catch (e) { /* best-effort — banner tetap fallback ke imageUrl kalau ini gagal */ }
 
@@ -7726,6 +7742,55 @@ app.put('/api/admin/app-customization', requireAdmin, async (req, res) => {
   }
 });
 
+// ── LOGO BRANDING — endpoint PUBLIK yang "mengubah" logo App Customization
+// jadi URL http(s) biasa yang bisa diakses siapa saja (termasuk Discord).
+// Kenapa perlu: logo di Admin Web (App Customization > Branding Logo) HANYA
+// bisa diisi lewat upload file (lihat aczLogoFile di admin.js), yang selalu
+// tersimpan sebagai data URI base64 (`data:image/...;base64,...`) di
+// database — BUKAN URL. Discord Embed (author.icon_url/footer.icon_url,
+// dipakai buildCatalogEmbed di bawah untuk notif Add/Update Game/Bypass)
+// HANYA menerima URL http(s) biasa, menolak data URI sama sekali. Endpoint
+// ini TIDAK membuat sistem storage/upload baru — cuma men-decode data URI
+// yang SUDAH tersimpan di dokumen App Customization (sumber data TETAP
+// SATU-SATUNYA: appCustomizationManager) dan menyajikannya sebagai file
+// gambar biasa, supaya logo branding yang sama bisa dipakai Discord tanpa
+// admin perlu hosting logo di tempat lain.
+// Publik (tanpa requireAdmin) — sama seperti GET /api/app-customization,
+// karena Discord (dan App sebelum login) perlu mengaksesnya tanpa auth.
+// Dibaca ULANG dari DB tiap request (tidak ada cache lama) supaya begitu
+// admin ganti logo, request berikutnya ke endpoint ini langsung dapat logo
+// terbaru — konsisten dengan prinsip realtime App Customization yang sudah
+// ada (broadcastUpdate memberi sinyal, client fetch ulang config lengkap).
+app.get('/api/app-customization/logo', async (req, res) => {
+  try {
+    const cfg = await appCustomizationManager.getConfig();
+    const logo = cfg?.branding?.logo;
+    if (!logo?.enabled || !logo?.url) return res.status(404).end();
+
+    const raw = String(logo.url);
+    const dataUriMatch = /^data:([^;,]+);base64,(.+)$/i.exec(raw);
+    if (!dataUriMatch) {
+      // Bukan hasil upload (data URI) — berarti sudah URL http(s) biasa
+      // (mis. diisi langsung lewat API oleh admin), tinggal diteruskan.
+      if (/^https?:\/\//i.test(raw)) return res.redirect(302, raw);
+      return res.status(404).end();
+    }
+
+    const mime = dataUriMatch[1].toLowerCase();
+    const buffer = Buffer.from(dataUriMatch[2], 'base64');
+    res.set('Content-Type', mime);
+    // Cache pendek (5 menit): cukup supaya Discord/klien tidak fetch ulang
+    // tiap kali notif dikirim, tapi tetap singkat supaya logo baru yang
+    // diganti admin cepat kepakai (ditambah cache-busting ?v= di
+    // getCatalogBrandIconUrl() supaya URL-nya sendiri berubah tiap update).
+    res.set('Cache-Control', 'public, max-age=300');
+    res.send(buffer);
+  } catch (e) {
+    console.warn('[AppCustomization] Gagal menyajikan logo publik:', e.message);
+    res.status(500).end();
+  }
+});
+
 // ══════════════════════════════════════════════════════════════════════════
 // DASHBOARD HERO BANNER — MULTI BANNER DINAMIS di halaman Dashboard APP
 // (elemen `.dash-banner` carousel, lihat dashboardBannerManager.js), diatur
@@ -8421,18 +8486,27 @@ app.post('/api/admin/games', requireAdmin, async (req, res) => {
   // fire-and-forget — tidak pernah membuat proses tambah game gagal.
   (async () => {
     try {
-      const appCfg = await appUpdateManager.getConfig();
+      // appCfg (baca settings) & banner (bisa live-check ke Steam CDN) tidak
+      // saling bergantung -> dijalankan paralel (fix delay), bukan berurutan.
+      const [appCfg, banner] = await Promise.all([appUpdateManager.getConfig(), pickCatalogBanner(doc)]);
       await webhookManager.sendCategoryWebhook('game_new', {
         eventId: String(result.insertedId),
         embed: await buildCatalogEmbed({
           kind: 'game', isNew: true,
           name: doc.name, appId: doc.appId, publisher: doc.publisher,
-          banner: await pickCatalogBanner(doc),
+          banner,
           downloadUrl: appCfg.downloadUrl || appCfg.releaseUrl || null
         }),
         plainEmbed: true
       });
-    } catch (e) { /* best-effort */ }
+    } catch (e) {
+      // Fix "beberapa notifikasi tidak masuk tanpa jejak": sebelumnya error di
+      // sini (mis. DB hiccup saat baca App Update config) ditelan diam-diam
+      // tanpa log sama sekali, jadi tidak ada cara tahu kenapa notif Game
+      // Baru tidak terkirim. Tetap best-effort (tidak melempar ulang / tidak
+      // menggagalkan proses tambah game), cuma sekarang tercatat di log.
+      console.error(`[Notif] Gagal kirim notifikasi Game Baru "${doc.name}":`, e.message);
+    }
   })();
 
   // Kalau ini approval dari Request Game — tandai request-nya 'approved',
@@ -8544,18 +8618,23 @@ app.put('/api/admin/games/:id', requireAdmin, async (req, res) => {
     try {
       const finalDoc = await db.collection('games').findOne({ _id: new ObjectId(req.params.id) });
       if (!finalDoc) return;
-      const appCfg = await appUpdateManager.getConfig();
+      // appCfg & banner tidak saling bergantung -> paralel (fix delay).
+      const [appCfg, banner] = await Promise.all([appUpdateManager.getConfig(), pickCatalogBanner(finalDoc)]);
       await webhookManager.sendCategoryWebhook('game_edit', {
         eventId: `${req.params.id}:${Date.now()}`,
         embed: await buildCatalogEmbed({
           kind: 'game', isNew: false,
           name: finalDoc.name, appId: finalDoc.appId, publisher: finalDoc.publisher,
-          banner: await pickCatalogBanner(finalDoc),
+          banner,
           downloadUrl: appCfg.downloadUrl || appCfg.releaseUrl || null
         }),
         plainEmbed: true
       });
-    } catch (e) { /* best-effort */ }
+    } catch (e) {
+      // Sebelumnya ditelan diam-diam tanpa log (lihat catatan sama di notif
+      // Game Baru di atas) — sekarang tercatat, tetap best-effort.
+      console.error(`[Notif] Gagal kirim notifikasi Update Game "${req.params.id}":`, e.message);
+    }
   })();
 
   res.json({ success: true });
@@ -8844,18 +8923,20 @@ app.post('/api/admin/bypasses', requireAdmin, async (req, res) => {
   // fire-and-forget — tidak pernah membuat proses tambah bypass gagal.
   (async () => {
     try {
-      const appCfg = await appUpdateManager.getConfig();
+      const [appCfg, banner] = await Promise.all([appUpdateManager.getConfig(), pickCatalogBanner(doc)]);
       await webhookManager.sendCategoryWebhook('bypass_new', {
         eventId: String(result.insertedId),
         embed: await buildCatalogEmbed({
           kind: 'bypass', isNew: true,
           name: doc.name, appId: doc.appId, publisher: doc.publisher,
-          banner: await pickCatalogBanner(doc),
+          banner,
           downloadUrl: appCfg.downloadUrl || appCfg.releaseUrl || null
         }),
         plainEmbed: true
       });
-    } catch (e) { /* best-effort */ }
+    } catch (e) {
+      console.error(`[Notif] Gagal kirim notifikasi Bypass Baru "${doc.name}":`, e.message);
+    }
   })();
 
   res.json({ ...doc, _id: result.insertedId });
@@ -8909,18 +8990,20 @@ app.put('/api/admin/bypasses/:id', requireAdmin, async (req, res) => {
     try {
       const finalDoc = await db.collection('bypasses').findOne({ _id: new ObjectId(req.params.id) });
       if (!finalDoc) return;
-      const appCfg = await appUpdateManager.getConfig();
+      const [appCfg, banner] = await Promise.all([appUpdateManager.getConfig(), pickCatalogBanner(finalDoc)]);
       await webhookManager.sendCategoryWebhook('bypass_edit', {
         eventId: `${req.params.id}:${Date.now()}`,
         embed: await buildCatalogEmbed({
           kind: 'bypass', isNew: false,
           name: finalDoc.name, appId: finalDoc.appId, publisher: finalDoc.publisher,
-          banner: await pickCatalogBanner(finalDoc),
+          banner,
           downloadUrl: appCfg.downloadUrl || appCfg.releaseUrl || null
         }),
         plainEmbed: true
       });
-    } catch (e) { /* best-effort */ }
+    } catch (e) {
+      console.error(`[Notif] Gagal kirim notifikasi Update Bypass "${req.params.id}":`, e.message);
+    }
   })();
 
   res.json({ success: true });
