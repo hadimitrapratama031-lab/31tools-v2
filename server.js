@@ -14,9 +14,18 @@ const path = require('path');
 const http = require('http');
 const WebSocket = require('ws');
 const sanitizeHtml = require('sanitize-html');
+const compression = require('compression');
 
 const app = express();
 app.use(cors());
+// GZIP semua response JSON/HTML/JS (fix "halaman App Customization lambat"
+// — GET/PUT config-nya bisa berisi background image (maks 10MB) + logo
+// (maks 5MB) sebagai base64 dalam SATU body, jadi ukurannya bisa ~20MB kalau
+// keduanya terisi; base64 (teks) terkompresi cukup baik lewat gzip, jadi
+// waktu transfer turun signifikan). Berlaku global untuk semua endpoint,
+// tidak mengganggu apapun — compression cuma menyusutkan body response
+// sebelum dikirim, transparan buat client (browser/axios otomatis decode).
+app.use(compression());
 
 // ══════════════════════════════════════════════════════════════════════════
 // ── DISCORD INTERACTIONS ENDPOINT (slash command) ──
@@ -1598,10 +1607,10 @@ const catalogEmbedColor = require('./catalogEmbedColor');
 //                   Customization > Branding Logo) yang SUDAH ADA di
 //                   appCustomizationManager — dibaca ulang tiap kirim notif
 //                   (bukan snapshot lama), fallback ke APP_LOGO_URL (.env)
-//                   kalau logo App Customization belum diaktifkan/diisi
-//                   admin. TIDAK PERNAH pakai URL logo statis dari JSON
-//                   template (sesuai permintaan: ambil dari data branding
-//                   Admin App, bukan hardcode).
+//   - author/footer icon : URL logo TETAP (fixed), sesuai permintaan
+//                   terbaru — TIDAK LAGI diambil dari App Customization,
+//                   cuma satu link ini dipakai untuk semua embed Add/Update
+//                   Game/Bypass (lihat CATALOG_BRAND_ICON_URL di bawah).
 //   - url/author.url : link download App, diambil LIVE dari
 //                   appUpdateManager.getConfig() (sistem App Update yang
 //                   sudah ada, BUKAN link statis "discord.com" bawaan
@@ -1612,15 +1621,20 @@ const catalogEmbedColor = require('./catalogEmbedColor');
 //
 //   kind  : 'game' | 'bypass'
 //   isNew : true (Add) | false (Update/Edit)
+
+// Logo Author/Footer embed katalog (Add Game/Add Bypass/Game Update/Bypass
+// Update) — URL TETAP sesuai permintaan, BUKAN lagi dari App Customization
+// (sebelumnya diambil dari branding.logo App Customization lewat
+// getCatalogBrandIconUrl(), sekarang diganti satu link ini permanen).
+const CATALOG_BRAND_ICON_URL = 'https://i.ibb.co.com/zhZJYQGP/logo31-opsi2.png';
+
 async function buildCatalogEmbed({ kind, isNew, name, appId, publisher, banner, downloadUrl }) {
   const nounLabel = kind === 'bypass' ? 'Bypass' : 'Game';
   const eventKey = isNew ? 'add' : 'update';
   const copy = CATALOG_EMBED_COPY[kind]?.[eventKey] || CATALOG_EMBED_COPY.game.add;
 
-  const [color, authorIcon] = await Promise.all([
-    catalogEmbedColor.getCatalogAccentColor(banner),
-    getCatalogBrandIconUrl()
-  ]);
+  const color = await catalogEmbedColor.getCatalogAccentColor(banner);
+  const authorIcon = CATALOG_BRAND_ICON_URL;
 
   const link = cleanCatalogUrl(downloadUrl);
   const description =
@@ -1690,55 +1704,9 @@ const CATALOG_EMBED_COPY = {
   }
 };
 
-// Logo author/footer embed katalog — SATU-SATUNYA sumber: branding logo di
-// Admin Web > App Customization (appCustomizationManager, field
-// branding.logo — data yang sama dipakai watermark logo App Desktop),
-// dibaca ULANG dari DB tiap kali notif dikirim (bukan cache lama) supaya
-// kalau admin ganti logo, notifikasi berikutnya langsung pakai logo baru.
-// Fallback ke APP_LOGO_URL (.env) HANYA kalau logo App Customization belum
-// diaktifkan/belum diisi sama sekali. TIDAK PERNAH fallback ke URL logo
-// statis dari JSON template referensi, dan TIDAK PERNAH hardcode.
-//
-// PENTING (fix "Author/Footer logo tidak muncul" & "Invalid Form Body" dari
-// Discord): branding.logo.url di Admin Web SELALU tersimpan sebagai data URI
-// base64 (`data:image/png;base64,...`) karena Admin Web cuma punya tombol
-// upload file (lihat aczLogoFile di admin.js) — TIDAK ada opsi "Image URL"
-// untuk logo. Discord Embed cuma menerima URL http(s) biasa untuk
-// author.icon_url/footer.icon_url — kalau dikirim data URI base64 mentah,
-// Discord menolak SELURUH request dengan error "Invalid Form Body" (bukan
-// cuma icon-nya yang gagal, seluruh notifikasi ikut gagal terkirim).
-// SEBELUMNYA logo data URI langsung dilewati (fallback APP_LOGO_URL/tanpa
-// icon) — akibatnya logo App Customization TIDAK PERNAH benar-benar tampil
-// di Discord walau admin sudah upload & aktifkan. SEKARANG: data URI itu
-// diubah jadi URL http(s) publik lewat endpoint
-// GET /api/app-customization/logo (lihat route-nya, dekat endpoint App
-// Customization lain) yang men-decode data URI YANG SAMA dari DB — jadi
-// sumbernya tetap 100% App Customization, cuma "dibungkus" jadi URL supaya
-// Discord bisa mengaksesnya. `?v=` diisi updatedAt (versi config) supaya
-// URL-nya berubah tiap kali admin ganti logo (cache-busting) — Discord tidak
-// akan menampilkan logo lama yang ke-cache.
-async function getCatalogBrandIconUrl() {
-  try {
-    const cfg = await appCustomizationManager.getConfig();
-    const logo = cfg?.branding?.logo;
-    if (logo?.enabled && logo?.url) {
-      const httpLogoUrl = cleanCatalogUrl(logo.url);
-      if (httpLogoUrl) return httpLogoUrl; // sudah URL http(s) biasa (jarang, tapi didukung)
-      if (String(logo.url).startsWith('data:image/')) {
-        const version = cfg.updatedAt ? new Date(cfg.updatedAt).getTime() : Date.now();
-        return `${SERVER_URL}/api/app-customization/logo?v=${version}`;
-      }
-    }
-  } catch (e) {
-    console.warn('[CatalogEmbed] Gagal ambil logo App Customization, pakai fallback APP_LOGO_URL:', e.message);
-  }
-  return cleanCatalogUrl(APP_LOGO_URL) || null;
-}
-
 // Guard kecil khusus buildCatalogEmbed — Discord menolak field url/author.url/
-// icon_url kalau bukan http(s) (termasuk data URI base64 hasil upload logo
-// App Customization — lihat getCatalogBrandIconUrl() di atas), jadi apapun
-// yang bukan http(s) dilewati sama sekali (bukan dikirim mentah ke Discord).
+// icon_url kalau bukan http(s), jadi apapun yang bukan http(s) dilewati sama
+// sekali (bukan dikirim mentah ke Discord).
 function cleanCatalogUrl(u) {
   const s = String(u || '').trim();
   return /^https?:\/\//i.test(s) ? s : null;
@@ -7703,6 +7671,14 @@ app.post('/api/admin/welcome-popup/test', requireAdmin, async (req, res) => {
 app.get('/api/app-customization', async (req, res) => {
   try {
     const cfg = await appCustomizationManager.getConfig();
+    // "no-cache" BUKAN berarti tidak boleh di-cache sama sekali — artinya
+    // browser WAJIB validasi ulang ke server tiap kali (lewat ETag, yang
+    // sudah otomatis dihitung Express dari body response), tapi kalau
+    // isinya belum berubah sejak terakhir diambil, server balas 304 kosong
+    // (tanpa perlu kirim ulang background image/logo base64 yang berat) —
+    // fix "halaman App Customization lambat" untuk kunjungan berulang
+    // (admin bolak-balik tab) tanpa risiko menampilkan branding basi.
+    res.set('Cache-Control', 'no-cache');
     res.json(appCustomizationManager.toPublicPayload(cfg));
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -7715,6 +7691,7 @@ app.get('/api/admin/app-customization', requireAdmin, async (req, res) => {
     // fonts: daftar whitelist Font Style (lihat FONT_WHITELIST di
     // appCustomizationManager.js) — dikirim bareng config supaya Admin Web
     // TIDAK perlu duplikat daftar font-nya sendiri secara terpisah.
+    res.set('Cache-Control', 'no-cache'); // sama alasannya dengan endpoint publik di atas
     res.json({ ...cfg, fonts: appCustomizationManager.FONT_WHITELIST });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -7779,10 +7756,13 @@ app.get('/api/app-customization/logo', async (req, res) => {
     const mime = dataUriMatch[1].toLowerCase();
     const buffer = Buffer.from(dataUriMatch[2], 'base64');
     res.set('Content-Type', mime);
-    // Cache pendek (5 menit): cukup supaya Discord/klien tidak fetch ulang
-    // tiap kali notif dikirim, tapi tetap singkat supaya logo baru yang
-    // diganti admin cepat kepakai (ditambah cache-busting ?v= di
-    // getCatalogBrandIconUrl() supaya URL-nya sendiri berubah tiap update).
+    // Cache pendek (5 menit): cukup supaya klien tidak fetch ulang terus-
+    // menerus, tapi tetap singkat supaya logo baru yang diganti admin cepat
+    // kepakai. (Catatan: endpoint ini sudah TIDAK dipakai lagi untuk
+    // Author/Footer notifikasi Add/Update Game/Bypass — lihat
+    // CATALOG_BRAND_ICON_URL di buildCatalogEmbed, sekarang pakai URL logo
+    // tetap sesuai permintaan. Endpoint ini dibiarkan aktif sebagai akses
+    // publik biasa ke logo App Customization, tidak mengganggu apapun.)
     res.set('Cache-Control', 'public, max-age=300');
     res.send(buffer);
   } catch (e) {

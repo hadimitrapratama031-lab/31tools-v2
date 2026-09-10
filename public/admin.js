@@ -9037,13 +9037,20 @@ async function renderAppCustomizationPage() {
   const statusEl = document.getElementById('aczStatus');
   try {
     const cfg = await api('/api/admin/app-customization');
-    aczConfig = JSON.parse(JSON.stringify({ background: cfg.background, branding: cfg.branding }));
+    // structuredClone (bukan JSON.parse(JSON.stringify(...))) — fix "halaman
+    // App Customization lambat": objek ini bisa berisi background image
+    // (base64, maks 10MB) + logo (base64, maks 5MB), jadi serialize+parse
+    // ulang lewat JSON dobel-kerja (encode ke teks JSON lalu decode lagi)
+    // buat data yang sudah berbentuk objek JS. structuredClone menyalin
+    // langsung tanpa lewat teks, jauh lebih cepat untuk objek besar begini
+    // — hasil clone-nya identik (deep copy biasa), tidak mengubah data.
+    aczConfig = structuredClone({ background: cfg.background, branding: cfg.branding });
     if (Array.isArray(cfg.fonts) && cfg.fonts.length) ACZ_FONTS = cfg.fonts;
     if (statusEl) {
       statusEl.textContent = cfg.updatedAt ? `Terakhir disimpan: ${new Date(cfg.updatedAt).toLocaleString('id-ID')} oleh ${cfg.updatedBy || 'Admin'}` : '';
     }
   } catch (e) {
-    aczConfig = JSON.parse(JSON.stringify(ACZ_DEFAULT_CONFIG));
+    aczConfig = structuredClone(ACZ_DEFAULT_CONFIG);
     if (statusEl) statusEl.textContent = 'Gagal memuat config tersimpan, menampilkan default.';
     showToast('Gagal memuat App Customization: ' + e.message, 'error');
   }
@@ -9614,7 +9621,7 @@ async function aczSave() {
       method: 'PUT',
       body: JSON.stringify({ background: aczConfig.background, branding: aczConfig.branding })
     });
-    aczConfig = JSON.parse(JSON.stringify({ background: res.config.background, branding: res.config.branding }));
+    aczConfig = structuredClone({ background: res.config.background, branding: res.config.branding });
     aczRenderAll();
     showToast('App Customization disimpan & langsung diterapkan realtime ke semua App.', 'success');
     if (statusEl) statusEl.textContent = `Terakhir disimpan: ${new Date(res.config.updatedAt).toLocaleString('id-ID')} oleh ${res.config.updatedBy || 'Admin'}`;
