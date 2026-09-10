@@ -4597,6 +4597,38 @@ async function getGoldTrialDeviceId(discordId) {
 // Ringkasan status Gold Trial buat user ini — dipanggil App tiap buka
 // dashboard/menu Gold Trial buat nentuin tampil/tidaknya banner "Gold Trial
 // Gratis Tersedia" + progress kalau trial-nya lagi berjalan.
+//
+// ── ROOT CAUSE FIX (audit "Notifikasi Gold Trial tidak masuk"): SEBELUMNYA
+// jalur OTOMATIS (Flow A — user eligible normal, BUKAN Admin TEST/Kirim
+// Notifikasi) TIDAK PERNAH lewat notifyUser()/Notification Manager sama
+// sekali — App cuma nge-render modal dari field `eligible`/`offer` response
+// ini secara lokal (lihat applyGoldTrialAutoOffer() di app.js). Efeknya:
+//   1. Tidak ada record apa pun di collection `notifications` untuk event ini
+//      (padahal Flow B/Admin & Flow C/Force Claim SELALU ada) — audit trail
+//      Gold Trial buat user eligible normal jadi TIDAK LENGKAP/hilang.
+//   2. Kalau App sedang kebuka DIAM di halaman lain (bukan abis login/
+//      reconnect, mis. baru saja menjadi eligible karena Admin BARU aktifkan
+//      Gold Trial SELAGI App user tetap online), tidak ada dorongan apa pun
+//      dari backend — user baru "ketemu" tawarannya kalau kebetulan reload/
+//      pindah halaman/reconnect yang manggil loadGoldTrialOffer() lagi.
+// Fix: begitu eligible TERKONFIRMASI oleh getEligibility() (sumber
+// kebenaran yang SAMA dipakai claim/force-claim/admin lookup) DAN user ini
+// belum pernah dapat notifikasi otomatis ini (`goldTrialAutoOfferNotifiedAt`
+// belum ada), kirim SEKALI lewat notifyUser() EXISTING (persis pola Admin
+// TEST — dm:false/webhook:false, tipe 'gold_trial_offer' yang sudah
+// terdaftar di NOTIF_META) -> otomatis lewat WS 'notification' EXISTING ->
+// ditangani APP oleh handleGoldTrialPushNotification() yang SUDAH ADA (lihat
+// app.js) -> modal tawaran tampil. TIDAK ADA notification/Socket/listener
+// baru. Fire-and-forget (tidak menghambat response GET ini) + ditandai SEKALI
+// per akun (bukan tiap request, requirement: "hindari duplicate notification")
+// — modal tawaran itu sendiri TETAP tampil tiap App dibuka selama eligible
+// (perilaku lama, dari field `eligible`/`offer` response ini, tidak diubah),
+// yang berubah cuma: sekarang ada JEJAK notifikasi resmi yang terkirim
+// (SEKALI) lewat Notification Manager, bukan cuma render lokal.
+// Urutan Welcome Popup: endpoint ini SELALU dipanggil App SETELAH Welcome
+// Popup selesai (checkWelcomePopup(onDone) -> onDone -> loadGoldTrialOffer()
+// -> GET sini, lihat app.js), jadi push ini otomatis juga baru terjadi
+// SETELAH Welcome Popup, tanpa perlu logic ordering tambahan di sini.
 app.get('/api/gold-trial', requireUser, async (req, res) => {
   try {
     const user = req.user;
@@ -4604,6 +4636,25 @@ app.get('/api/gold-trial', requireUser, async (req, res) => {
     const eligibility = await goldTrialManager.getEligibility({ discordId: user.discordId, discordJoinedAt: user.discordJoinedAt, deviceId });
     const settings = eligibility.settings;
     const durationLabel = `${settings.durationAmount} ${goldTrialManager.DURATION_UNIT_LABEL[settings.durationUnit]}`;
+
+    if (eligibility.eligible && !user.goldTrialAutoOfferNotifiedAt) {
+      const offerMessage = settings.offerMessage;
+      db.collection('users').updateOne(
+        { discordId: user.discordId, goldTrialAutoOfferNotifiedAt: { $exists: false } },
+        { $set: { goldTrialAutoOfferNotifiedAt: new Date() } }
+      ).then(result => {
+        // updatedCount 0 -> kemungkinan sudah ditandai barengan (dua tab/reconnect
+        // hampir bersamaan) atau race lain: SKIP kirim, cegah duplicate notification.
+        if (!result.modifiedCount) return;
+        notifyUser(user.discordId, {
+          type: 'gold_trial_offer',
+          title: 'Gold Trial Tersedia',
+          message: offerMessage,
+          meta: { durationLabel, gameLimit: settings.gameLimit, bypassLimit: settings.bypassLimit, source: 'auto' },
+          dm: false, webhook: false
+        }).catch(e => console.warn('[Gold Trial][AUTO] Gagal kirim notifikasi otomatis:', e.message));
+      }).catch(e => console.warn('[Gold Trial][AUTO] Gagal menandai notified:', e.message));
+    }
 
     const activeTrial = (user.isGoldTrial && user.role === 'gold' && user.activeUntil && new Date(user.activeUntil) > new Date())
       ? {
