@@ -9197,7 +9197,7 @@ function aczBindEvents() {
   document.getElementById('aczLogoFile').addEventListener('change', (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 1024 * 1024) { showToast('Ukuran logo maksimal 1MB.', 'error'); e.target.value = ''; return; }
+    if (file.size > 5 * 1024 * 1024) { showToast('Ukuran logo maksimal 5MB.', 'error'); e.target.value = ''; return; }
     const reader = new FileReader();
     reader.onload = () => { aczConfig.branding.logo.url = reader.result; aczRenderAll(); };
     reader.readAsDataURL(file);

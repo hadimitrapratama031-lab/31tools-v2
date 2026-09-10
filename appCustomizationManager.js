@@ -17,12 +17,14 @@
 
 const SETTINGS_ID = 'appCustomization';
 
-// ── BACKGROUND IMAGE — upload/URL validation ────────────────────────────
-// Dipakai oleh validateBackgroundImageUrl() di bawah. Limit & whitelist
-// MIME ini SAMA yang dipakai frontend (aczImageFile di admin.js) —
-// divalidasi ulang di sini karena frontend bisa di-bypass (edit request
-// manual/curl langsung ke PUT /api/admin/app-customization).
-const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB — request user: 10MB, bukan 4MB/10KB
+// ── BACKGROUND IMAGE & LOGO — upload/URL validation ─────────────────────
+// Dipakai oleh validateBackgroundImageUrl()/validateLogoImageUrl() di bawah.
+// Limit & whitelist MIME ini SAMA yang dipakai frontend (aczImageFile/
+// aczLogoFile di admin.js) — divalidasi ULANG di sini karena frontend bisa
+// di-bypass (edit request manual/curl langsung ke PUT
+// /api/admin/app-customization).
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // Background — 10 MB
+const LOGO_MAX_BYTES = 5 * 1024 * 1024;   // Logo — 5 MB (permintaan: upload logo maksimal 5MB)
 const IMAGE_MIME_WHITELIST = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
 
 // ── FONT STYLE (Brand Text) ─────────────────────────────────────────────
@@ -145,6 +147,19 @@ function dataUriByteSize(dataUri) {
   return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
 }
 function validateBackgroundImageUrl(v) {
+  validateUploadedImageUrl(v, MAX_IMAGE_BYTES, '10 MB');
+}
+// LOGO — validasi SAMA PERSIS polanya dengan background di atas (MIME
+// whitelist + byte-size dari data URI base64), cuma limit-nya beda
+// (LOGO_MAX_BYTES = 5MB, sesuai permintaan). Dipanggil eksplisit dari
+// updateConfig() untuk patch.branding.logo.url — SEBELUMNYA logo TIDAK
+// PERNAH divalidasi ukuran/MIME-nya sama sekali di backend (cuma dicek di
+// admin.js/frontend, yang bisa di-bypass), jadi walau limit di UI dinaikkan
+// ke 5MB, backend tetap jadi pagar terakhir yang sesungguhnya menegakkan itu.
+function validateLogoImageUrl(v) {
+  validateUploadedImageUrl(v, LOGO_MAX_BYTES, '5 MB');
+}
+function validateUploadedImageUrl(v, maxBytes, maxLabel) {
   if (typeof v !== 'string') return;
   const s = v.trim();
   if (!s) return; // kosong = hapus image, valid
@@ -155,8 +170,8 @@ function validateBackgroundImageUrl(v) {
     if (!IMAGE_MIME_WHITELIST.includes(mime)) {
       throw new Error('Format gambar tidak didukung. Gunakan PNG, JPG/JPEG, atau WEBP.');
     }
-    if (dataUriByteSize(s) > MAX_IMAGE_BYTES) {
-      throw new Error('Ukuran gambar maksimal 10 MB.');
+    if (dataUriByteSize(s) > maxBytes) {
+      throw new Error(`Ukuran gambar maksimal ${maxLabel}.`);
     }
     return;
   }
@@ -268,6 +283,15 @@ module.exports = function createAppCustomizationManager({ getDb, wsBroadcastAll 
     // field lain (fit/position/opacity/dll) — TIDAK divalidasi ulang.
     if (patch.background && patch.background.image && typeof patch.background.image.url === 'string') {
       validateBackgroundImageUrl(patch.background.image.url);
+    }
+    // Logo — validasi BARU (lihat catatan lengkap di validateLogoImageUrl()
+    // di atas): sebelumnya tidak ada validasi ukuran/MIME sama sekali di
+    // sini untuk logo, cuma ikut lewat sanitizeImageUrl() yang longgar
+    // (format-only). Sama seperti background, HANYA divalidasi kalau Admin
+    // benar-benar mengirim logo BARU (field-nya string) — patch parsial yang
+    // tidak menyertakan logo.url sama sekali tetap tidak tersentuh di sini.
+    if (patch.branding && patch.branding.logo && typeof patch.branding.logo.url === 'string') {
+      validateLogoImageUrl(patch.branding.logo.url);
     }
 
     const database = db();

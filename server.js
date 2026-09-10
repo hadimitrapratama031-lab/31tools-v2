@@ -167,17 +167,17 @@ app.post('/api/discord/interactions', express.raw({ type: 'application/json' }),
 // gambar sebagai base64 (data URI) langsung lewat body JSON (lihat ADMIN — BANNER
 // CAROUSEL di bawah). Ukuran gambar aslinya sendiri tetap dibatasi lebih ketat
 // (BANNER_MAX_IMAGE_BYTES) di handler, ini cuma pagar atas di level parser.
-// HARDENING (App Customization image upload): background image (maks 4MB
-// asli) + logo (maks 1MB asli) dikirim sebagai base64 data URI dalam SATU
-// body PUT /api/admin/app-customization, dan base64 membengkak ±37% dari
-// ukuran file asli (4MB -> ~5.4MB, 1MB -> ~1.4MB). Kalau keduanya diganti
-// bersamaan plus overhead JSON, total body bisa mepet ke limit lama (8mb).
-// Kalau limit itu KELEWAT, express.json melempar 413 SEBELUM request sampai
-// ke appCustomizationManager — Save gagal total (bukan cuma UI). Dinaikkan
-// ke 20mb untuk kasih headroom aman untuk skenario upload besar sekaligus.
-// TIDAK mengubah endpoint/behaviour lain (limit ini global, sudah dipakai
-// endpoint lain juga sebelum perubahan ini).
-app.use(express.json({ limit: '20mb' }));
+// HARDENING (App Customization image upload): background image (maks 10MB
+// asli, MAX_IMAGE_BYTES di appCustomizationManager.js) + logo (maks 5MB
+// asli, LOGO_MAX_BYTES — dinaikkan dari 1MB atas permintaan) dikirim sebagai
+// base64 data URI dalam SATU body PUT /api/admin/app-customization, dan
+// base64 membengkak ±33% dari ukuran file asli (10MB -> ~13.3MB, 5MB ->
+// ~6.7MB). Kalau KEDUANYA diganti bersamaan (worst case) plus overhead JSON,
+// total body bisa sampai ~20MB — mepet/lewat limit lama (20mb). Dinaikkan
+// ke 26mb untuk kasih headroom aman kalau background & logo di-upload
+// sekaligus. TIDAK mengubah endpoint/behaviour lain (limit ini global, sudah
+// dipakai endpoint lain juga sebelum perubahan ini).
+app.use(express.json({ limit: '26mb' }));
 app.use(express.static(path.join(__dirname, 'public'))); // admin.html, admin.js, dll
 
 const PORT = process.env.PORT || 3000;
@@ -1562,66 +1562,223 @@ const appCustomizationManager = require('./appCustomizationManager')({ getDb: ()
 // di project ini (koleksi `banners`/endpoint /api/banners — dibiarkan idle,
 // tidak disentuh sama sekali oleh fitur ini).
 const dashboardBannerManager = require('./dashboardBannerManager')({ getDb: () => db, wsBroadcastAll });
+// CATALOG EMBED ACCENT COLOR — ekstraksi warna dominan/accent dari banner
+// Game/Bypass (Steam API, lewat pickCatalogBanner() di bawah) untuk embed
+// Add Game/Add Bypass/Game Update/Bypass Update (lihat catalogEmbedColor.js
+// & buildCatalogEmbed() di bawah).
+const catalogEmbedColor = require('./catalogEmbedColor');
 
 // ══════════════════════════════════════════════════════════════════════════
-// EMBED KATALOG (Game/Bypass Baru & Update) — desain compact TERSENDIRI,
-// SENGAJA TIDAK memakai buildEmbed() generik (yang penuh field Status/Admin/
-// Timestamp bertumpuk) — sesuai referensi desain yang diminta: simpel,
-// compact, banner besar, minim field. Dipakai di 4 tempat: Add Game, Edit
-// Game, Add Bypass, Edit Bypass — satu sumber kebenaran biar keempatnya
-// selalu identik strukturnya (tidak ada desain nyeleneh sendiri-sendiri).
-//   kind        : 'game' | 'bypass'
-//   isNew       : true (Add) | false (Edit)
-//   name/appId/publisher : data ASLI dari dokumen game/bypass di database —
-//                 kalau publisher tidak ada, field ini otomatis disembunyikan
-//                 (lihat field() di notifTemplates.js), tidak pernah dikarang.
-//   banner      : URL gambar landscape (hero/header) dari data game — kalau
-//                 tidak ada, embed tetap terkirim tanpa gambar (tidak error).
-//   downloadUrl : diambil live dari appUpdateManager.getConfig() tiap kali
-//                 notif dikirim (BUKAN hardcode) — kalau admin ganti link di
-//                 Admin Web > App Update, notif berikutnya otomatis pakai
-//                 link terbaru.
-function buildCatalogEmbed({ kind, isNew, name, appId, publisher, banner, downloadUrl }) {
+// EMBED KATALOG (Game/Bypass Baru & Update) — mengikuti STRUKTUR PERSIS dari
+// 4 template JSON referensi admin (Add Game / Add Bypass / Game Update /
+// Bypass Update — dibuat lewat embed builder, disimpan sebagai acuan desain):
+// layout author+icon, description bergaya "card pengumuman", footer, image
+// full-width, timestamp live, dan warna accent. Dipakai di 4 tempat: Add
+// Game, Edit Game (= "Game Update"), Add Bypass, Edit Bypass (= "Bypass
+// Update") — satu sumber kebenaran biar keempatnya selalu identik
+// strukturnya (tidak ada desain nyeleneh sendiri-sendiri per tempat), dan
+// SATU-SATUNYA embed yang dipakai untuk keempat event ini (tidak ada embed
+// lama/lain yang nyangkut di flow ini).
+//
+// Yang tetap DINAMIS dari data asli (tidak pernah hardcode/dikarang):
+//   - name        : nama Game/Bypass ASLI dari dokumen database, disisipkan
+//                   ke baris "• {name}" di description (posisi & gaya teks
+//                   persis mengikuti template, cuma nilainya dinamis).
+//   - banner      : dipilih oleh pickCatalogBanner() di bawah — TETAP pakai
+//                   sistem pengambilan image yang SUDAH ADA (heroImageUrl/
+//                   imageUrl, hasil Steam Store API) — TIDAK membuat sistem
+//                   image baru & TIDAK pernah pakai image statis dari JSON
+//                   template manapun. Kalau kosong, embed tetap terkirim
+//                   tanpa gambar (tidak error, bukan diganti gambar lain).
+//   - color       : dihitung dari warna dominan/accent banner di atas (lihat
+//                   catalogEmbedColor.js) — fallback ke warna default "31
+//                   Tools" (persis warna di 4 template JSON) kalau bannernya
+//                   kosong atau ekstraksi warna gagal.
+//   - author/footer icon : LOGO branding App Customization (Admin Web > App
+//                   Customization > Branding Logo) yang SUDAH ADA di
+//                   appCustomizationManager — dibaca ulang tiap kirim notif
+//                   (bukan snapshot lama), fallback ke APP_LOGO_URL (.env)
+//                   kalau logo App Customization belum diaktifkan/diisi
+//                   admin. TIDAK PERNAH pakai URL logo statis dari JSON
+//                   template (sesuai permintaan: ambil dari data branding
+//                   Admin App, bukan hardcode).
+//   - url/author.url : link download App, diambil LIVE dari
+//                   appUpdateManager.getConfig() (sistem App Update yang
+//                   sudah ada, BUKAN link statis "discord.com" bawaan
+//                   template) — kalau belum diatur admin, field ini dilewati
+//                   saja (bukan error, bukan link mati).
+//   - timestamp   : selalu waktu pengiriman notif saat ini (bukan nilai beku
+//                   dari file JSON referensi).
+//
+//   kind  : 'game' | 'bypass'
+//   isNew : true (Add) | false (Update/Edit)
+async function buildCatalogEmbed({ kind, isNew, name, appId, publisher, banner, downloadUrl }) {
   const nounLabel = kind === 'bypass' ? 'Bypass' : 'Game';
-  const headerIcon = isNew ? '🆕' : '🔄';
-  const headerText = isNew ? `New ${nounLabel} Added!` : `${nounLabel} Updated!`;
+  const eventKey = isNew ? 'add' : 'update';
+  const copy = CATALOG_EMBED_COPY[kind]?.[eventKey] || CATALOG_EMBED_COPY.game.add;
 
-  const fields = [
-    field(`${nounLabel} Name`, name, true),
-    field('App ID', appId, true),
-    field('Publisher', publisher, true),
-    field('Download 31 Tools', downloadUrl ? `[Click Here to Download](${downloadUrl})` : '_Link belum diatur di Admin Web (App Update)_', false)
-  ].filter(Boolean);
+  const [color, authorIcon] = await Promise.all([
+    catalogEmbedColor.getCatalogAccentColor(banner),
+    getCatalogBrandIconUrl()
+  ]);
+
+  const link = cleanCatalogUrl(downloadUrl);
+  const description =
+    `**${copy.heading}**\n\n` +
+    `${copy.intro.replace(/\{app\}/g, APP_NAME)}\n\n` +
+    `${copy.listLabel}\n• ${name}\n\n` +
+    `${copy.outro.replace(/\{app\}/g, APP_NAME)}`;
 
   const embed = {
-    title: `${headerIcon} ${headerText}`,
-    color: 0x7c5cff, // ungu — sesuai brand ThreeOneStore
-    fields,
-    timestamp: new Date().toISOString(), // Discord otomatis render "• Today/Yesterday at H:MM PM" di footer
-    footer: { text: 'ThreeOneStore' }
+    color,
+    timestamp: new Date().toISOString(),
+    author: { name: `${APP_NAME} • ${copy.authorSuffix}` },
+    footer: { text: APP_NAME },
+    description
   };
+  if (link) {
+    embed.url = link;
+    embed.author.url = link;
+  }
+  if (authorIcon) {
+    embed.author.icon_url = authorIcon;
+    embed.footer.icon_url = authorIcon;
+  }
   if (banner) embed.image = { url: banner };
   return embed;
 }
 
+// Copy description PERSIS mengikuti 4 template JSON referensi (Add Game/Add
+// Bypass/Game Update/Bypass Update) — satu-satunya bagian yang berubah per
+// event adalah baris "• {name}" (lihat buildCatalogEmbed di atas). `{app}`
+// diganti APP_NAME (dinamis, default "31 Tools") supaya kalau admin ganti
+// APP_NAME di .env, teksnya ikut berubah — bukan berarti brand text ini
+// dikarang, cuma dibuat konsisten dengan APP_NAME yang sudah dipakai di
+// seluruh notifikasi lain.
+const CATALOG_EMBED_COPY = {
+  game: {
+    add: {
+      authorSuffix: 'Game Update',
+      heading: '🔥NEW GAME TERBARU TELAH HADIR🔥',
+      intro: 'Update terbaru telah tersedia di {app}.\nGame baru telah ditambahkan dan siap dimainkan.',
+      listLabel: 'Game Baru:',
+      outro: 'Cek detailnya dan temukan game terbaru\nmelalui {app}.'
+    },
+    update: {
+      authorSuffix: 'Game Update',
+      heading: '🔥GAME UPDATE TERBARU TELAH HADIR🔥',
+      intro: 'Update terbaru telah tersedia di {app}.\nGame ini kini mendapatkan update terbaru.',
+      listLabel: 'Game Update:',
+      outro: 'Cek detail dan download update terbaru\nmelalui {app}.'
+    }
+  },
+  bypass: {
+    add: {
+      authorSuffix: 'Bypass Update',
+      heading: '🔥BYPASS TERBARU TELAH HADIR🔥',
+      intro: 'Update terbaru telah tersedia di {app}.\nBypass baru telah ditambahkan dan siap digunakan.',
+      listLabel: 'Bypass Baru:',
+      outro: 'Cek detailnya dan gunakan bypass terbaru\nmelalui {app}.'
+    },
+    update: {
+      authorSuffix: 'Bypass Update',
+      heading: '🔥BYPASS UPDATE TERBARU TELAH HADIR🔥',
+      intro: 'Update terbaru telah tersedia di {app}.\nBypass ini kini telah mendapatkan update terbaru.',
+      listLabel: 'Bypass Update:',
+      outro: 'Cek detail dan gunakan versi terbaru\nmelalui {app}.'
+    }
+  }
+};
+
+// Logo author/footer embed katalog — SATU-SATUNYA sumber: branding logo di
+// Admin Web > App Customization (appCustomizationManager, field
+// branding.logo — data yang sama dipakai watermark logo App Desktop),
+// dibaca ULANG dari DB tiap kali notif dikirim (bukan cache lama) supaya
+// kalau admin ganti logo, notifikasi berikutnya langsung pakai logo baru.
+// Fallback ke APP_LOGO_URL (.env) kalau logo App Customization belum
+// diaktifkan/belum diisi. TIDAK PERNAH fallback ke URL logo statis dari JSON
+// template referensi.
+async function getCatalogBrandIconUrl() {
+  try {
+    const cfg = await appCustomizationManager.getConfig();
+    const logo = cfg?.branding?.logo;
+    if (logo?.enabled && logo?.url) return logo.url;
+  } catch (e) {
+    console.warn('[CatalogEmbed] Gagal ambil logo App Customization, pakai fallback APP_LOGO_URL:', e.message);
+  }
+  return APP_LOGO_URL || null;
+}
+
+// Guard kecil khusus buildCatalogEmbed — Discord menolak field url/author.url
+// kalau bukan http(s), jadi link yang belum diisi admin (null/kosong) atau
+// bukan http(s) dilewati sama sekali (bukan dikirim sebagai link mati).
+function cleanCatalogUrl(u) {
+  const s = String(u || '').trim();
+  return /^https?:\/\//i.test(s) ? s : null;
+}
+
 // Pilih gambar landscape TERBAIK buat banner notif Discord dari data game/
 // bypass — heroImageUrl (library_hero, wide 1920x620) diprioritaskan karena
-// paling pas buat banner lebar; imageUrl (header.jpg, 460x215) jadi satu-
-// satunya fallback. libraryImageUrl (library_600x900, POTRAIT) SENGAJA
-// DILEWATI di sini — kalau dipaksa jadi banner lebar hasilnya gepeng/
-// terpotong aneh (persis yang diminta untuk dihindari).
+// paling pas buat banner lebar; imageUrl (header.jpg, 460x215) jadi fallback
+// TERAKHIR. libraryImageUrl (library_600x900, POTRAIT) SENGAJA DILEWATI di
+// sini — kalau dipaksa jadi banner lebar hasilnya gepeng/terpotong aneh.
+// capsuleImageUrl (231x87) JUGA SENGAJA TIDAK dipakai — rasio & ukurannya
+// beda jauh dari hero/header, hasilnya kepotong/beda ukuran dibanding notif
+// lain kalau dipasang sebagai banner lebar.
 //
-// capsuleImageUrl (231x87) JUGA SENGAJA TIDAK dipakai sebagai fallback —
-// ukurannya jauh lebih kecil/beda rasio dari hero & header, jadi kalau
-// dipasang sebagai banner lebar di Discord hasilnya keliatan kepotong/beda
-// ukuran dibanding notif lain (ini penyebab game & bypass kelihatan
-// "beda-beda" sebelumnya, karena entri game yang datanya kurang lengkap
-// jatuh ke fallback capsule ini). Lebih baik TANPA gambar sama sekali
-// daripada gambar kecil yang kepotong — jadi kalau hero & header berdua
-// kosong, embed dikirim tanpa banner (tetap rapi), berlaku SAMA PERSIS
-// untuk Game maupun Bypass (fungsi ini dipakai oleh keduanya).
-function pickCatalogBanner(doc) {
-  return doc.heroImageUrl || doc.imageUrl || null;
+// LIVE FALLBACK (fix "banner Game kelihatan beda/jelek dibanding Bypass"):
+// Sebelumnya kalau `doc.heroImageUrl` belum tersimpan di database (mis. item
+// lama yang ditambahkan sebelum fitur ini ada, atau admin belum pernah klik
+// App ID Lookup / "Auto-Isi Gambar"), fungsi ini langsung jatuh ke
+// `imageUrl` (header.jpg kecil, 460x215) yang kalau di-stretch jadi banner
+// lebar di Discord hasilnya pecah/gepeng — beda kualitas dari item yang
+// heroImageUrl-nya sudah kebetulan tersimpan, padahal SUMBER GAMBARNYA SAMA-
+// SAMA STEAM. SEKARANG: kalau heroImageUrl belum ada TAPI App ID-nya ada,
+// dicoba dulu live-check ke Steam CDN — pola URL & teknik HEAD-check PERSIS
+// SAMA dengan yang sudah dipakai lookupAppIdInfo() di atas (BUKAN sistem
+// image baru, cuma dipanggil ulang di titik lain: saat kirim notifikasi,
+// bukan cuma saat admin klik lookup manual) — supaya Game & Bypass konsisten
+// dapat banner lebar dari Steam tanpa admin harus Auto-Isi ulang satu-satu.
+// Di-cache 6 jam per App ID biar tidak nge-hit Steam CDN berkali-kali untuk
+// App ID yang sama. Kalau live-check juga gagal/App ID tidak ada -> tetap
+// fallback ke imageUrl seperti sebelumnya (tidak pernah error, tidak pernah
+// bikin embed gagal terkirim).
+const CATALOG_HERO_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 jam
+const catalogHeroUrlCache = new Map(); // appId -> { url: string|null, expiresAt }
+
+async function resolveLiveHeroImageUrl(appId) {
+  if (!appId) return null;
+  const cached = catalogHeroUrlCache.get(appId);
+  if (cached && cached.expiresAt > Date.now()) return cached.url;
+
+  const heroUrl = `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${appId}/library_hero.jpg`;
+  let resolved = null;
+  try {
+    const res = await axios.head(heroUrl, { timeout: 8000, validateStatus: () => true });
+    if (res.status === 200) resolved = heroUrl;
+  } catch (e) { /* best-effort — banner tetap fallback ke imageUrl kalau ini gagal */ }
+
+  // Prune ringan biar cache tidak tumbuh tanpa batas kalau App ID-nya banyak sekali.
+  if (catalogHeroUrlCache.size > 1000) {
+    const now = Date.now();
+    for (const [k, v] of catalogHeroUrlCache) if (v.expiresAt < now) catalogHeroUrlCache.delete(k);
+  }
+  catalogHeroUrlCache.set(appId, { url: resolved, expiresAt: Date.now() + CATALOG_HERO_CACHE_TTL_MS });
+  return resolved;
+}
+
+async function pickCatalogBanner(doc) {
+  if (doc.heroImageUrl) return doc.heroImageUrl;
+  // `steamAppId` — field legacy yang masih dipakai di sejumlah dokumen Bypass
+  // lama (lihat pola `b.appId || b.steamAppId` yang sudah dipakai di banyak
+  // tempat lain di file ini), diikutkan supaya live-check ini juga jalan
+  // untuk data lama yang App ID-nya masih tersimpan di field lama itu.
+  const appId = doc.appId || doc.steamAppId || null;
+  if (appId) {
+    const liveHero = await resolveLiveHeroImageUrl(String(appId));
+    if (liveHero) return liveHero;
+  }
+  return doc.imageUrl || null;
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -4224,6 +4381,7 @@ app.post('/api/history', requireUser, async (req, res) => {
       .then(lb => wsBroadcastAll('leaderboard:update', lb))
       .catch(() => {});
 
+    const downloadNotifBanner = item ? await pickCatalogBanner(item) : (itemImageResolved || undefined);
     notifyUser(req.user.discordId, {
       type: 'download_success',
       title: 'Download Berhasil',
@@ -4253,7 +4411,7 @@ app.post('/api/history', requireUser, async (req, res) => {
         itemName: itemNameResolved,
         appId: item?.appId || item?.steamAppId,
         publisher: item?.publisher,
-        banner: item ? pickCatalogBanner(item) : (itemImageResolved || undefined),
+        banner: downloadNotifBanner,
         username: req.user.username
       }),
       // DM diaktifkan lagi — sebelumnya cuma webhook (dm:false) jadi user TIDAK
@@ -8247,10 +8405,10 @@ app.post('/api/admin/games', requireAdmin, async (req, res) => {
       const appCfg = await appUpdateManager.getConfig();
       await webhookManager.sendCategoryWebhook('game_new', {
         eventId: String(result.insertedId),
-        embed: buildCatalogEmbed({
+        embed: await buildCatalogEmbed({
           kind: 'game', isNew: true,
           name: doc.name, appId: doc.appId, publisher: doc.publisher,
-          banner: pickCatalogBanner(doc),
+          banner: await pickCatalogBanner(doc),
           downloadUrl: appCfg.downloadUrl || appCfg.releaseUrl || null
         }),
         plainEmbed: true
@@ -8370,10 +8528,10 @@ app.put('/api/admin/games/:id', requireAdmin, async (req, res) => {
       const appCfg = await appUpdateManager.getConfig();
       await webhookManager.sendCategoryWebhook('game_edit', {
         eventId: `${req.params.id}:${Date.now()}`,
-        embed: buildCatalogEmbed({
+        embed: await buildCatalogEmbed({
           kind: 'game', isNew: false,
           name: finalDoc.name, appId: finalDoc.appId, publisher: finalDoc.publisher,
-          banner: pickCatalogBanner(finalDoc),
+          banner: await pickCatalogBanner(finalDoc),
           downloadUrl: appCfg.downloadUrl || appCfg.releaseUrl || null
         }),
         plainEmbed: true
@@ -8670,10 +8828,10 @@ app.post('/api/admin/bypasses', requireAdmin, async (req, res) => {
       const appCfg = await appUpdateManager.getConfig();
       await webhookManager.sendCategoryWebhook('bypass_new', {
         eventId: String(result.insertedId),
-        embed: buildCatalogEmbed({
+        embed: await buildCatalogEmbed({
           kind: 'bypass', isNew: true,
           name: doc.name, appId: doc.appId, publisher: doc.publisher,
-          banner: pickCatalogBanner(doc),
+          banner: await pickCatalogBanner(doc),
           downloadUrl: appCfg.downloadUrl || appCfg.releaseUrl || null
         }),
         plainEmbed: true
@@ -8735,10 +8893,10 @@ app.put('/api/admin/bypasses/:id', requireAdmin, async (req, res) => {
       const appCfg = await appUpdateManager.getConfig();
       await webhookManager.sendCategoryWebhook('bypass_edit', {
         eventId: `${req.params.id}:${Date.now()}`,
-        embed: buildCatalogEmbed({
+        embed: await buildCatalogEmbed({
           kind: 'bypass', isNew: false,
           name: finalDoc.name, appId: finalDoc.appId, publisher: finalDoc.publisher,
-          banner: pickCatalogBanner(finalDoc),
+          banner: await pickCatalogBanner(finalDoc),
           downloadUrl: appCfg.downloadUrl || appCfg.releaseUrl || null
         }),
         plainEmbed: true

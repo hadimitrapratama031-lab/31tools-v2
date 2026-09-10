@@ -1467,6 +1467,27 @@
   }
   .pkg-badge[data-tier="platinum"]:hover svg{ transform:scale(1.1); }
 
+  /* Marketplace — SOURCE/ACCESS TYPE indicator, bukan package tier (lihat
+     catatan lengkap di PACKAGE_BADGES.marketplace di app.js). Sengaja pakai
+     hue yang belum dipakai sama sekali oleh tier lain di atas (cyan/gold/
+     silver-lavender) ATAU admin-badge (violet→amber) — emerald/teal, warna
+     yang secara umum dibaca sebagai "commerce/store" tanpa terkesan norak,
+     dan langsung berbeda sekilas pandang dari ketiga badge paket. Pola
+     dark-base + accent-gradient + hover-glow-nya TETAP identik dengan
+     public/gold/platinum di atas supaya tetap satu keluarga desain (clean,
+     elegant, tidak mencolok, tanpa emoji, SVG saja). */
+  .pkg-badge[data-tier="marketplace"]{
+    color:#5EE6C1;
+    background-image:
+      linear-gradient(135deg,#0a1a16f5,#07110ef5),
+      linear-gradient(135deg,#2FD9A88c,#1B7A6345);
+  }
+  .pkg-badge[data-tier="marketplace"]:hover{
+    transform:translateY(-0.5px);
+    box-shadow:inset 0 1px 0 0 rgba(255,255,255,.08), 0 0 12px -2px #2FD9A875;
+  }
+  .pkg-badge[data-tier="marketplace"]:hover svg{ transform:scale(1.1); }
+
   /* ---------------------------------------------------------------
      Admin badge — separate component from .pkg-badge (Admin is a ROLE,
      not a package tier — Gratis/Gold/Platinum are untouched, see

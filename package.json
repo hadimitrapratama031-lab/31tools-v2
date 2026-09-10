@@ -1,6 +1,6 @@
 {
   "name": "31-tools",
-  "version": "3.2.1",
+  "version": "3.2.3",
   "description": "31 Tools - desktop app + backend + admin web (project baru dari 0)",
   "main": "main.js",
   "engines": {
@@ -52,6 +52,7 @@
     "mongodb": "^6.9.0",
     "nanoid": "^3.3.7",
     "sanitize-html": "^2.13.1",
+    "sharp": "^0.33.5",
     "tweetnacl": "^1.0.3",
     "ws": "^8.18.0"
   },

@@ -1010,8 +1010,15 @@ ipcMain.handle('inject-game', async (event, { steamPath, zipUrl, extraHeaders, w
     // Siapkan folder tujuan
     const stplugDir    = path.join(steamPath, 'config', 'stplug-in');
     const depotcacheDir = path.join(steamPath, 'config', 'depotcache');
+    // Lokasi KEDUA untuk file .manifest — Steam\depotcache (BUKAN di dalam
+    // config\, sejajar dengan folder config\ itu sendiri). LUA & lokasi
+    // depotcache PERTAMA (config\depotcache) TIDAK disentuh sama sekali —
+    // ini murni tambahan copy, dibuat otomatis kalau belum ada (sama seperti
+    // stplugDir/depotcacheDir di atas).
+    const depotcacheRootDir = path.join(steamPath, 'depotcache');
     fs.mkdirSync(stplugDir,     { recursive: true });
     fs.mkdirSync(depotcacheDir, { recursive: true });
+    fs.mkdirSync(depotcacheRootDir, { recursive: true });
 
     // Bersihkan sisa file backup versi LAMA (kalau ada, dari sebelum perbaikan
     // rollback ini) yang mungkin masih menumpuk di folder Steam config —
@@ -1039,6 +1046,27 @@ ipcMain.handle('inject-game', async (event, { steamPath, zipUrl, extraHeaders, w
           const destPath = path.join(destDir, entry.name);
           copyFileTracked(fullPath, destPath, backupList, rollbackDir);
           extractedFiles.push((ext === '.lua' ? 'stplug-in/' : 'depotcache/') + entry.name);
+
+          // ── FIX "Manifest juga harus masuk ke Steam\depotcache" ──
+          // Copy KEDUA ini pakai file sumber yang SAMA persis (`fullPath`, dari
+          // hasil extract ZIP yang SAMA di atas) — TIDAK ada download ulang.
+          // copyFileTracked() dipakai lagi (fungsi rollback/overwrite existing,
+          // sama seperti copy pertama) supaya perilaku overwrite-jika-sudah-ada
+          // & rollback-kalau-gagal konsisten dengan proses install yang sudah
+          // ada. Karena ini masih di dalam try block yang sama SEBELUM
+          // `return { success:true, ... }` di bawah, kalau copy ini melempar
+          // error (disk penuh/permission/dll), seluruh proses inject ikut
+          // dianggap GAGAL & di-rollback oleh catch block existing di bawah —
+          // TIDAK PERNAH diam-diam dianggap sukses walau copy pertama (config\
+          // depotcache) sudah berhasil.
+          if (ext === '.manifest') {
+            const destPath2 = path.join(depotcacheRootDir, entry.name);
+            copyFileTracked(fullPath, destPath2, backupList, rollbackDir);
+            // Token folder terpisah ('depotcache-root') dari 'depotcache' biasa
+            // supaya remove-game tahu ini file di lokasi KEDUA (Steam\depotcache,
+            // bukan di dalam config\) saat uninstall — lihat ipcMain 'remove-game'.
+            extractedFiles.push('depotcache-root/' + entry.name);
+          }
         }
       }
     }
@@ -1200,15 +1228,28 @@ ipcMain.handle('install-bypass', async (event, { folderPath, driveUrl, userId, d
 ipcMain.handle('remove-game', (event, { steamPath, extractedFiles }) => {
   try {
     const configDir = path.join(steamPath, 'config');
+    // Lokasi KEDUA manifest (lihat inject-game / token 'depotcache-root') —
+    // dihapus juga saat uninstall supaya tidak ada salinan manifest yang
+    // tersisa/orphan di Steam\depotcache. TIDAK mengubah resolusi path untuk
+    // 'stplug-in'/'depotcache' (config\) yang sudah ada di bawah.
+    const depotcacheRootDir = path.join(steamPath, 'depotcache');
     let deleted = 0;
     for (const relPath of (extractedFiles || [])) {
       if (typeof relPath !== 'string' || relPath.includes('..') || relPath.includes('\\')) continue;
       const parts = relPath.split('/');
       if (parts.length !== 2) continue;
       const [folder, filename] = parts;
-      if (!['stplug-in', 'depotcache'].includes(folder) || !filename) continue;
-      const filePath = path.join(configDir, folder, filename);
-      if (!filePath.startsWith(configDir + path.sep)) continue;
+      if (!filename) continue;
+      let filePath;
+      if (folder === 'stplug-in' || folder === 'depotcache') {
+        filePath = path.join(configDir, folder, filename);
+        if (!filePath.startsWith(configDir + path.sep)) continue;
+      } else if (folder === 'depotcache-root') {
+        filePath = path.join(depotcacheRootDir, filename);
+        if (!filePath.startsWith(depotcacheRootDir + path.sep)) continue;
+      } else {
+        continue;
+      }
       try { if (fs.existsSync(filePath)) { fs.unlinkSync(filePath); deleted++; } } catch(e2) {}
     }
     return { success: true, deleted };
@@ -1361,7 +1402,20 @@ ipcMain.handle('active-tools-check-status', (event, { steamPath, extractedFiles 
       if (typeof relPath !== 'string' || relPath.includes('..')) { missing++; continue; }
       const fullPath = path.resolve(path.join(steamPath, relPath));
       if (!fullPath.startsWith(base)) { missing++; continue; }
-      if (!fs.existsSync(fullPath)) missing++;
+      if (!fs.existsSync(fullPath)) { missing++; continue; }
+      // ROOT CAUSE FIX ("file rusak/tidak valid -> TIDAK AKTIF"): SEBELUMNYA
+      // hanya existsSync yang dicek — file 0 byte (hasil copy yang gagal/
+      // keputus di tengah jalan, disk penuh, dst — sisa file tetap "ada" tapi
+      // isinya kosong/rusak) lolos dianggap valid padahal jelas tidak
+      // fungsional. `extractedFiles` di sini SELALU berisi path FILE (bukan
+      // folder — lihat walkAndCopy() di 'active-tools-install' di atas, cuma
+      // push ke array ini untuk entry yang bukan direktori), jadi aman
+      // langsung statSync tanpa perlu cek isDirectory. TIDAK menambah sistem
+      // verifikasi baru — tetap IPC & daftar file yang SAMA persis, cuma
+      // pengecekan existsSync-nya diperketat.
+      try {
+        if (fs.statSync(fullPath).size === 0) { missing++; continue; }
+      } catch (e) { missing++; continue; }
     }
     return { active: missing === 0, missing, total: extractedFiles.length };
   } catch (e) {

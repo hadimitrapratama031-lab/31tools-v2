@@ -2207,16 +2207,23 @@ function closePremiumCleanupModal() {
 let _activeToolsConfig = null;   // { enabled, activationMethod, zipUrl, version, powershellCommand, description }
 let _activeToolsActive = false;  // hasil validasi status file/PS TERKINI (bisa false walau pernah pernah install, kalau file hilang/rusak)
 let _activeToolsBusy = false;    // sedang proses aktivasi (link atau powershell)
-// _activeToolsEverInstalled — flag TERPISAH dari _activeToolsActive di atas:
-// "pernah berhasil install minimal sekali" (persist selamanya begitu true,
-// TIDAK pernah balik ke false oleh reinstall gagal/file rusak). Ini yang
-// menentukan LABEL tombol (Install vs Install Ulang) — bukan status aktif
-// saat ini, sesuai requirement #3/#11/#15/#21: reinstall gagal atau file
-// rusak tetap menampilkan "Install Ulang", TIDAK PERNAH kembali ke "Install"
-// setelah pernah berhasil sekali. Disimpan lokal (localStorage) karena server
-// memang tidak menyimpan status install per user (proses install 100% di
-// App/IPC, server cuma menerima log pemakaian lewat logToolUsage() di bawah,
-// lihat komentar di server.js soal /api/tools/log-use).
+// _activeToolsEverInstalled — flag "pernah berhasil install minimal sekali",
+// persist di localStorage. ROOT CAUSE FIX (Active Tools status harus SELALU
+// mengikuti kondisi file/folder Steam sebenarnya): flag ini SEBELUMNYA yang
+// menentukan LABEL & PERILAKU tombol (Install vs Install Ulang) — sekali true,
+// tidak pernah balik ke false lagi walau file/folder-nya kemudian hilang/
+// rusak, ATAU walau user itu sebenarnya USER BARU di device/profile lain yang
+// localStorage-nya kebetulan masih menyimpan flag lama. Itu melanggar
+// persyaratan wajib "status final HARUS mengikuti hasil pengecekan file/
+// folder Steam, database/local state cuma boleh jadi informasi tambahan" —
+// localStorage bukan source of truth, isi folder Steam-lah source of truth.
+// Sekarang flag ini TIDAK LAGI dipakai untuk memutuskan apa pun (label
+// tombol, cabang konfirmasi reinstall, dst) — SEMUA keputusan itu memakai
+// `_activeToolsActive` (hasil verifikasi file/folder Steam TERKINI via
+// activeToolsCheckStatus(), lihat refreshActiveToolsStatus() di bawah).
+// Variabel & localStorage-nya sengaja TETAP disimpan (bukan dihapus total)
+// murni sebagai informasi/telemetri tambahan yang memang diizinkan — TIDAK
+// pernah lagi jadi determinan status/UI.
 let _activeToolsEverInstalled = false;
 
 function getActiveToolsFiles() {
@@ -2246,13 +2253,18 @@ async function logToolUsage(feature, status, message) {
   catch (e) { /* best-effort, diam-diam */ }
 }
 
+let _activeToolsConfigPromise = null; // promise load PERTAMA config Active Tools — dipakai gate supaya tidak race (lihat ensureActiveToolsActiveOrPrompt())
+
 async function fetchActiveToolsConfig() {
   try { return await api('/api/active-tools'); } catch (e) { return null; }
 }
 async function loadActiveToolsConfig() {
-  const cfg = await fetchActiveToolsConfig();
-  if (!cfg) return;
-  applyActiveToolsConfig(cfg);
+  _activeToolsConfigPromise = (async () => {
+    const cfg = await fetchActiveToolsConfig();
+    if (cfg) applyActiveToolsConfig(cfg);
+    return cfg;
+  })();
+  return _activeToolsConfigPromise;
 }
 function applyActiveToolsConfig(cfg) {
   _activeToolsConfig = cfg;
@@ -2265,14 +2277,17 @@ function wireActiveTools() {
   ensureAtProgressListener();
 }
 
-// Satu tombol, dua label/behavior tergantung _activeToolsEverInstalled:
-//   - belum pernah install -> "Install", klik langsung jalan (tanpa popup,
-//     sesuai flow requirement #7 — tidak ada langkah konfirmasi disebutkan).
-//   - sudah pernah install (apa pun status aktif SEKARANG) -> "Install
-//     Ulang", klik WAJIB lewat popup konfirmasi dulu (requirement #12).
+// Satu tombol, dua label/behavior tergantung STATUS TERKINI hasil verifikasi
+// file/folder Steam (_activeToolsActive) — BUKAN "pernah install" historis:
+//   - TIDAK AKTIF (belum pernah verifikasi berhasil ATAU sebelumnya aktif tapi
+//     file/folder sekarang hilang/rusak) -> "Install", klik langsung jalan
+//     tanpa popup konfirmasi (tidak ada instalasi valid yang bisa "hilang").
+//   - AKTIF (file/folder TERBUKTI lengkap & valid saat ini) -> "Install
+//     Ulang", klik WAJIB lewat popup konfirmasi dulu (ada instalasi valid
+//     yang akan di-overwrite).
 function handleActiveToolsButtonClick() {
   if (_activeToolsBusy) return;
-  if (_activeToolsEverInstalled) {
+  if (_activeToolsActive) {
     showAtReinstallConfirm();
   } else {
     runActiveToolsFlowAndHandleResult();
@@ -2300,20 +2315,37 @@ function setActiveToolsButtonsDisabled(disabled) {
 }
 
 // Validasi status TERKINI (bukan status yang di-cache begitu saja) — file
-// hasil extract ZIP terakhir (metode Link) atau flag lokal (metode
-// PowerShell, tidak ada file yang bisa divalidasi ulang jadi dipercaya dari
-// localStorage sampai user reinstall app/hapus data).
+// hasil extract ZIP terakhir (metode Link) atau flag lokal + keberadaan
+// folder Steam (metode PowerShell — command-nya bebas ditulis admin apa saja
+// jadi tidak ada daftar file tetap yang bisa divalidasi ulang isinya, ini
+// keterbatasan BAWAAN sistem existing, bukan sesuatu yang baru dibuat di
+// sini; keberadaan folder Steam-nya sendiri TETAP wajib dicek — lihat FIX
+// di bawah).
 async function refreshActiveToolsStatus() {
-  // Label tombol (Install/Install Ulang) TIDAK bergantung pada enabled/status
-  // di bawah — sekali pernah berhasil install, tetap "Install Ulang"
-  // selamanya (requirement #15, persistence), jadi selalu di-refresh di awal
-  // terlepas dari cabang mana yang dieksekusi selanjutnya.
+  // Info tambahan (bukan penentu status/UI apa pun lagi — lihat catatan
+  // lengkap di deklarasi _activeToolsEverInstalled di atas).
   _activeToolsEverInstalled = getActiveToolsEverInstalled();
 
   if (!_activeToolsConfig?.enabled) { _activeToolsActive = false; renderActiveToolsCard(); return; }
 
   if (_activeToolsConfig.activationMethod === 'powershell') {
-    _activeToolsActive = localStorage.getItem('activeToolsPsActivated') === '1';
+    // ROOT CAUSE FIX (Test 8 — "Steam folder berubah/tidak ditemukan ->
+    // TIDAK AKTIF" berlaku untuk SEMUA metode, bukan cuma Link): SEBELUMNYA
+    // cabang ini cuma baca flag localStorage tanpa pernah cek folder Steam
+    // sama sekali — kalau Steam di-uninstall/folder-nya pindah/hilang
+    // SETELAH command PowerShell pernah sukses jalan, status tetap "Active"
+    // selamanya. Reuse getSteamPath() yang SAMA dipakai metode Link (bukan
+    // deteksi baru) sebagai syarat MINIMAL sebelum flag lokal dipercaya —
+    // daftar file/isi command sendiri tetap tidak bisa diverifikasi ulang
+    // (keterbatasan bawaan metode PowerShell yang arbitrary, di luar scope
+    // "jangan bikin sistem verifikasi baru").
+    if (!window.electronAPI?.getSteamPath) { _activeToolsActive = false; renderActiveToolsCard(); return; }
+    try {
+      const steamPath = await window.electronAPI.getSteamPath();
+      _activeToolsActive = !!steamPath && localStorage.getItem('activeToolsPsActivated') === '1';
+    } catch (e) {
+      _activeToolsActive = false;
+    }
     renderActiveToolsCard();
     return;
   }
@@ -2367,13 +2399,19 @@ function renderActiveToolsCard() {
   if (btn) {
     // DUA TOMBOL (Install/Install Ulang) TIDAK PERNAH tampil bersamaan —
     // satu elemen tombol saja, label & behavior-nya yang berubah tergantung
-    // _activeToolsEverInstalled (bukan _activeToolsActive!). Tombol TIDAK
-    // PERNAH disembunyikan lagi (requirement #1: "Install Ulang tetap
-    // tersedia walaupun Active Tools sedang aktif") — beda dari versi lama
-    // yang menyembunyikan tombol total saat aktif.
+    // STATUS TERKINI hasil verifikasi file/folder Steam (_activeToolsActive)
+    // — BUKAN _activeToolsEverInstalled (ROOT CAUSE FIX: label sebelumnya
+    // permanen "Install Ulang" setelah pernah sukses sekali, walau file/
+    // folder-nya kemudian hilang/rusak atau statusnya jadi TIDAK AKTIF —
+    // melanggar requirement "status final harus mengikuti hasil pengecekan
+    // file/folder Steam", lihat catatan lengkap di deklarasi
+    // _activeToolsEverInstalled di atas). Tombol TIDAK PERNAH disembunyikan
+    // (requirement: "Install Ulang tetap tersedia walaupun Active Tools
+    // sedang aktif") — beda dari versi lama yang menyembunyikan tombol total
+    // saat aktif.
     btn.style.display = '';
     btn.disabled = _activeToolsBusy;
-    btn.textContent = _activeToolsBusy ? 'Installing...' : (_activeToolsEverInstalled ? 'Install Ulang' : 'Install');
+    btn.textContent = _activeToolsBusy ? 'Installing...' : (_activeToolsActive ? 'Install Ulang' : 'Install');
   }
 }
 
@@ -2714,8 +2752,37 @@ let _pendingInstallAfterActiveTools = null; // { itemType, itemId, itemName } | 
 
 // Gate dipanggil di awal handleInstall() — return true kalau boleh lanjut
 // download/install, false kalau harus diblokir (modal sudah ditampilkan).
-function ensureActiveToolsActiveOrPrompt(itemType, itemId, itemName) {
+// FIX (race condition login): SEBELUMNYA fungsi ini sinkron & langsung baca
+// _activeToolsConfig — kalau user klik Install Game SANGAT cepat setelah App
+// terbuka (sebelum GET /api/active-tools yang dipanggil fire-and-forget di
+// enterApp() selesai), _activeToolsConfig masih null, dan
+// `!_activeToolsConfig?.enabled` otomatis jadi `true` (dibaca sebagai "fitur
+// dimatikan admin") — gate ke-BYPASS begitu saja padahal Active Tools bisa
+// saja sebenarnya WAJIB. Sekarang async: kalau load PERTAMA belum selesai
+// (_activeToolsConfig masih null), tunggu dulu (pakai promise yang sedang
+// berjalan dari loadActiveToolsConfig() kalau ada, supaya tidak fetch dobel)
+// sebelum mengevaluasi — keputusan gate SELALU berdasarkan config asli dari
+// server begitu tersedia, bukan cuma karena belum sempat termuat. Perilaku
+// steady-state (config sudah termuat, atau server permanen gagal dibalas)
+// TIDAK berubah sama sekali.
+async function ensureActiveToolsActiveOrPrompt(itemType, itemId, itemName) {
+  if (_activeToolsConfig === null) {
+    await (_activeToolsConfigPromise || loadActiveToolsConfig());
+  }
   if (!_activeToolsConfig?.enabled) return true; // fitur dimatikan admin -> tidak ada yang perlu diblokir
+
+  // ROOT CAUSE FIX: SEBELUMNYA gerbang ini langsung percaya `_activeToolsActive`
+  // apa adanya — nilai itu bisa jadi hasil verifikasi LAMA (saat App startup
+  // atau terakhir kali halaman Settings dibuka), padahal persyaratan wajib
+  // "verifikasi dijalankan ... sebelum Game Download jika Active Tools memang
+  // diperlukan" artinya di titik INI file/folder Steam harus dicek ULANG,
+  // bukan mengandalkan cache sesi yang mungkin sudah basi (mis. user sempat
+  // menghapus manual file Active Tools-nya di antara buka Settings terakhir &
+  // klik Download sekarang). Reuse refreshActiveToolsStatus() yang sudah ada
+  // (sama persis dipakai App startup & buka Settings) — TIDAK ada verification
+  // system baru — supaya `_activeToolsActive` di bawah ini SELALU representasi
+  // kondisi Steam TERKINI, bukan basi.
+  await refreshActiveToolsStatus();
   if (_activeToolsActive) return true;
 
   _pendingInstallAfterActiveTools = (itemType && itemId) ? { itemType, itemId, itemName } : null;
@@ -2817,9 +2884,10 @@ function renderActiveToolsRequiredModal(state, detail) {
     desc.textContent = itemName
       ? `Untuk menginstall "${itemName}", Active Tools harus diaktifkan terlebih dahulu.`
       : 'Untuk menginstall game, Active Tools harus diaktifkan terlebih dahulu.';
-    // Label ikut sama dgn tombol Settings (Install/Install Ulang) — konsisten
-    // di seluruh App, bukan istilah "Aktifkan Tools" yang berbeda sendiri.
-    activateBtn.textContent = _activeToolsEverInstalled ? 'Install Ulang' : 'Install';
+    // Label ikut sama dgn tombol Settings (Install/Install Ulang), sumber
+    // kebenarannya SAMA PERSIS (_activeToolsActive — status verifikasi
+    // file/folder Steam TERKINI, lihat catatan di renderActiveToolsCard()).
+    activateBtn.textContent = _activeToolsActive ? 'Install Ulang' : 'Install';
   }
 }
 
@@ -3117,7 +3185,17 @@ function gameRoleTiers(role) {
 // artwork, bukan panel/card-body terpisah).
 function renderMediaGridCard(item) {
   const role = ['public', 'gold', 'platinum'].includes(item.role) ? item.role : 'public';
-  const tiers = gameRoleTiers(role); // dipakai HANYA untuk data-difficulty (filter), lihat catatan di atas
+  const tiers = gameRoleTiers(role); // dipakai HANYA untuk data-difficulty (filter) — TETAP berdasarkan PACKAGE REQUIREMENT asli (role), TIDAK ikut berubah oleh Marketplace (lihat catatan badgeTier di bawah), jadi filter All/Gratis/Gold/Platinum tetap lengkap & akurat apapun source item-nya.
+  // Badge yang tampil di artwork (.pkg-badge) BEDA dari data-difficulty di atas:
+  // badge menunjukkan SOURCE/ACCESS TYPE (dari mana akses item ini didapat),
+  // bukan package requirement. Item konten Marketplace Product (marketplaceProductIds
+  // terisi — data BACKEND asli via marketplaceManager, field yang SAMA PERSIS
+  // dipakai isMktGated()/hasAccess()/mktOrRoleLocked(), BUKAN dihardcode dari
+  // nama game/bypass) tampil badge 'marketplace', MENGGANTIKAN badge Gratis/
+  // Gold/Platinum walau package requirement aslinya (role) tetap public/gold/
+  // platinum apa adanya di data-difficulty/filter. Item BUKAN Marketplace tetap
+  // badge Gratis/Gold/Platinum sesuai role seperti sebelumnya, tidak berubah.
+  const badgeTier = isMktGated(item) ? 'marketplace' : role;
   const isOnline = item.isOnline !== false;
   const img = item.imageUrl || '';
   const name = item.name || '';
@@ -3145,7 +3223,7 @@ function renderMediaGridCard(item) {
         <div class="card-info">
           <span class="card-title">${escapeHtml(name)}</span>
           <div class="card-meta">
-            <span class="pkg-badge" data-tier="${role}"></span>
+            <span class="pkg-badge" data-tier="${badgeTier}"></span>
             <span class="meta-sep" aria-hidden="true"></span>
             <span class="status-badge" data-status="${isOnline ? 'online' : 'offline'}"></span>
           </div>
@@ -3457,6 +3535,20 @@ function openRealBypassDetailById(id) {
     platinum: {
       label: 'Platinum',
       icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3h12l4 6-10 13L2 9Z"/><path d="M11 3 8 9l4 13 4-13-3-6"/><path d="M2 9h20"/></svg>'
+    },
+    // Marketplace — BUKAN package tier (Gratis/Gold/Platinum di atas selalu
+    // berdasarkan item.role/PACKAGE REQUIREMENT asli), ini SOURCE/ACCESS TYPE
+    // indicator: item konten Product Marketplace (marketplaceProductIds
+    // terisi, lihat badgeTier di renderMediaGridCard()) akses-nya didapat
+    // dari beli/whitelist Product, bukan dari paket akun. Lucide "shopping-bag"
+    // dipakai supaya langsung terbaca "didapat dari pembelian", beda dari
+    // shield/crown/gem yang sudah dipakai tier paket di atas — sengaja tidak
+    // dibuat mirip salah satu dari ketiganya (termasuk tidak dibuat mirip
+    // Admin yang juga sudah pakai palet violet→amber) supaya benar-benar
+    // terlihat sebagai kategori ke-4 yang berbeda, bukan tier baru.
+    marketplace: {
+      label: 'Marketplace',
+      icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><path d="M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4Z"/><path d="M3 6h18"/><path d="M16 10a4 4 0 0 1-8 0"/></svg>'
     }
   };
   function renderPackageBadges(){
@@ -5545,7 +5637,7 @@ function openRealBypassDetailById(id) {
     // global untuk semua install/download seperti sebelumnya (bug: versi
     // lama memanggil ensureActiveToolsActiveOrPrompt() tanpa syarat, jadi
     // ikut memblokir Bypass juga — sudah diperbaiki).
-    if (itemType === 'game' && !ensureActiveToolsActiveOrPrompt(itemType, itemId, itemName)) return;
+    if (itemType === 'game' && !(await ensureActiveToolsActiveOrPrompt(itemType, itemId, itemName))) return;
 
     ensureProgressListener();
     const isGame = itemType === 'game';
