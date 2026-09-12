@@ -7691,8 +7691,14 @@ app.get('/api/admin/app-customization', requireAdmin, async (req, res) => {
     // fonts: daftar whitelist Font Style (lihat FONT_WHITELIST di
     // appCustomizationManager.js) — dikirim bareng config supaya Admin Web
     // TIDAK perlu duplikat daftar font-nya sendiri secara terpisah.
+    // PERF — dipakai toAdminPayload() (lihat appCustomizationManager.js)
+    // supaya background image/logo base64 yang berat TIDAK ikut di body
+    // JSON ini (diganti path endpoint ringan) — inilah fix utama "halaman
+    // App Customization lambat dibuka" (bisa 1-2 menit sebelumnya kalau
+    // background/logo sudah diisi gambar besar).
+    const payload = appCustomizationManager.toAdminPayload(cfg);
     res.set('Cache-Control', 'no-cache'); // sama alasannya dengan endpoint publik di atas
-    res.json({ ...cfg, fonts: appCustomizationManager.FONT_WHITELIST });
+    res.json({ ...payload, fonts: appCustomizationManager.FONT_WHITELIST });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -7711,9 +7717,17 @@ app.put('/api/admin/app-customization', requireAdmin, async (req, res) => {
 
     // Realtime — App yang sedang online langsung menerima background/branding
     // terbaru TANPA restart/refresh (lihat appCustomizationManager.broadcastUpdate).
+    // wsBroadcastAll di dalamnya SUDAH cuma kirim sinyal ringan (bukan
+    // payload penuh) — tidak diubah sama sekali oleh optimasi ini.
     const publicPayload = await appCustomizationManager.broadcastUpdate();
 
-    res.json({ config: next, applied: publicPayload });
+    // PERF — response PUT ini juga dilewatkan toAdminPayload() (bukan
+    // `next` mentah) supaya kalau admin cuma ganti field non-gambar
+    // (warna/gradient/dll), respons Save tidak ikut membawa balik base64
+    // gambar/logo yang (tidak berubah) tapi tetap besar. `applied` juga
+    // dipangkas ke `version` saja — field ini tidak pernah dipakai Admin
+    // Web (lihat admin.js), jadi tidak perlu ikut kirim payload penuh.
+    res.json({ config: appCustomizationManager.toAdminPayload(next), applied: { version: publicPayload.version } });
   } catch (e) {
     res.status(400).json({ error: e.message });
   }
@@ -7738,6 +7752,46 @@ app.put('/api/admin/app-customization', requireAdmin, async (req, res) => {
 // admin ganti logo, request berikutnya ke endpoint ini langsung dapat logo
 // terbaru — konsisten dengan prinsip realtime App Customization yang sudah
 // ada (broadcastUpdate memberi sinyal, client fetch ulang config lengkap).
+// ── BACKGROUND IMAGE — endpoint ringan yang menyajikan background image App
+// Customization sebagai file gambar biasa (BUKAN sistem storage baru — cuma
+// men-decode data URI base64 yang SUDAH tersimpan di dokumen App
+// Customization yang sama, pola SAMA PERSIS dengan /api/app-customization/logo
+// di bawah). Dibuat khusus supaya Admin Web (halaman App Customization) TIDAK
+// perlu lagi menerima base64 background image (bisa sampai ~13MB) di dalam
+// body JSON GET/PUT /api/admin/app-customization — lihat toAdminPayload() di
+// appCustomizationManager.js, itu penyebab utama halaman ini lambat dibuka &
+// disimpan. Browser tinggal <img src="..."> ke sini, dimuat terpisah & paralel
+// dari config (tidak nge-block render field lain), dan otomatis ikut cache
+// HTTP browser biasa. Publik (tanpa requireAdmin) — sama seperti
+// /api/app-customization biasa, karena App Desktop (termasuk sebelum login)
+// juga butuh akses background image tanpa auth.
+app.get('/api/app-customization/background-image', async (req, res) => {
+  try {
+    const cfg = await appCustomizationManager.getConfig();
+    const raw = String(cfg?.background?.image?.url || '');
+    const dataUriMatch = /^data:([^;,]+);base64,(.+)$/i.exec(raw);
+    if (!dataUriMatch) {
+      // Bukan hasil upload (data URI) — kalau kebetulan http(s) biasa,
+      // teruskan; selain itu berarti memang belum ada background image.
+      if (/^https?:\/\//i.test(raw)) return res.redirect(302, raw);
+      return res.status(404).end();
+    }
+    const mime = dataUriMatch[1].toLowerCase();
+    const buffer = Buffer.from(dataUriMatch[2], 'base64');
+    res.set('Content-Type', mime);
+    // Cache pendek (5 menit) — sama seperti /api/app-customization/logo,
+    // cukup supaya klien tidak fetch ulang terus-menerus tapi tetap singkat
+    // supaya background baru yang diganti admin cepat kepakai. Admin Web
+    // juga menambahkan query ?v=<updatedAt> tiap config berubah, jadi
+    // langsung dapat versi baru tanpa perlu menunggu cache ini kedaluwarsa.
+    res.set('Cache-Control', 'public, max-age=300');
+    res.send(buffer);
+  } catch (e) {
+    console.warn('[AppCustomization] Gagal menyajikan background image:', e.message);
+    res.status(500).end();
+  }
+});
+
 app.get('/api/app-customization/logo', async (req, res) => {
   try {
     const cfg = await appCustomizationManager.getConfig();

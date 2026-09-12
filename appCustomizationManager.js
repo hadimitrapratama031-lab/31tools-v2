@@ -335,6 +335,54 @@ module.exports = function createAppCustomizationManager({ getDb, wsBroadcastAll 
     return next;
   }
 
+  // ── PERF (halaman App Customization di Admin Web lambat dibuka/disimpan)
+  // ────────────────────────────────────────────────────────────────────
+  // PENYEBAB UTAMA yang ditemukan saat audit: background.image.url dan
+  // branding.logo.url disimpan sebagai data URI base64 LANGSUNG di dokumen
+  // config (sampai ~13MB & ~6.7MB base64 dari batas 10MB/5MB) — dan
+  // SEBELUM optimasi ini, base64 itu ikut utuh di body JSON setiap kali
+  // GET /api/admin/app-customization dipanggil (tiap halaman dibuka) DAN
+  // setiap kali PUT (Save) dikirim, walau admin cuma ganti warna/slider
+  // lain. Untuk koneksi/hosting yang tidak kencang, transfer ~15-20MB
+  // bolak-balik itulah yang bikin buka halaman & Save terasa 1-2 menit.
+  //
+  // toAdminPayload() TIDAK mengubah apa yang tersimpan di database sama
+  // sekali (getConfig()/updateConfig() tetap apa adanya, source of truth
+  // tetap DB) — cuma dipakai di lapisan HTTP response (server.js, endpoint
+  // admin) untuk MENGGANTI isi field url yang berupa data URI base64 berat
+  // dengan path endpoint ringan (/api/app-customization/background-image
+  // atau /api/app-customization/logo, lihat server.js) yang isinya SAMA
+  // PERSIS gambarnya, tinggal di-load browser lewat <img>/CSS url() secara
+  // terpisah & paralel (tidak mem-block parsing JSON config, dan otomatis
+  // ikut HTTP cache browser). url yang SUDAH berupa http(s) biasa (mode
+  // "Image URL", bukan upload) dibiarkan apa adanya karena sudah ringan.
+  //
+  // Admin Web (admin.js) di sisi Save juga sudah diubah supaya TIDAK
+  // mengirim ulang field url ini kalau admin tidak benar-benar
+  // upload/ganti gambar baru (lihat _aczImageTouched/_aczLogoTouched) —
+  // dua perubahan ini (load ringan + save parsial) yang menghilangkan
+  // bottleneck utamanya, tanpa mengubah struktur database/skema config
+  // sama sekali.
+  function isHeavyDataUri(v) {
+    return typeof v === 'string' && v.startsWith('data:');
+  }
+  function toAdminPayload(cfg) {
+    const version = cfg.updatedAt ? new Date(cfg.updatedAt).getTime() : 0;
+    const out = {
+      background: { ...cfg.background, image: { ...cfg.background.image } },
+      branding: { ...cfg.branding, logo: { ...cfg.branding.logo } },
+      updatedAt: cfg.updatedAt,
+      updatedBy: cfg.updatedBy
+    };
+    if (isHeavyDataUri(out.background.image.url)) {
+      out.background.image.url = `/api/app-customization/background-image?v=${version}`;
+    }
+    if (isHeavyDataUri(out.branding.logo.url)) {
+      out.branding.logo.url = `/api/app-customization/logo?v=${version}`;
+    }
+    return out;
+  }
+
   // Dipanggil setelah save berhasil — push realtime ke SEMUA App yang
   // sedang online & login (wsBroadcastAll SUDAH ADA di server.js, dipakai
   // bersama fitur lain seperti games:update/bypasses:update). TIDAK ada
@@ -359,5 +407,5 @@ module.exports = function createAppCustomizationManager({ getDb, wsBroadcastAll 
     return payload;
   }
 
-  return { getConfig, updateConfig, toPublicPayload, broadcastUpdate, DEFAULTS, FONT_WHITELIST };
+  return { getConfig, updateConfig, toPublicPayload, toAdminPayload, broadcastUpdate, DEFAULTS, FONT_WHITELIST };
 };

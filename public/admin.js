@@ -8990,6 +8990,18 @@ window.revokeMktWhitelist = revokeMktWhitelist;
 let aczConfig = null;
 let _aczListenersBound = false;
 let _aczSelectedStopIndex = 0;
+// PERF (Save lambat) — dua flag ini nge-track apakah admin BENAR-BENAR
+// mengganti background image / logo di sesi edit sekarang (lihat
+// aczBindEvents: cuma di-set true dari handler upload file/isi URL/hapus
+// gambar, BUKAN dari slider/pill/warna lain). aczSave() pakai flag ini
+// buat MEMUTUSKAN mau ikut kirim field `url` (bisa berisi base64 sampai
+// 10MB background / 5MB logo) atau tidak — kalau admin cuma ganti warna,
+// gradient, overlay, ukuran, atau teks, field url TIDAK ikut dikirim sama
+// sekali, jadi request PUT tetap kecil & cepat walau gambar/logo yang
+// tersimpan besar. Di-reset ke false tiap kali halaman dibuka
+// (renderAppCustomizationPage) dan tiap kali Save berhasil.
+let _aczImageTouched = false;
+let _aczLogoTouched = false;
 
 const ACZ_DEFAULT_CONFIG = {
   background: {
@@ -9055,6 +9067,8 @@ async function renderAppCustomizationPage() {
     showToast('Gagal memuat App Customization: ' + e.message, 'error');
   }
   _aczSelectedStopIndex = 0;
+  _aczImageTouched = false; // reset — config baru saja dimuat ulang dari server, belum ada perubahan gambar/logo di sesi ini
+  _aczLogoTouched = false;
   aczRenderFontOptions();
   aczRenderAll();
 }
@@ -9132,6 +9146,7 @@ function aczBindEvents() {
     reader.onload = () => {
       aczConfig.background.image.source = 'upload';
       aczConfig.background.image.url = reader.result;
+      _aczImageTouched = true; // PERF: cuma tandai gambar "berubah" kalau admin BENAR-BENAR upload file baru — dipakai aczSave() supaya base64 (bisa puluhan MB) tidak ikut dikirim ulang kalau cuma warna/slider lain yang diedit.
       aczRenderAll();
     };
     reader.readAsDataURL(file);
@@ -9146,6 +9161,7 @@ function aczBindEvents() {
     const v = e.target.value.trim();
     aczConfig.background.image.source = 'url';
     aczConfig.background.image.url = v;
+    _aczImageTouched = true; // PERF: sama seperti upload — dianggap "berubah" begitu admin mengetik/menghapus isi field URL ini.
     if (!v) { statusEl.textContent = ''; aczRenderAll({ skipImageUrlInput: true }); return; }
     if (!/^https?:\/\//i.test(v)) {
       statusEl.textContent = 'Gunakan link yang diawali http:// atau https://';
@@ -9168,6 +9184,7 @@ function aczBindEvents() {
 
   document.getElementById('aczRemoveImageBtn').addEventListener('click', () => {
     aczConfig.background.image.url = '';
+    _aczImageTouched = true; // PERF: menghapus gambar juga "perubahan nyata" pada url, harus ikut terkirim saat Save.
     document.getElementById('aczImageFile').value = '';
     document.getElementById('aczImageUrlInput').value = '';
     document.getElementById('aczImageUrlStatus').textContent = '';
@@ -9206,11 +9223,16 @@ function aczBindEvents() {
     if (!file) return;
     if (file.size > 5 * 1024 * 1024) { showToast('Ukuran logo maksimal 5MB.', 'error'); e.target.value = ''; return; }
     const reader = new FileReader();
-    reader.onload = () => { aczConfig.branding.logo.url = reader.result; aczRenderAll(); };
+    reader.onload = () => {
+      aczConfig.branding.logo.url = reader.result;
+      _aczLogoTouched = true; // PERF: sama seperti gambar background — tandai "berubah" HANYA saat admin benar-benar upload logo baru.
+      aczRenderAll();
+    };
     reader.readAsDataURL(file);
   });
   document.getElementById('aczRemoveLogoBtn').addEventListener('click', () => {
     aczConfig.branding.logo.url = '';
+    _aczLogoTouched = true; // PERF: hapus logo juga perubahan nyata pada url.
     document.getElementById('aczLogoFile').value = '';
     aczRenderAll();
   });
@@ -9305,7 +9327,12 @@ function aczRenderAll(opts = {}) {
   document.getElementById('aczImageUploadWrap').style.display = imgSource === 'upload' ? '' : 'none';
   document.getElementById('aczImageUrlWrap').style.display = imgSource === 'url' ? '' : 'none';
   if (!opts.skipImageUrlInput) {
-    document.getElementById('aczImageUrlInput').value = (imgSource === 'url' && img.url) ? img.url : '';
+    // Hanya isi kotak input kalau nilainya benar link http(s) asli — kalau
+    // img.url adalah endpoint ringan hasil optimasi load (lihat toAdminPayload
+    // di appCustomizationManager.js, dipakai saat mode-nya sebenarnya
+    // 'upload'), jangan ditampilkan di sini supaya admin tidak salah kira itu
+    // Image URL yang bisa diedit.
+    document.getElementById('aczImageUrlInput').value = (imgSource === 'url' && /^https?:\/\//i.test(img.url || '')) ? img.url : '';
   }
   const hasImg = !!img.url;
   document.getElementById('aczImagePreviewWrap').style.display = hasImg ? '' : 'none';
@@ -9617,11 +9644,28 @@ async function aczSave() {
   const originalHtml = btn.innerHTML;
   btn.innerHTML = '<svg class="icon icon-18"><use href="#ic-loader-circle"></use></svg> Menyimpan...';
   try {
+    // PERF (Save lambat) — background.image.url / branding.logo.url TIDAK
+    // ikut dikirim kalau admin tidak menyentuh gambar/logo di sesi edit ini
+    // (lihat _aczImageTouched/_aczLogoTouched, di-set true HANYA dari
+    // handler upload/URL/hapus gambar-logo di aczBindEvents). Field lain
+    // (mode, warna, gradient, overlay, ukuran, opacity, font, teks, dst)
+    // tetap selalu dikirim apa adanya karena ukurannya kecil. Backend
+    // (appCustomizationManager.updateConfig) SUDAH mendukung PATCH parsial
+    // seperti ini sejak awal — field yang tidak dikirim otomatis
+    // dipertahankan dari config tersimpan (shallow-merge per bagian), jadi
+    // tidak ada perubahan logika backend yang dibutuhkan untuk ini.
+    const backgroundPatch = { ...aczConfig.background, image: { ...aczConfig.background.image } };
+    const brandingPatch = { ...aczConfig.branding, logo: { ...aczConfig.branding.logo } };
+    if (!_aczImageTouched) delete backgroundPatch.image.url;
+    if (!_aczLogoTouched) delete brandingPatch.logo.url;
+
     const res = await api('/api/admin/app-customization', {
       method: 'PUT',
-      body: JSON.stringify({ background: aczConfig.background, branding: aczConfig.branding })
+      body: JSON.stringify({ background: backgroundPatch, branding: brandingPatch })
     });
     aczConfig = structuredClone({ background: res.config.background, branding: res.config.branding });
+    _aczImageTouched = false; // tersimpan — sinkron lagi dengan server, sesi "belum ada perubahan gambar/logo" dimulai ulang
+    _aczLogoTouched = false;
     aczRenderAll();
     showToast('App Customization disimpan & langsung diterapkan realtime ke semua App.', 'success');
     if (statusEl) statusEl.textContent = `Terakhir disimpan: ${new Date(res.config.updatedAt).toLocaleString('id-ID')} oleh ${res.config.updatedBy || 'Admin'}`;
