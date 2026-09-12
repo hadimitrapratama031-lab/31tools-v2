@@ -1639,12 +1639,22 @@ const CATALOG_AUTHOR_TITLE = {
   bypass: { add: 'Bypass Added!', update: 'Bypass Updated!' }
 };
 
-// Teks footer & baris promosi download — statis PERSIS sesuai 4 template
-// JSON referensi (bukan bagian yang diminta dinamis — cuma nama item,
-// AppID, image, & warna yang wajib dinamis, lihat komentar di atas).
-const CATALOG_FOOTER_TEXT = '31 Tools — Your Game Library.';
-const CATALOG_DOWNLOAD_PROMO_URL = 'https://threeonestore.netlify.app';
+// Teks footer & label tombol Download — statis PERSIS sesuai 4 template JSON
+// referensi (bukan bagian yang diminta dinamis — cuma nama item, AppID,
+// image, & warna yang wajib dinamis, lihat komentar di atas).
+const CATALOG_FOOTER_TEXT = 'ThreeOne — Your Game Library.';
+const CATALOG_DOWNLOAD_BUTTON_LABEL = 'Download 31 Tools';
 
+// Revisi (permintaan user): link Download SEBELUMNYA tampil sebagai teks
+// biasa di description ("Tombol : https://...") — sekarang diganti jadi
+// TOMBOL Discord asli (Link Button) yang diklik langsung membuka link-nya,
+// bukan lagi teks link yang cuma "diliatin". TIDAK bikin mekanisme button
+// baru — REUSE PERSIS pola Link Button (type 2, style 5, dibungkus Action
+// Row type 1) yang SUDAH ADA & dipakai packageEmbedManager.renderTemplate()
+// untuk fitur lain, dan `webhookManager.sendCategoryWebhook()` SUDAH
+// mendukung parameter `components` ini apa adanya (lihat pemanggilan
+// buildCatalogEmbed() di 4 flow Add/Update Game/Bypass — sekarang ikut
+// meneruskan `components` hasil fungsi ini ke sendCategoryWebhook).
 async function buildCatalogEmbed({ kind, isNew, name, appId, publisher, banner, downloadUrl }) {
   const eventKey = isNew ? 'add' : 'update';
   const authorTitle = CATALOG_AUTHOR_TITLE[kind]?.[eventKey] || CATALOG_AUTHOR_TITLE.game.add;
@@ -1655,17 +1665,20 @@ async function buildCatalogEmbed({ kind, isNew, name, appId, publisher, banner, 
   const color = await catalogEmbedColor.getCatalogAccentColor(banner);
 
   // Link download App — LIVE dari appUpdateManager.getConfig() (sistem yang
-  // SUDAH ADA), BUKAN link statis "discord.com" bawaan template.
+  // SUDAH ADA), BUKAN link statis "discord.com" bawaan template. Kalau
+  // admin belum atur link Download sama sekali -> `link` null, dan baik
+  // title/author yang bisa diklik MAUPUN tombol Download di bawah otomatis
+  // TIDAK ditampilkan (dilewati, bukan error, bukan link mati/karangan).
   const link = cleanCatalogUrl(downloadUrl);
 
   // Description PERSIS mengikuti layout 4 template JSON referensi — hanya
   // nama item & App ID yang dinamis dari data asli (TIDAK PERNAH dikarang/
-  // hardcode nama game/bypass).
+  // hardcode nama game/bypass). Baris "Tombol : {link}" DIHAPUS dari sini
+  // (lihat catatan revisi di atas) — link-nya sekarang ada di tombol, bukan
+  // di teks description lagi.
   const description =
     `**Game:** ${name}\n` +
-    `**AppID:** ${appId || '-'}\n\n` +
-    `**Download 31 Tools**\n` +
-    `Tombol : ${CATALOG_DOWNLOAD_PROMO_URL}`;
+    `**AppID:** ${appId || '-'}`;
 
   const embed = {
     color,
@@ -1681,7 +1694,18 @@ async function buildCatalogEmbed({ kind, isNew, name, appId, publisher, banner, 
   // Banner — HubCap (pickCatalogBanner, lihat catatan lengkap di atas),
   // TIDAK PERNAH gambar statis dari file JSON referensi.
   if (banner) embed.image = { url: banner };
-  return embed;
+
+  // Tombol Link "Download 31 Tools" — Discord Message Component (Link
+  // Button, style=5), SATU-SATUNYA jenis button yang tidak butuh interaction
+  // handler di Bot, aman dikirim lewat webhook REST API biasa. Sama persis
+  // polanya dengan packageEmbedManager.renderTemplate() yang sudah ada.
+  // Kalau `link` kosong (admin belum atur Download URL), TIDAK ada tombol
+  // sama sekali — bukan tombol dengan link kosong/karangan.
+  const components = link
+    ? [{ type: 1, components: [{ type: 2, style: 5, label: CATALOG_DOWNLOAD_BUTTON_LABEL, url: link }] }]
+    : undefined;
+
+  return { embed, components };
 }
 
 // Guard kecil khusus buildCatalogEmbed — Discord menolak field url/author.url/
@@ -8529,14 +8553,16 @@ app.post('/api/admin/games', requireAdmin, async (req, res) => {
       // appCfg (baca settings) & banner (bisa live-lookup ke HubCap) tidak
       // saling bergantung -> dijalankan paralel (fix delay), bukan berurutan.
       const [appCfg, banner] = await Promise.all([appUpdateManager.getConfig(), pickCatalogBanner(doc)]);
+      const { embed: catalogEmbed, components: catalogComponents } = await buildCatalogEmbed({
+        kind: 'game', isNew: true,
+        name: doc.name, appId: doc.appId, publisher: doc.publisher,
+        banner,
+        downloadUrl: appCfg.downloadUrl || appCfg.releaseUrl || null
+      });
       await webhookManager.sendCategoryWebhook('game_new', {
         eventId: String(result.insertedId),
-        embed: await buildCatalogEmbed({
-          kind: 'game', isNew: true,
-          name: doc.name, appId: doc.appId, publisher: doc.publisher,
-          banner,
-          downloadUrl: appCfg.downloadUrl || appCfg.releaseUrl || null
-        }),
+        embed: catalogEmbed,
+        components: catalogComponents,
         plainEmbed: true
       });
     } catch (e) {
@@ -8660,14 +8686,16 @@ app.put('/api/admin/games/:id', requireAdmin, async (req, res) => {
       if (!finalDoc) return;
       // appCfg & banner tidak saling bergantung -> paralel (fix delay).
       const [appCfg, banner] = await Promise.all([appUpdateManager.getConfig(), pickCatalogBanner(finalDoc)]);
+      const { embed: catalogEmbed, components: catalogComponents } = await buildCatalogEmbed({
+        kind: 'game', isNew: false,
+        name: finalDoc.name, appId: finalDoc.appId, publisher: finalDoc.publisher,
+        banner,
+        downloadUrl: appCfg.downloadUrl || appCfg.releaseUrl || null
+      });
       await webhookManager.sendCategoryWebhook('game_edit', {
         eventId: `${req.params.id}:${Date.now()}`,
-        embed: await buildCatalogEmbed({
-          kind: 'game', isNew: false,
-          name: finalDoc.name, appId: finalDoc.appId, publisher: finalDoc.publisher,
-          banner,
-          downloadUrl: appCfg.downloadUrl || appCfg.releaseUrl || null
-        }),
+        embed: catalogEmbed,
+        components: catalogComponents,
         plainEmbed: true
       });
     } catch (e) {
@@ -8964,14 +8992,16 @@ app.post('/api/admin/bypasses', requireAdmin, async (req, res) => {
   (async () => {
     try {
       const [appCfg, banner] = await Promise.all([appUpdateManager.getConfig(), pickCatalogBanner(doc)]);
+      const { embed: catalogEmbed, components: catalogComponents } = await buildCatalogEmbed({
+        kind: 'bypass', isNew: true,
+        name: doc.name, appId: doc.appId, publisher: doc.publisher,
+        banner,
+        downloadUrl: appCfg.downloadUrl || appCfg.releaseUrl || null
+      });
       await webhookManager.sendCategoryWebhook('bypass_new', {
         eventId: String(result.insertedId),
-        embed: await buildCatalogEmbed({
-          kind: 'bypass', isNew: true,
-          name: doc.name, appId: doc.appId, publisher: doc.publisher,
-          banner,
-          downloadUrl: appCfg.downloadUrl || appCfg.releaseUrl || null
-        }),
+        embed: catalogEmbed,
+        components: catalogComponents,
         plainEmbed: true
       });
     } catch (e) {
@@ -9031,14 +9061,16 @@ app.put('/api/admin/bypasses/:id', requireAdmin, async (req, res) => {
       const finalDoc = await db.collection('bypasses').findOne({ _id: new ObjectId(req.params.id) });
       if (!finalDoc) return;
       const [appCfg, banner] = await Promise.all([appUpdateManager.getConfig(), pickCatalogBanner(finalDoc)]);
+      const { embed: catalogEmbed, components: catalogComponents } = await buildCatalogEmbed({
+        kind: 'bypass', isNew: false,
+        name: finalDoc.name, appId: finalDoc.appId, publisher: finalDoc.publisher,
+        banner,
+        downloadUrl: appCfg.downloadUrl || appCfg.releaseUrl || null
+      });
       await webhookManager.sendCategoryWebhook('bypass_edit', {
         eventId: `${req.params.id}:${Date.now()}`,
-        embed: await buildCatalogEmbed({
-          kind: 'bypass', isNew: false,
-          name: finalDoc.name, appId: finalDoc.appId, publisher: finalDoc.publisher,
-          banner,
-          downloadUrl: appCfg.downloadUrl || appCfg.releaseUrl || null
-        }),
+        embed: catalogEmbed,
+        components: catalogComponents,
         plainEmbed: true
       });
     } catch (e) {
