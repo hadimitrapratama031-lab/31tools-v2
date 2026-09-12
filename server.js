@@ -1572,7 +1572,7 @@ const appCustomizationManager = require('./appCustomizationManager')({ getDb: ()
 // tidak disentuh sama sekali oleh fitur ini).
 const dashboardBannerManager = require('./dashboardBannerManager')({ getDb: () => db, wsBroadcastAll });
 // CATALOG EMBED ACCENT COLOR — ekstraksi warna dominan/accent dari banner
-// Game/Bypass (Steam API, lewat pickCatalogBanner() di bawah) untuk embed
+// Game/Bypass (HubCap, lewat pickCatalogBanner() di bawah) untuk embed
 // Add Game/Add Bypass/Game Update/Bypass Update (lihat catalogEmbedColor.js
 // & buildCatalogEmbed() di bawah).
 const catalogEmbedColor = require('./catalogEmbedColor');
@@ -1593,12 +1593,15 @@ const catalogEmbedColor = require('./catalogEmbedColor');
 //   - name        : nama Game/Bypass ASLI dari dokumen database, disisipkan
 //                   ke baris "• {name}" di description (posisi & gaya teks
 //                   persis mengikuti template, cuma nilainya dinamis).
-//   - banner      : dipilih oleh pickCatalogBanner() di bawah — TETAP pakai
-//                   sistem pengambilan image yang SUDAH ADA (heroImageUrl/
-//                   imageUrl, hasil Steam Store API) — TIDAK membuat sistem
-//                   image baru & TIDAK pernah pakai image statis dari JSON
-//                   template manapun. Kalau kosong, embed tetap terkirim
-//                   tanpa gambar (tidak error, bukan diganti gambar lain).
+//   - banner      : dipilih oleh pickCatalogBanner() di bawah — SEKARANG
+//                   diambil dari HubCap (service HubCap yang SUDAH ADA,
+//                   TIDAK membuat sistem/API Hubcap baru), fallback ke data
+//                   yang sudah tersimpan di project (heroImageUrl/imageUrl)
+//                   kalau HubCap tidak punya bannernya — TIDAK pernah pakai
+//                   image statis dari JSON template manapun, dan TIDAK lagi
+//                   memanggil Steam Store API untuk banner ini. Kalau kosong,
+//                   embed tetap terkirim tanpa gambar (tidak error, bukan
+//                   diganti gambar lain).
 //   - color       : dihitung dari warna dominan/accent banner di atas (lihat
 //                   catalogEmbedColor.js) — fallback ke warna default "31
 //                   Tools" (persis warna di 4 template JSON) kalau bannernya
@@ -1721,67 +1724,93 @@ function cleanCatalogUrl(u) {
 // beda jauh dari hero/header, hasilnya kepotong/beda ukuran dibanding notif
 // lain kalau dipasang sebagai banner lebar.
 //
-// LIVE FALLBACK (fix "banner Game kelihatan beda/jelek dibanding Bypass"):
-// Sebelumnya kalau `doc.heroImageUrl` belum tersimpan di database (mis. item
-// lama yang ditambahkan sebelum fitur ini ada, atau admin belum pernah klik
-// App ID Lookup / "Auto-Isi Gambar"), fungsi ini langsung jatuh ke
-// `imageUrl` (header.jpg kecil, 460x215) yang kalau di-stretch jadi banner
-// lebar di Discord hasilnya pecah/gepeng — beda kualitas dari item yang
-// heroImageUrl-nya sudah kebetulan tersimpan, padahal SUMBER GAMBARNYA SAMA-
-// SAMA STEAM. SEKARANG: kalau heroImageUrl belum ada TAPI App ID-nya ada,
-// dicoba dulu live-check ke Steam CDN — pola URL & teknik HEAD-check PERSIS
-// SAMA dengan yang sudah dipakai lookupAppIdInfo() di atas (BUKAN sistem
-// image baru, cuma dipanggil ulang di titik lain: saat kirim notifikasi,
-// bukan cuma saat admin klik lookup manual) — supaya Game & Bypass konsisten
-// dapat banner lebar dari Steam tanpa admin harus Auto-Isi ulang satu-satu.
-// Di-cache 6 jam per App ID biar tidak nge-hit Steam CDN berkali-kali untuk
-// App ID yang sama. Kalau live-check juga gagal/App ID tidak ada -> tetap
-// fallback ke imageUrl seperti sebelumnya (tidak pernah error, tidak pernah
-// bikin embed gagal terkirim).
-const CATALOG_HERO_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 jam
-const catalogHeroUrlCache = new Map(); // appId -> { url: string|null, expiresAt }
+// SUMBER BANNER NOTIFIKASI — DIGANTI TOTAL DARI STEAM STORE API KE HUBCAP
+// (permintaan user, berlaku utk 6 notifikasi: Add/Update Game, Add/Update
+// Bypass, Download Game, Download Bypass — SEMUA memanggil pickCatalogBanner()
+// di titik pengiriman notifnya, jadi cukup diubah di SATU tempat ini).
+//
+// Sebelumnya (LAMA): kalau `doc.heroImageUrl` belum tersimpan, fungsi ini
+// live-check ke Steam CDN (resolveLiveHeroImageUrl, HEAD request ke
+// shared.akamai.steamstatic.com) tiap kirim notifikasi. Itu SEKARANG DIHAPUS
+// TOTAL — tidak ada lagi satupun request ke Steam Store API/CDN dari fungsi
+// ini atau titik manapun di alur notifikasi.
+//
+// SEKARANG: banner diambil dari HubCap (hubcapmanifest.com) — REUSE PENUH
+// service HubCap yang sudah ada (HUBCAP_BASE_URL, hubcapKeyManager,
+// pickHubcapImage — lihat definisinya di bagian "ADMIN — LIBRARY GAME
+// (HubCap)" di bawah, dipakai APA ADANYA, BUKAN bikin sistem/API Hubcap
+// baru), lewat endpoint `/api/v1/library` (endpoint FREE HubCap yang sama
+// dipakai halaman Library Game admin) di-filter by App ID.
+//   1) Dicari dulu di cache in-memory per App ID (HUBCAP_NOTIF_BANNER_CACHE_TTL_MS,
+//      6 jam) — kalau sudah pernah di-resolve, notifikasi berikutnya untuk
+//      App ID yang sama langsung dapat data cache-nya, TANPA panggilan
+//      HubCap lagi ("prioritaskan data yang sudah tersimpan di cache biar
+//      notifikasi lebih cepat").
+//   2) Kalau belum ada di cache -> query HubCap /api/v1/library (search=appId),
+//      cocokkan item yang App ID-nya PERSIS sama, lalu ambil gambarnya lewat
+//      pickHubcapImage() (mapping field gambar HubCap yang sudah ada).
+//   3) Kalau HubCap tidak punya banner utk App ID itu (atau item tidak
+//      punya App ID sama sekali, mis. Bypass tanpa App ID) -> fallback ke
+//      data yang SUDAH TERSIMPAN di project (doc.heroImageUrl / doc.imageUrl,
+//      yang sudah ada di database dari fitur Auto-Isi/App ID Lookup
+//      sebelumnya) — TIDAK PERNAH request Steam Store API baru di sini.
+const HUBCAP_NOTIF_BANNER_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 jam
+const hubcapNotifBannerCache = new Map(); // appId -> { url: string|null, expiresAt }
 
-async function resolveLiveHeroImageUrl(appId) {
+async function fetchHubcapBannerForAppId(appId) {
   if (!appId) return null;
-  const cached = catalogHeroUrlCache.get(appId);
+  const key = String(appId);
+  const cached = hubcapNotifBannerCache.get(key);
   if (cached && cached.expiresAt > Date.now()) return cached.url;
 
-  const heroUrl = `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${appId}/library_hero.jpg`;
   let resolved = null;
   try {
-    // Timeout diturunkan dari 8000 -> 3500ms (fix "notifikasi Add/Update
-    // Game/Bypass delay"): ini live HEAD-check ke Steam CDN yang jalan
-    // SEBELUM notif Discord dikirim (lihat pickCatalogBanner dipanggil di
-    // titik pengiriman notif game_new/game_edit/bypass_new/bypass_edit) —
-    // kalau lambat/timeout, notifnya ikut telat terkirim. 3.5 detik cukup
-    // untuk HEAD request biasa, dan hasilnya di-cache 6 jam (lihat
-    // CATALOG_HERO_CACHE_TTL_MS) jadi App ID yang sama tidak akan kena
-    // delay ini berulang-ulang.
-    const res = await axios.head(heroUrl, { timeout: 3500, validateStatus: () => true });
-    if (res.status === 200) resolved = heroUrl;
-  } catch (e) { /* best-effort — banner tetap fallback ke imageUrl kalau ini gagal */ }
+    if (await hubcapKeyManager.hasActiveKey()) {
+      // `getKeyForFreeEndpoint` — sama persis dipakai endpoint Library Game
+      // (endpoint HubCap ini terdokumentasi resmi "Free - No usage count"),
+      // jadi lookup banner notifikasi TIDAK memotong kuota download harian
+      // API key HubCap sama sekali.
+      const keyDoc = await hubcapKeyManager.getKeyForFreeEndpoint();
+      if (keyDoc) {
+        const hcRes = await axios.get(`${HUBCAP_BASE_URL}/api/v1/library`, {
+          headers: { Authorization: `Bearer ${keyDoc.key}` },
+          params: { limit: 10, offset: 0, search: key },
+          timeout: 6000,
+          validateStatus: () => true
+        });
+        if (hcRes.status === 200) {
+          const body = hcRes.data;
+          const rawItems = body.games || body.results || body.data || (Array.isArray(body) ? body : []);
+          const match = rawItems.find(raw => String(raw.game_id ?? raw.appid ?? raw.app_id ?? raw.id ?? '').trim() === key);
+          if (match) resolved = pickHubcapImage(match);
+        } else if (hcRes.status === 429) {
+          hubcapKeyManager.markFreeEndpointRateLimited(keyDoc);
+        }
+      }
+    }
+  } catch (e) { /* best-effort — banner tetap fallback ke data project kalau HubCap gagal/timeout */ }
 
   // Prune ringan biar cache tidak tumbuh tanpa batas kalau App ID-nya banyak sekali.
-  if (catalogHeroUrlCache.size > 1000) {
+  if (hubcapNotifBannerCache.size > 1000) {
     const now = Date.now();
-    for (const [k, v] of catalogHeroUrlCache) if (v.expiresAt < now) catalogHeroUrlCache.delete(k);
+    for (const [k, v] of hubcapNotifBannerCache) if (v.expiresAt < now) hubcapNotifBannerCache.delete(k);
   }
-  catalogHeroUrlCache.set(appId, { url: resolved, expiresAt: Date.now() + CATALOG_HERO_CACHE_TTL_MS });
+  hubcapNotifBannerCache.set(key, { url: resolved, expiresAt: Date.now() + HUBCAP_NOTIF_BANNER_CACHE_TTL_MS });
   return resolved;
 }
 
 async function pickCatalogBanner(doc) {
-  if (doc.heroImageUrl) return doc.heroImageUrl;
   // `steamAppId` — field legacy yang masih dipakai di sejumlah dokumen Bypass
   // lama (lihat pola `b.appId || b.steamAppId` yang sudah dipakai di banyak
-  // tempat lain di file ini), diikutkan supaya live-check ini juga jalan
+  // tempat lain di file ini), diikutkan supaya lookup HubCap ini juga jalan
   // untuk data lama yang App ID-nya masih tersimpan di field lama itu.
   const appId = doc.appId || doc.steamAppId || null;
   if (appId) {
-    const liveHero = await resolveLiveHeroImageUrl(String(appId));
-    if (liveHero) return liveHero;
+    const hubcapBanner = await fetchHubcapBannerForAppId(appId);
+    if (hubcapBanner) return hubcapBanner;
   }
-  return doc.imageUrl || null;
+  // Fallback — data yang SUDAH TERSIMPAN di project (bukan panggilan baru).
+  return doc.heroImageUrl || doc.imageUrl || null;
 }
 
 // ══════════════════════════════════════════════════════════════════════════

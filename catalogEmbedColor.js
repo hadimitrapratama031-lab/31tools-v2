@@ -8,10 +8,12 @@
 //    warna, gunakan fallback warna dari style 31 Tools."
 //
 // TIDAK membuat sistem pengambilan gambar baru — modul ini HANYA membaca
-// ULANG gambar yang URL-nya sudah dipilih oleh pickCatalogBanner() (ambil
-// dari heroImageUrl/imageUrl, yaitu field yang sudah diisi dari Steam Store
-// API lewat fitur Auto-Isi yang SUDAH ADA di server.js). Tidak menyentuh,
-// mengganti, atau menduplikasi logic Steam API sama sekali.
+// ULANG gambar yang URL-nya sudah dipilih oleh pickCatalogBanner() di
+// server.js (sekarang diambil dari HubCap, dengan fallback ke
+// heroImageUrl/imageUrl yang sudah tersimpan di project kalau HubCap tidak
+// punya bannernya). Modul ini agnostik terhadap sumber URL-nya (HubCap,
+// data lama, atau apapun) — tidak menyentuh, mengganti, atau menduplikasi
+// logic pengambilan banner itu sendiri sama sekali.
 //
 // TEKNIK: resize gambar ke 1x1 pixel (lewat `sharp`) — cara umum & murah
 // untuk mendapatkan "warna rata-rata/dominan" dari keseluruhan gambar, tanpa
