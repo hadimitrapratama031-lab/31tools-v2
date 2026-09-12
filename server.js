@@ -1590,30 +1590,30 @@ const catalogEmbedColor = require('./catalogEmbedColor');
 // lama/lain yang nyangkut di flow ini).
 //
 // Yang tetap DINAMIS dari data asli (tidak pernah hardcode/dikarang):
-//   - name        : nama Game/Bypass ASLI dari dokumen database, disisipkan
-//                   ke baris "• {name}" di description (posisi & gaya teks
-//                   persis mengikuti template, cuma nilainya dinamis).
-//   - banner      : dipilih oleh pickCatalogBanner() di bawah — SEKARANG
-//                   diambil dari HubCap (service HubCap yang SUDAH ADA,
-//                   TIDAK membuat sistem/API Hubcap baru), fallback ke data
-//                   yang sudah tersimpan di project (heroImageUrl/imageUrl)
-//                   kalau HubCap tidak punya bannernya — TIDAK pernah pakai
-//                   image statis dari JSON template manapun, dan TIDAK lagi
-//                   memanggil Steam Store API untuk banner ini. Kalau kosong,
-//                   embed tetap terkirim tanpa gambar (tidak error, bukan
-//                   diganti gambar lain).
+//   - name/appId  : nama & App ID Game/Bypass ASLI dari dokumen database,
+//                   disisipkan ke baris "**Game:**"/"**AppID:**" di
+//                   description (posisi & gaya teks persis mengikuti
+//                   template, cuma nilainya dinamis; AppID tampil "-" kalau
+//                   memang belum diisi, bukan dikarang).
+//   - banner      : dipilih oleh pickCatalogBanner() di bawah — diambil
+//                   dari HubCap (service HubCap yang SUDAH ADA, TIDAK
+//                   membuat sistem/API Hubcap baru), fallback ke data yang
+//                   sudah tersimpan di project (heroImageUrl/imageUrl) kalau
+//                   HubCap tidak punya bannernya — TIDAK pernah pakai image
+//                   statis dari JSON template manapun. Kalau kosong, embed
+//                   tetap terkirim tanpa gambar (tidak error, bukan diganti
+//                   gambar lain).
 //   - color       : dihitung dari warna dominan/accent banner di atas (lihat
 //                   catalogEmbedColor.js) — fallback ke warna default "31
-//                   Tools" (persis warna di 4 template JSON) kalau bannernya
-//                   kosong atau ekstraksi warna gagal.
-//   - author/footer icon : LOGO branding App Customization (Admin Web > App
-//                   Customization > Branding Logo) yang SUDAH ADA di
-//                   appCustomizationManager — dibaca ulang tiap kirim notif
-//                   (bukan snapshot lama), fallback ke APP_LOGO_URL (.env)
-//   - author/footer icon : URL logo TETAP (fixed), sesuai permintaan
-//                   terbaru — TIDAK LAGI diambil dari App Customization,
-//                   cuma satu link ini dipakai untuk semua embed Add/Update
-//                   Game/Bypass (lihat CATALOG_BRAND_ICON_URL di bawah).
+//                   Tools" kalau bannernya kosong atau ekstraksi warna gagal.
+//   - author/footer icon : URL logo TETAP (fixed) sesuai 4 template JSON
+//                   referensi terbaru (lihat CATALOG_BRAND_ICON_URL di
+//                   bawah) — statis by design (memang begitu di template),
+//                   BUKAN dinamis dari App Customization.
+//   - author.name : judul per event ("Game Added!"/"Bypass Added!"/"Game
+//                   Updated!"/"Bypass Updated!") — statis PERSIS teks di
+//                   template, dipilih otomatis dari kind+isNew (lihat
+//                   CATALOG_AUTHOR_TITLE di bawah), bukan dikarang.
 //   - url/author.url : link download App, diambil LIVE dari
 //                   appUpdateManager.getConfig() (sistem App Update yang
 //                   sudah ada, BUKAN link statis "discord.com" bawaan
@@ -1626,86 +1626,63 @@ const catalogEmbedColor = require('./catalogEmbedColor');
 //   isNew : true (Add) | false (Update/Edit)
 
 // Logo Author/Footer embed katalog (Add Game/Add Bypass/Game Update/Bypass
-// Update) — URL TETAP sesuai permintaan, BUKAN lagi dari App Customization
-// (sebelumnya diambil dari branding.logo App Customization lewat
-// getCatalogBrandIconUrl(), sekarang diganti satu link ini permanen).
-const CATALOG_BRAND_ICON_URL = 'https://i.ibb.co.com/zhZJYQGP/logo31-opsi2.png';
+// Update) — URL TETAP sesuai permintaan terbaru user (link ibb.co yang
+// dikirim bareng 4 template JSON referensi), dipakai utk author.icon_url
+// MAUPUN footer.icon_url di keempat embed ini.
+const CATALOG_BRAND_ICON_URL = 'https://i.ibb.co.com/4wZFbg6Y/Chat-GPT-Image-Sep-12-2026-09-30-31-AM.png';
+
+// Judul author per event — SATU-SATUNYA bagian dari author.name yang beda
+// per kombinasi kind/isNew, PERSIS teks di 4 template JSON referensi
+// ("Game Added!" / "Bypass Added!" / "Game Updated!" / "Bypass Updated!").
+const CATALOG_AUTHOR_TITLE = {
+  game:   { add: 'Game Added!',   update: 'Game Updated!' },
+  bypass: { add: 'Bypass Added!', update: 'Bypass Updated!' }
+};
+
+// Teks footer & baris promosi download — statis PERSIS sesuai 4 template
+// JSON referensi (bukan bagian yang diminta dinamis — cuma nama item,
+// AppID, image, & warna yang wajib dinamis, lihat komentar di atas).
+const CATALOG_FOOTER_TEXT = '31 Tools — Your Game Library.';
+const CATALOG_DOWNLOAD_PROMO_URL = 'https://threeonestore.netlify.app';
 
 async function buildCatalogEmbed({ kind, isNew, name, appId, publisher, banner, downloadUrl }) {
-  const nounLabel = kind === 'bypass' ? 'Bypass' : 'Game';
   const eventKey = isNew ? 'add' : 'update';
-  const copy = CATALOG_EMBED_COPY[kind]?.[eventKey] || CATALOG_EMBED_COPY.game.add;
+  const authorTitle = CATALOG_AUTHOR_TITLE[kind]?.[eventKey] || CATALOG_AUTHOR_TITLE.game.add;
 
+  // Warna dominan/accent dari banner (lihat catalogEmbedColor.js) — fallback
+  // ke warna style "31 Tools" kalau bannernya kosong/ekstraksi gagal. TIDAK
+  // pernah pakai angka warna statis dari file JSON referensi.
   const color = await catalogEmbedColor.getCatalogAccentColor(banner);
-  const authorIcon = CATALOG_BRAND_ICON_URL;
 
+  // Link download App — LIVE dari appUpdateManager.getConfig() (sistem yang
+  // SUDAH ADA), BUKAN link statis "discord.com" bawaan template.
   const link = cleanCatalogUrl(downloadUrl);
+
+  // Description PERSIS mengikuti layout 4 template JSON referensi — hanya
+  // nama item & App ID yang dinamis dari data asli (TIDAK PERNAH dikarang/
+  // hardcode nama game/bypass).
   const description =
-    `**${copy.heading}**\n\n` +
-    `${copy.intro.replace(/\{app\}/g, APP_NAME)}\n\n` +
-    `${copy.listLabel}\n• ${name}\n\n` +
-    `${copy.outro.replace(/\{app\}/g, APP_NAME)}`;
+    `**Game:** ${name}\n` +
+    `**AppID:** ${appId || '-'}\n\n` +
+    `**Download 31 Tools**\n` +
+    `Tombol : ${CATALOG_DOWNLOAD_PROMO_URL}`;
 
   const embed = {
     color,
     timestamp: new Date().toISOString(),
-    author: { name: `${APP_NAME} • ${copy.authorSuffix}` },
-    footer: { text: APP_NAME },
+    author: { name: authorTitle, icon_url: CATALOG_BRAND_ICON_URL },
+    footer: { text: CATALOG_FOOTER_TEXT, icon_url: CATALOG_BRAND_ICON_URL },
     description
   };
   if (link) {
     embed.url = link;
     embed.author.url = link;
   }
-  if (authorIcon) {
-    embed.author.icon_url = authorIcon;
-    embed.footer.icon_url = authorIcon;
-  }
+  // Banner — HubCap (pickCatalogBanner, lihat catatan lengkap di atas),
+  // TIDAK PERNAH gambar statis dari file JSON referensi.
   if (banner) embed.image = { url: banner };
   return embed;
 }
-
-// Copy description PERSIS mengikuti 4 template JSON referensi (Add Game/Add
-// Bypass/Game Update/Bypass Update) — satu-satunya bagian yang berubah per
-// event adalah baris "• {name}" (lihat buildCatalogEmbed di atas). `{app}`
-// diganti APP_NAME (dinamis, default "31 Tools") supaya kalau admin ganti
-// APP_NAME di .env, teksnya ikut berubah — bukan berarti brand text ini
-// dikarang, cuma dibuat konsisten dengan APP_NAME yang sudah dipakai di
-// seluruh notifikasi lain.
-const CATALOG_EMBED_COPY = {
-  game: {
-    add: {
-      authorSuffix: 'Game Update',
-      heading: '🔥NEW GAME TERBARU TELAH HADIR🔥',
-      intro: 'Update terbaru telah tersedia di {app}.\nGame baru telah ditambahkan dan siap dimainkan.',
-      listLabel: 'Game Baru:',
-      outro: 'Cek detailnya dan temukan game terbaru\nmelalui {app}.'
-    },
-    update: {
-      authorSuffix: 'Game Update',
-      heading: '🔥GAME UPDATE TERBARU TELAH HADIR🔥',
-      intro: 'Update terbaru telah tersedia di {app}.\nGame ini kini mendapatkan update terbaru.',
-      listLabel: 'Game Update:',
-      outro: 'Cek detail dan download update terbaru\nmelalui {app}.'
-    }
-  },
-  bypass: {
-    add: {
-      authorSuffix: 'Bypass Update',
-      heading: '🔥BYPASS TERBARU TELAH HADIR🔥',
-      intro: 'Update terbaru telah tersedia di {app}.\nBypass baru telah ditambahkan dan siap digunakan.',
-      listLabel: 'Bypass Baru:',
-      outro: 'Cek detailnya dan gunakan bypass terbaru\nmelalui {app}.'
-    },
-    update: {
-      authorSuffix: 'Bypass Update',
-      heading: '🔥BYPASS UPDATE TERBARU TELAH HADIR🔥',
-      intro: 'Update terbaru telah tersedia di {app}.\nBypass ini kini telah mendapatkan update terbaru.',
-      listLabel: 'Bypass Update:',
-      outro: 'Cek detail dan gunakan versi terbaru\nmelalui {app}.'
-    }
-  }
-};
 
 // Guard kecil khusus buildCatalogEmbed — Discord menolak field url/author.url/
 // icon_url kalau bukan http(s), jadi apapun yang bukan http(s) dilewati sama
@@ -8549,7 +8526,7 @@ app.post('/api/admin/games', requireAdmin, async (req, res) => {
   // fire-and-forget — tidak pernah membuat proses tambah game gagal.
   (async () => {
     try {
-      // appCfg (baca settings) & banner (bisa live-check ke Steam CDN) tidak
+      // appCfg (baca settings) & banner (bisa live-lookup ke HubCap) tidak
       // saling bergantung -> dijalankan paralel (fix delay), bukan berurutan.
       const [appCfg, banner] = await Promise.all([appUpdateManager.getConfig(), pickCatalogBanner(doc)]);
       await webhookManager.sendCategoryWebhook('game_new', {
