@@ -1704,6 +1704,7 @@ async function buildCatalogEmbed({ kind, isNew, name, appId, publisher, banner, 
   // DILEWATI SAMA SEKALI (embed tetap terkirim tanpa gambar), BUKAN dikirim
   // mentah sebagai embed.image.url yang bisa undefined/null/object/rusak.
   if (isValidBannerUrl(banner)) embed.image = { url: banner };
+  bannerDebugLog('buildCatalogEmbed_final_embed_image', { kind, isNew, name, appId, finalImageUrl: embed.image?.url || null });
 
   // Tombol Link "Download 31 Tools" — Discord Message Component (Link
   // Button, style=5), SATU-SATUNYA jenis button yang tidak butuh interaction
@@ -1840,11 +1841,25 @@ const hubcapNotifBannerCache = new Map(); // appId -> { url: string|null, expire
 // sama seperti pola fetchRequestGameBrowsePage() yang sudah ada — SEBELUMNYA
 // kena 429 sekali langsung menyerah tanpa dicoba ulang.
 // ══════════════════════════════════════════════════════════════════════════
+// ── DEBUG SEMENTARA (audit banner notifikasi) ──────────────────────────────
+// Aktifkan dengan set env HUBCAP_BANNER_DEBUG=1 (tidak perlu redeploy kode
+// buat matikan/nyalakan). HAPUS blok ini & semua pemanggilnya
+// (bannerDebugLog(...)) setelah root cause tuntas diverifikasi di production —
+// jangan biarkan nyala permanen (log per-notifikasi, bisa berisik).
+const HUBCAP_BANNER_DEBUG = process.env.HUBCAP_BANNER_DEBUG === '1';
+function bannerDebugLog(step, data) {
+  if (!HUBCAP_BANNER_DEBUG) return;
+  try { console.log(`[BannerDebug] ${step}:`, JSON.stringify(data)); } catch { console.log(`[BannerDebug] ${step}:`, data); }
+}
+
 async function fetchHubcapBannerForAppId(appId, name) {
   if (!appId) return null;
   const key = String(appId);
   const cached = hubcapNotifBannerCache.get(key);
-  if (cached && cached.expiresAt > Date.now()) return cached.url;
+  if (cached && cached.expiresAt > Date.now()) {
+    bannerDebugLog('cache_hit', { appId: key, name, cachedUrl: cached.url });
+    return cached.url;
+  }
 
   let resolved = null;
   try {
@@ -1880,16 +1895,30 @@ async function fetchHubcapBannerForAppId(appId, name) {
           // (dan dipakai berkali-kali sampai TTL habis) sudah pasti http(s)
           // yang valid, bukan hasil pickHubcapImage yang gagal dinormalisasi.
           resolved = isValidBannerUrl(picked) ? picked : null;
+          bannerDebugLog('hubcap_library_response', {
+            appId: key, name, searchText,
+            totalResults: rawItems.length,
+            matchFound: !!match,
+            matchKeys: match ? Object.keys(match) : null,
+            pickedImageRaw: picked,
+            resolvedValidUrl: resolved
+          });
           break;
         }
         if (hcRes.status === 429) {
           hubcapKeyManager.markFreeEndpointRateLimited(keyDoc);
           continue; // coba key lain (rotasi) sebelum benar-benar menyerah
         }
+        bannerDebugLog('hubcap_http_error', { appId: key, name, status: hcRes.status });
         break; // error lain (401/403/5xx dst) -> berhenti, jangan diulang percuma
       }
+    } else {
+      bannerDebugLog('no_active_hubcap_key', { appId: key, name });
     }
-  } catch (e) { /* best-effort — banner tetap fallback ke data project kalau HubCap gagal/timeout */ }
+  } catch (e) {
+    bannerDebugLog('hubcap_request_exception', { appId: key, name, error: e.message });
+    /* best-effort — banner tetap fallback ke data project kalau HubCap gagal/timeout */
+  }
 
   // Prune ringan biar cache tidak tumbuh tanpa batas kalau App ID-nya banyak sekali.
   if (hubcapNotifBannerCache.size > 1000) {
@@ -1922,13 +1951,18 @@ async function pickCatalogBanner(doc) {
     // Game/Bypass, Download Game/Bypass, Request Game Dikirim/Diterima/
     // Ditolak), jadi guard dobel di sini memastikan tidak ada jalur manapun
     // yang bisa meloloskan banner rusak/undefined ke embed manapun.
-    if (isValidBannerUrl(hubcapBanner)) return hubcapBanner;
+    if (isValidBannerUrl(hubcapBanner)) {
+      bannerDebugLog('pickCatalogBanner_result', { appId, name, source: 'hubcap', banner: hubcapBanner });
+      return hubcapBanner;
+    }
   }
   // Fallback — data yang SUDAH TERSIMPAN di project (bukan panggilan baru),
   // TETAP divalidasi supaya field lama yang mungkin berisi path relatif/rusak
   // tidak ikut lolos sebagai "banner kosong tapi bukan null" ke Discord.
   const fallback = doc.heroImageUrl || doc.imageUrl || null;
-  return isValidBannerUrl(fallback) ? fallback : null;
+  const finalBanner = isValidBannerUrl(fallback) ? fallback : null;
+  bannerDebugLog('pickCatalogBanner_result', { appId, name, source: finalBanner ? 'project_fallback' : 'none', banner: finalBanner });
+  return finalBanner;
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -2020,6 +2054,7 @@ function buildRequestGameEmbed({ event, name, discordId, banner, avatarUrl, reas
   // terkirim tanpa gambar itu), bukan diganti gambar lain/dikarang.
   if (isValidHttpUrl(banner)) embed.image = { url: banner };
   if (isValidHttpUrl(avatarUrl)) embed.thumbnail = { url: avatarUrl };
+  bannerDebugLog('buildRequestGameEmbed_final_embed_image', { event, name, finalImageUrl: embed.image?.url || null, finalThumbnailUrl: embed.thumbnail?.url || null });
 
   return embed;
 }
@@ -2102,6 +2137,7 @@ function buildDownloadEmbed({ kind, status, itemName, appId, publisher, banner, 
   // (lihat isValidBannerUrl), supaya notif Download Game/Bypass juga tidak
   // pernah mengirim image.url yang undefined/null/kosong/object/rusak.
   if (isValidBannerUrl(banner)) embed.image = { url: banner };
+  bannerDebugLog('buildDownloadEmbed_final_embed_image', { kind, status, itemName, appId, finalImageUrl: embed.image?.url || null });
   return embed;
 }
 
@@ -14379,7 +14415,18 @@ app.post('/api/requests/games', requireUser, async (req, res) => {
     (async () => {
       try {
         const [banner, avatarUrl] = await Promise.all([
-          pickCatalogBanner({ appId: doc.appId, name: summary.name, heroImageUrl: summary.heroImageUrl, imageUrl: summary.imageUrl }),
+          // BUG FIX (audit banner Request Game Terkirim): `summary` di sini
+          // adalah hasil fetchSteamAppSummary(), yang TIDAK PERNAH punya field
+          // `imageUrl` (field itu cuma ada di dokumen `games`/`bypasses` yang
+          // sudah tersimpan). Field yang benar dari fetchSteamAppSummary() untuk
+          // header/banner adalah `headerImage` (lihat definisinya: `headerImage:
+          // d.header_image || null`). Sebelumnya `summary.imageUrl` SELALU
+          // undefined -> fallback project pertama (heroImageUrl) yang dipakai,
+          // tapi field kedua (imageUrl) di rantai fallback pickCatalogBanner
+          // tidak pernah benar-benar berisi data ASLI dari Steam sesuai response
+          // API yang sebenarnya. Diperbaiki supaya mapping fallback konsisten
+          // dengan bentuk data yang benar-benar dikembalikan fetchSteamAppSummary().
+          pickCatalogBanner({ appId: doc.appId, name: summary.name, heroImageUrl: summary.heroImageUrl, imageUrl: summary.headerImage }),
           resolveRequesterAvatarUrl(discordId)
         ]);
         await notifyUser(discordId, {
@@ -14492,7 +14539,12 @@ app.put('/api/admin/game-requests/:id/reject', requireAdmin, async (req, res) =>
       try {
         const gameName = request.gameData?.name || request.appId;
         const [banner, avatarUrl] = await Promise.all([
-          pickCatalogBanner({ appId: request.appId, name: request.gameData?.name, heroImageUrl: request.gameData?.heroImageUrl, imageUrl: request.gameData?.imageUrl }),
+          // BUG FIX (audit banner Request Game Ditolak — sama persis kasusnya
+          // dengan Request Game Terkirim): `request.gameData` adalah snapshot
+          // dari fetchSteamAppSummary() (lihat `gameData: summary` saat Request
+          // dibuat), yang field banner-nya bernama `headerImage`, BUKAN
+          // `imageUrl`. `request.gameData?.imageUrl` sebelumnya selalu undefined.
+          pickCatalogBanner({ appId: request.appId, name: request.gameData?.name, heroImageUrl: request.gameData?.heroImageUrl, imageUrl: request.gameData?.headerImage }),
           resolveRequesterAvatarUrl(request.discordId)
         ]);
         await notifyUser(request.discordId, {
