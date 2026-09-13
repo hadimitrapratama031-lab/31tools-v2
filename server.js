@@ -1809,7 +1809,38 @@ const HUBCAP_NOTIF_BANNER_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 jam — HANYA 
 const HUBCAP_NOTIF_BANNER_NEGATIVE_TTL_MS = 5 * 60 * 1000; // 5 menit
 const hubcapNotifBannerCache = new Map(); // appId -> { url: string|null, expiresAt }
 
-async function fetchHubcapBannerForAppId(appId) {
+// ══════════════════════════════════════════════════════════════════════════
+// BUG FIX (root cause — banner HubCap tidak pernah muncul di SEMUA notifikasi
+// Add/Update Game/Bypass & Request Game Dikirim/Diterima/Ditolak):
+//
+// Endpoint HubCap `/api/v1/library` param `search` adalah PENCARIAN NAMA
+// (`game_name`), BUKAN pencarian App ID — ini kelihatan jelas dari endpoint
+// yang SAMA dipakai fitur Browse/Library Game Admin (lihat
+// fetchRequestGameBrowsePage()/`/api/admin/library-game` di atas), yang
+// SELALU mengisi `search` dari teks nama yang diketik user, TIDAK PERNAH
+// dari App ID.
+//
+// SEBELUMNYA fungsi ini mengirim `search: String(appId)` (App ID MENTAH
+// sebagai teks pencarian nama) — karena App ID numerik nyaris tidak pernah
+// jadi substring dari nama game manapun, HubCap hampir SELALU membalas 0
+// hasil relevan, `match` selalu `undefined`, dan `resolved` selalu `null`.
+// Akibatnya SEMUA 8 titik pemanggil pickCatalogBanner() (Add/Update
+// Game/Bypass, Download Game/Bypass, Request Game Dikirim/Diterima/Ditolak)
+// selalu jatuh ke fallback data project (`heroImageUrl`/`imageUrl`), yang di
+// banyak dokumen memang kosong — makanya banner terlihat "tidak pernah
+// muncul" walau HubCap sebenarnya PUNYA datanya.
+//
+// PERBAIKAN: `search` sekarang diisi dari NAMA game/bypass ASLI (`name`,
+// parameter baru di bawah — persis field yang sama dipakai Browse/Library
+// yang SUDAH TERBUKTI berhasil menemukan item), lalu App ID dari hasilnya
+// tetap di-exact-match SATU-SATU (`game_id`/`appid`/`app_id`/`id` === appId)
+// sebelum banner-nya dipakai — supaya banner TIDAK PERNAH tertukar ke
+// game/bypass lain walau hasil pencarian nama mengembalikan beberapa item
+// mirip. Ditambah retry ringan (rotasi key) kalau kena rate-limit sesaat,
+// sama seperti pola fetchRequestGameBrowsePage() yang sudah ada — SEBELUMNYA
+// kena 429 sekali langsung menyerah tanpa dicoba ulang.
+// ══════════════════════════════════════════════════════════════════════════
+async function fetchHubcapBannerForAppId(appId, name) {
   if (!appId) return null;
   const key = String(appId);
   const cached = hubcapNotifBannerCache.get(key);
@@ -1818,19 +1849,22 @@ async function fetchHubcapBannerForAppId(appId) {
   let resolved = null;
   try {
     if (await hubcapKeyManager.hasActiveKey()) {
-      // `getKeyForFreeEndpoint` — sama persis dipakai endpoint Library Game
-      // (endpoint HubCap ini terdokumentasi resmi "Free - No usage count"),
-      // jadi lookup banner notifikasi TIDAK memotong kuota download harian
-      // API key HubCap sama sekali.
-      const keyDoc = await hubcapKeyManager.getKeyForFreeEndpoint();
-      if (keyDoc) {
+      const searchText = (name && String(name).trim()) || undefined;
+      const MAX_ATTEMPTS = 2; // endpoint gratis -> aman dicoba ulang cepat pakai key lain kalau kena rate-limit sesaat
+      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
+        // `getKeyForFreeEndpoint` — sama persis dipakai endpoint Library Game
+        // (endpoint HubCap ini terdokumentasi resmi "Free - No usage count"),
+        // jadi lookup banner notifikasi TIDAK memotong kuota download harian
+        // API key HubCap sama sekali.
+        const keyDoc = await hubcapKeyManager.getKeyForFreeEndpoint();
+        if (!keyDoc) break;
         const hcRes = await axios.get(`${HUBCAP_BASE_URL}/api/v1/library`, {
           headers: { Authorization: `Bearer ${keyDoc.key}` },
-          // limit dinaikkan dari 10 -> 25: kalau App ID yang dicari bukan hasil
-          // paling relevan di pencarian HubCap (mis. ada beberapa game dengan
-          // nama/ID mirip), exact-match App ID di bawah tetap sempat memeriksa
-          // lebih banyak kandidat sebelum menyerah ke fallback.
-          params: { limit: 25, offset: 0, search: key },
+          // `search` diisi NAMA (lihat catatan root-cause di atas) — BUKAN App
+          // ID. limit 25 supaya kalau item yang dicari bukan hasil paling atas
+          // (mis. ada beberapa game dengan nama mirip), exact-match App ID di
+          // bawah tetap sempat memeriksa lebih banyak kandidat.
+          params: { limit: 25, offset: 0, search: searchText },
           timeout: 6000,
           validateStatus: () => true
         });
@@ -1841,16 +1875,18 @@ async function fetchHubcapBannerForAppId(appId) {
           // mencegah banner Game/Bypass lain "tertukar" kalau search HubCap
           // mengembalikan beberapa item sekaligus untuk query yang sama.
           const match = rawItems.find(raw => String(raw.game_id ?? raw.appid ?? raw.app_id ?? raw.id ?? '').trim() === key);
-          if (match) {
-            const picked = pickHubcapImage(match);
-            // Divalidasi SEBELUM di-cache — supaya nilai yang tersimpan di cache
-            // (dan dipakai berkali-kali sampai TTL habis) sudah pasti http(s)
-            // yang valid, bukan hasil pickHubcapImage yang gagal dinormalisasi.
-            resolved = isValidBannerUrl(picked) ? picked : null;
-          }
-        } else if (hcRes.status === 429) {
-          hubcapKeyManager.markFreeEndpointRateLimited(keyDoc);
+          const picked = match ? pickHubcapImage(match) : null;
+          // Divalidasi SEBELUM di-cache — supaya nilai yang tersimpan di cache
+          // (dan dipakai berkali-kali sampai TTL habis) sudah pasti http(s)
+          // yang valid, bukan hasil pickHubcapImage yang gagal dinormalisasi.
+          resolved = isValidBannerUrl(picked) ? picked : null;
+          break;
         }
+        if (hcRes.status === 429) {
+          hubcapKeyManager.markFreeEndpointRateLimited(keyDoc);
+          continue; // coba key lain (rotasi) sebelum benar-benar menyerah
+        }
+        break; // error lain (401/403/5xx dst) -> berhenti, jangan diulang percuma
       }
     }
   } catch (e) { /* best-effort — banner tetap fallback ke data project kalau HubCap gagal/timeout */ }
@@ -1873,13 +1909,19 @@ async function pickCatalogBanner(doc) {
   // tempat lain di file ini), diikutkan supaya lookup HubCap ini juga jalan
   // untuk data lama yang App ID-nya masih tersimpan di field lama itu.
   const appId = doc.appId || doc.steamAppId || null;
+  // Nama ASLI game/bypass — dipakai sebagai teks pencarian HubCap (lihat
+  // catatan root-cause di fetchHubcapBannerForAppId di atas). Tidak pernah
+  // dikarang/hardcode — selalu dari dokumen ASLI yang dikirim pemanggil
+  // (doc.name untuk games/bypasses, atau gameData.name snapshot Request Game).
+  const name = doc.name || doc.gameData?.name || null;
   if (appId) {
-    const hubcapBanner = await fetchHubcapBannerForAppId(appId);
+    const hubcapBanner = await fetchHubcapBannerForAppId(appId, name);
     // Divalidasi lagi di sini (defense-in-depth) — fetchHubcapBannerForAppId
     // sendiri sudah memvalidasi sebelum di-cache, tapi pickCatalogBanner()
-    // adalah SATU-SATUNYA titik yang dipakai keenam notifikasi, jadi guard
-    // dobel di sini memastikan tidak ada jalur manapun yang bisa meloloskan
-    // banner rusak/undefined ke buildCatalogEmbed/buildDownloadEmbed.
+    // adalah SATU-SATUNYA titik yang dipakai KETUJUH+ notifikasi (Add/Update
+    // Game/Bypass, Download Game/Bypass, Request Game Dikirim/Diterima/
+    // Ditolak), jadi guard dobel di sini memastikan tidak ada jalur manapun
+    // yang bisa meloloskan banner rusak/undefined ke embed manapun.
     if (isValidBannerUrl(hubcapBanner)) return hubcapBanner;
   }
   // Fallback — data yang SUDAH TERSIMPAN di project (bukan panggilan baru),
@@ -14337,7 +14379,7 @@ app.post('/api/requests/games', requireUser, async (req, res) => {
     (async () => {
       try {
         const [banner, avatarUrl] = await Promise.all([
-          pickCatalogBanner({ appId: doc.appId, heroImageUrl: summary.heroImageUrl, imageUrl: summary.imageUrl }),
+          pickCatalogBanner({ appId: doc.appId, name: summary.name, heroImageUrl: summary.heroImageUrl, imageUrl: summary.imageUrl }),
           resolveRequesterAvatarUrl(discordId)
         ]);
         await notifyUser(discordId, {
@@ -14450,7 +14492,7 @@ app.put('/api/admin/game-requests/:id/reject', requireAdmin, async (req, res) =>
       try {
         const gameName = request.gameData?.name || request.appId;
         const [banner, avatarUrl] = await Promise.all([
-          pickCatalogBanner({ appId: request.appId, heroImageUrl: request.gameData?.heroImageUrl, imageUrl: request.gameData?.imageUrl }),
+          pickCatalogBanner({ appId: request.appId, name: request.gameData?.name, heroImageUrl: request.gameData?.heroImageUrl, imageUrl: request.gameData?.imageUrl }),
           resolveRequesterAvatarUrl(request.discordId)
         ]);
         await notifyUser(request.discordId, {
