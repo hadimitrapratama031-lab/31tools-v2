@@ -1932,6 +1932,20 @@ async function fetchHubcapBannerForAppId(appId, name) {
   return resolved;
 }
 
+// Fallback TERAKHIR — pola URL resmi Steam CDN buat header/banner store page
+// (mis. https://cdn.cloudflare.steamstatic.com/steam/apps/601050/header.jpg).
+// Asset "header.jpg" ini WAJIB ada untuk setiap game yang listing di Steam
+// Store (beda dari "library_hero"/"library_600x900" yang sifatnya opsional,
+// makanya sering 404 untuk game tertentu — itu penyebab banner sebelumnya
+// suka kosong). Dipakai HANYA kalau HubCap dan data project (heroImageUrl/
+// imageUrl) berdua tidak punya apa-apa untuk App ID ini — tetap BUKAN
+// pengganti HubCap sebagai sumber utama, cuma jaring pengaman terakhir biar
+// notifikasi jarang sekali benar-benar tanpa gambar sama sekali.
+function buildSteamHeaderImageFallback(appId) {
+  if (!appId) return null;
+  return `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/header.jpg`;
+}
+
 async function pickCatalogBanner(doc) {
   // `steamAppId` — field legacy yang masih dipakai di sejumlah dokumen Bypass
   // lama (lihat pola `b.appId || b.steamAppId` yang sudah dipakai di banyak
@@ -1960,10 +1974,17 @@ async function pickCatalogBanner(doc) {
   // TETAP divalidasi supaya field lama yang mungkin berisi path relatif/rusak
   // tidak ikut lolos sebagai "banner kosong tapi bukan null" ke Discord.
   const fallback = doc.heroImageUrl || doc.imageUrl || null;
-  const finalBanner = isValidBannerUrl(fallback) ? fallback : null;
-  bannerDebugLog('pickCatalogBanner_result', { appId, name, source: finalBanner ? 'project_fallback' : 'none', banner: finalBanner });
+  if (isValidBannerUrl(fallback)) {
+    bannerDebugLog('pickCatalogBanner_result', { appId, name, source: 'project_fallback', banner: fallback });
+    return fallback;
+  }
+  // Fallback TERAKHIR (permintaan user) — pola header.jpg Steam CDN dari App ID.
+  const steamHeaderFallback = buildSteamHeaderImageFallback(appId);
+  const finalBanner = isValidBannerUrl(steamHeaderFallback) ? steamHeaderFallback : null;
+  bannerDebugLog('pickCatalogBanner_result', { appId, name, source: finalBanner ? 'steam_header_fallback' : 'none', banner: finalBanner });
   return finalBanner;
 }
+
 
 // ══════════════════════════════════════════════════════════════════════════
 // EMBED REQUEST GAME (Dikirim/Diterima/Ditolak) — mengikuti STRUKTUR PERSIS
