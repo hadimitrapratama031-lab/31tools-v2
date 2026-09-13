@@ -1579,9 +1579,9 @@ const appCustomizationManager = require('./appCustomizationManager')({ getDb: ()
 // tidak disentuh sama sekali oleh fitur ini).
 const dashboardBannerManager = require('./dashboardBannerManager')({ getDb: () => db, wsBroadcastAll });
 // CATALOG EMBED ACCENT COLOR — ekstraksi warna dominan/accent dari banner
-// Game/Bypass (HubCap, lewat pickCatalogBanner() di bawah) untuk embed
-// Add Game/Add Bypass/Game Update/Bypass Update (lihat catalogEmbedColor.js
-// & buildCatalogEmbed() di bawah).
+// Game/Bypass (Steam CDN header.jpg, lewat pickCatalogBanner() di bawah)
+// untuk embed Add Game/Add Bypass/Game Update/Bypass Update (lihat
+// catalogEmbedColor.js & buildCatalogEmbed() di bawah).
 const catalogEmbedColor = require('./catalogEmbedColor');
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1602,14 +1602,13 @@ const catalogEmbedColor = require('./catalogEmbedColor');
 //                   description (posisi & gaya teks persis mengikuti
 //                   template, cuma nilainya dinamis; AppID tampil "-" kalau
 //                   memang belum diisi, bukan dikarang).
-//   - banner      : dipilih oleh pickCatalogBanner() di bawah — diambil
-//                   dari HubCap (service HubCap yang SUDAH ADA, TIDAK
-//                   membuat sistem/API Hubcap baru), fallback ke data yang
-//                   sudah tersimpan di project (heroImageUrl/imageUrl) kalau
-//                   HubCap tidak punya bannernya — TIDAK pernah pakai image
-//                   statis dari JSON template manapun. Kalau kosong, embed
-//                   tetap terkirim tanpa gambar (tidak error, bukan diganti
-//                   gambar lain).
+//   - banner      : dipilih oleh pickCatalogBanner() di bawah — SATU-SATUNYA
+//                   sumber adalah Steam CDN `header.jpg` dibangun langsung
+//                   dari App ID dokumen (TIDAK PERNAH HubCap, TIDAK PERNAH
+//                   data tersimpan di project/heroImageUrl/imageUrl, TIDAK
+//                   PERNAH gambar statis dari JSON template manapun). Kalau
+//                   App ID kosong, embed tetap terkirim tanpa gambar (tidak
+//                   error, bukan diganti gambar lain).
 //   - color       : dihitung dari warna dominan/accent banner di atas (lihat
 //                   catalogEmbedColor.js) — fallback ke warna default "31
 //                   Tools" kalau bannernya kosong atau ekstraksi warna gagal.
@@ -1698,11 +1697,12 @@ async function buildCatalogEmbed({ kind, isNew, name, appId, publisher, banner, 
     embed.url = link;
     embed.author.url = link;
   }
-  // Banner — HubCap (pickCatalogBanner, lihat catatan lengkap di atas),
-  // TIDAK PERNAH gambar statis dari file JSON referensi. DIVALIDASI dulu
-  // (lihat isValidBannerUrl) — kalau bukan http(s) yang valid, field image
-  // DILEWATI SAMA SEKALI (embed tetap terkirim tanpa gambar), BUKAN dikirim
-  // mentah sebagai embed.image.url yang bisa undefined/null/object/rusak.
+  // Banner — Steam CDN header.jpg (pickCatalogBanner, lihat ATURAN MUTLAK di
+  // definisinya), TIDAK PERNAH gambar statis dari file JSON referensi.
+  // DIVALIDASI dulu (lihat isValidBannerUrl) — kalau bukan http(s) yang
+  // valid, field image DILEWATI SAMA SEKALI (embed tetap terkirim tanpa
+  // gambar), BUKAN dikirim mentah sebagai embed.image.url yang bisa
+  // undefined/null/object/rusak.
   if (isValidBannerUrl(banner)) embed.image = { url: banner };
   bannerDebugLog('buildCatalogEmbed_final_embed_image', { kind, isNew, name, appId, finalImageUrl: embed.image?.url || null });
 
@@ -1755,234 +1755,69 @@ function isValidBannerUrl(u) {
   }
 }
 
-// Pilih gambar landscape TERBAIK buat banner notif Discord dari data game/
-// bypass — heroImageUrl (library_hero, wide 1920x620) diprioritaskan karena
-// paling pas buat banner lebar; imageUrl (header.jpg, 460x215) jadi fallback
-// TERAKHIR. libraryImageUrl (library_600x900, POTRAIT) SENGAJA DILEWATI di
-// sini — kalau dipaksa jadi banner lebar hasilnya gepeng/terpotong aneh.
-// capsuleImageUrl (231x87) JUGA SENGAJA TIDAK dipakai — rasio & ukurannya
-// beda jauh dari hero/header, hasilnya kepotong/beda ukuran dibanding notif
-// lain kalau dipasang sebagai banner lebar.
-//
-// SUMBER BANNER NOTIFIKASI — DIGANTI TOTAL DARI STEAM STORE API KE HUBCAP
-// (permintaan user, berlaku utk 6 notifikasi: Add/Update Game, Add/Update
-// Bypass, Download Game, Download Bypass — SEMUA memanggil pickCatalogBanner()
-// di titik pengiriman notifnya, jadi cukup diubah di SATU tempat ini).
-//
-// Sebelumnya (LAMA): kalau `doc.heroImageUrl` belum tersimpan, fungsi ini
-// live-check ke Steam CDN (resolveLiveHeroImageUrl, HEAD request ke
-// shared.akamai.steamstatic.com) tiap kirim notifikasi. Itu SEKARANG DIHAPUS
-// TOTAL — tidak ada lagi satupun request ke Steam Store API/CDN dari fungsi
-// ini atau titik manapun di alur notifikasi.
-//
-// SEKARANG: banner diambil dari HubCap (hubcapmanifest.com) — REUSE PENUH
-// service HubCap yang sudah ada (HUBCAP_BASE_URL, hubcapKeyManager,
-// pickHubcapImage — lihat definisinya di bagian "ADMIN — LIBRARY GAME
-// (HubCap)" di bawah, dipakai APA ADANYA, BUKAN bikin sistem/API Hubcap
-// baru), lewat endpoint `/api/v1/library` (endpoint FREE HubCap yang sama
-// dipakai halaman Library Game admin) di-filter by App ID.
-//   1) Dicari dulu di cache in-memory per App ID (HUBCAP_NOTIF_BANNER_CACHE_TTL_MS,
-//      6 jam) — kalau sudah pernah di-resolve, notifikasi berikutnya untuk
-//      App ID yang sama langsung dapat data cache-nya, TANPA panggilan
-//      HubCap lagi ("prioritaskan data yang sudah tersimpan di cache biar
-//      notifikasi lebih cepat").
-//   2) Kalau belum ada di cache -> query HubCap /api/v1/library (search=appId),
-//      cocokkan item yang App ID-nya PERSIS sama, lalu ambil gambarnya lewat
-//      pickHubcapImage() (mapping field gambar HubCap yang sudah ada).
-//   3) Kalau HubCap tidak punya banner utk App ID itu (atau item tidak
-//      punya App ID sama sekali, mis. Bypass tanpa App ID) -> fallback ke
-//      data yang SUDAH TERSIMPAN di project (doc.heroImageUrl / doc.imageUrl,
-//      yang sudah ada di database dari fitur Auto-Isi/App ID Lookup
-//      sebelumnya) — TIDAK PERNAH request Steam Store API baru di sini.
-const HUBCAP_NOTIF_BANNER_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 jam — HANYA untuk hasil SUKSES (ada banner valid)
-// BUG FIX (permintaan user — "Saat Add Game, banner kadang kosong/tidak
-// terbaca"): SEBELUMNYA hasil GAGAL/tidak ketemu (resolved = null, mis. game
-// baru saja ditambahkan & belum sempat kena index oleh pencarian HubCap saat
-// itu juga, atau sesaat kena rate-limit) ikut di-cache dengan TTL 6 JAM PENUH
-// yang sama dengan hasil sukses. Akibatnya: begitu 1x lookup gagal utk 1 App
-// ID (murni race condition/timing, DATANYA SEBENARNYA ADA), notifikasi
-// berikutnya utk App ID yang sama (Update/Download) ikut kena "banner kosong"
-// selama 6 jam ke depan walau HubCap sebenarnya sudah punya datanya beberapa
-// detik kemudian. Sekarang hasil gagal HANYA di-cache singkat (5 menit) —
-// sama polanya dengan STEAM_SUMMARY_NEGATIVE_TTL_MS yang sudah ada di file
-// ini utk kasus serupa — supaya lookup berikutnya tetap dicoba ulang dalam
-// waktu wajar, bukan dianggap "gagal permanen" berjam-jam.
-const HUBCAP_NOTIF_BANNER_NEGATIVE_TTL_MS = 5 * 60 * 1000; // 5 menit
-const hubcapNotifBannerCache = new Map(); // appId -> { url: string|null, expiresAt }
-
 // ══════════════════════════════════════════════════════════════════════════
-// BUG FIX (root cause — banner HubCap tidak pernah muncul di SEMUA notifikasi
-// Add/Update Game/Bypass & Request Game Dikirim/Diterima/Ditolak):
+// SUMBER BANNER/IMAGE UTAMA GAME — WAJIB & SATU-SATUNYA: Steam CDN
+// `https://cdn.cloudflare.steamstatic.com/steam/apps/{APP_ID}/header.jpg`
+// (permintaan user, berlaku utk SEMUA 9 notifikasi: Add Game, Add Bypass,
+// Update Game, Update Bypass, Request Game Dikirim/Diterima/Ditolak,
+// Download Game, Download Bypass — SEMUA memanggil pickCatalogBanner() di
+// titik pengiriman notifnya, jadi cukup diubah/dikunci di SATU tempat ini).
 //
-// Endpoint HubCap `/api/v1/library` param `search` adalah PENCARIAN NAMA
-// (`game_name`), BUKAN pencarian App ID — ini kelihatan jelas dari endpoint
-// yang SAMA dipakai fitur Browse/Library Game Admin (lihat
-// fetchRequestGameBrowsePage()/`/api/admin/library-game` di atas), yang
-// SELALU mengisi `search` dari teks nama yang diketik user, TIDAK PERNAH
-// dari App ID.
+// ATURAN MUTLAK (tidak boleh diubah/ditambah tanpa mengubah instruksi ini):
+//   - HANYA format di atas yang boleh dipakai untuk embed.image.url.
+//   - TIDAK ADA fallback ke HubCap (hubcapmanifest.com) untuk banner.
+//   - TIDAK ADA fallback ke Steam Store API (store.steampowered.com/api).
+//   - TIDAK ADA fallback ke gambar tersimpan di database (heroImageUrl,
+//     imageUrl, libraryImageUrl, capsuleImageUrl, dst).
+//   - TIDAK ADA thumbnail/sumber gambar lain, TIDAK ADA URL alternatif,
+//     TIDAK ADA sistem fallback banner apapun.
+//   - Kalau App ID tidak tersedia -> banner TIDAK diisi sama sekali (embed
+//     tetap terkirim tanpa gambar), BUKAN diganti sumber lain.
 //
-// SEBELUMNYA fungsi ini mengirim `search: String(appId)` (App ID MENTAH
-// sebagai teks pencarian nama) — karena App ID numerik nyaris tidak pernah
-// jadi substring dari nama game manapun, HubCap hampir SELALU membalas 0
-// hasil relevan, `match` selalu `undefined`, dan `resolved` selalu `null`.
-// Akibatnya SEMUA 8 titik pemanggil pickCatalogBanner() (Add/Update
-// Game/Bypass, Download Game/Bypass, Request Game Dikirim/Diterima/Ditolak)
-// selalu jatuh ke fallback data project (`heroImageUrl`/`imageUrl`), yang di
-// banyak dokumen memang kosong — makanya banner terlihat "tidak pernah
-// muncul" walau HubCap sebenarnya PUNYA datanya.
-//
-// PERBAIKAN: `search` sekarang diisi dari NAMA game/bypass ASLI (`name`,
-// parameter baru di bawah — persis field yang sama dipakai Browse/Library
-// yang SUDAH TERBUKTI berhasil menemukan item), lalu App ID dari hasilnya
-// tetap di-exact-match SATU-SATU (`game_id`/`appid`/`app_id`/`id` === appId)
-// sebelum banner-nya dipakai — supaya banner TIDAK PERNAH tertukar ke
-// game/bypass lain walau hasil pencarian nama mengembalikan beberapa item
-// mirip. Ditambah retry ringan (rotasi key) kalau kena rate-limit sesaat,
-// sama seperti pola fetchRequestGameBrowsePage() yang sudah ada — SEBELUMNYA
-// kena 429 sekali langsung menyerah tanpa dicoba ulang.
-// ══════════════════════════════════════════════════════════════════════════
+// AUDIT root-cause kenapa banner sebelumnya sering tidak muncul: implementasi
+// LAMA fungsi ini mencoba lookup ke HubCap (`/api/v1/library`, pencarian by
+// nama) dulu, baru fallback ke field tersimpan di database (heroImageUrl/
+// imageUrl), dan Steam CDN cuma jadi fallback PALING TERAKHIR — jadi kalau
+// HubCap tidak (atau belum) punya index untuk App ID tsb, DAN field database
+// belum pernah diisi (kasus paling umum untuk game yang baru ditambahkan),
+// banner ikut kosong walau App ID-nya sendiri valid & header.jpg Steam CDN
+// pasti tersedia. Sekarang dihilangkan total: Steam CDN header.jpg dipasang
+// sebagai SATU-SATUNYA sumber, langsung dari App ID dokumen — tidak ada lagi
+// panggilan network (HubCap/Steam Store API) sama sekali di jalur notifikasi
+// banner, jadi hasilnya deterministik & instan, dan proses async/await-nya
+// (Promise.all di setiap titik pemanggil) tetap selesai sebelum embed dikirim.
 // ── DEBUG SEMENTARA (audit banner notifikasi) ──────────────────────────────
 // Aktifkan dengan set env HUBCAP_BANNER_DEBUG=1 (tidak perlu redeploy kode
-// buat matikan/nyalakan). HAPUS blok ini & semua pemanggilnya
-// (bannerDebugLog(...)) setelah root cause tuntas diverifikasi di production —
-// jangan biarkan nyala permanen (log per-notifikasi, bisa berisik).
+// buat matikan/nyalakan).
 const HUBCAP_BANNER_DEBUG = process.env.HUBCAP_BANNER_DEBUG === '1';
 function bannerDebugLog(step, data) {
   if (!HUBCAP_BANNER_DEBUG) return;
   try { console.log(`[BannerDebug] ${step}:`, JSON.stringify(data)); } catch { console.log(`[BannerDebug] ${step}:`, data); }
 }
 
-async function fetchHubcapBannerForAppId(appId, name) {
-  if (!appId) return null;
-  const key = String(appId);
-  const cached = hubcapNotifBannerCache.get(key);
-  if (cached && cached.expiresAt > Date.now()) {
-    bannerDebugLog('cache_hit', { appId: key, name, cachedUrl: cached.url });
-    return cached.url;
-  }
-
-  let resolved = null;
-  try {
-    if (await hubcapKeyManager.hasActiveKey()) {
-      const searchText = (name && String(name).trim()) || undefined;
-      const MAX_ATTEMPTS = 2; // endpoint gratis -> aman dicoba ulang cepat pakai key lain kalau kena rate-limit sesaat
-      for (let attempt = 0; attempt < MAX_ATTEMPTS; attempt++) {
-        // `getKeyForFreeEndpoint` — sama persis dipakai endpoint Library Game
-        // (endpoint HubCap ini terdokumentasi resmi "Free - No usage count"),
-        // jadi lookup banner notifikasi TIDAK memotong kuota download harian
-        // API key HubCap sama sekali.
-        const keyDoc = await hubcapKeyManager.getKeyForFreeEndpoint();
-        if (!keyDoc) break;
-        const hcRes = await axios.get(`${HUBCAP_BASE_URL}/api/v1/library`, {
-          headers: { Authorization: `Bearer ${keyDoc.key}` },
-          // `search` diisi NAMA (lihat catatan root-cause di atas) — BUKAN App
-          // ID. limit 25 supaya kalau item yang dicari bukan hasil paling atas
-          // (mis. ada beberapa game dengan nama mirip), exact-match App ID di
-          // bawah tetap sempat memeriksa lebih banyak kandidat.
-          params: { limit: 25, offset: 0, search: searchText },
-          timeout: 6000,
-          validateStatus: () => true
-        });
-        if (hcRes.status === 200) {
-          const body = hcRes.data;
-          const rawItems = body.games || body.results || body.data || (Array.isArray(body) ? body : []);
-          // Match App ID PERSIS SAMA (bukan cuma game pertama di hasil search) —
-          // mencegah banner Game/Bypass lain "tertukar" kalau search HubCap
-          // mengembalikan beberapa item sekaligus untuk query yang sama.
-          const match = rawItems.find(raw => String(raw.game_id ?? raw.appid ?? raw.app_id ?? raw.id ?? '').trim() === key);
-          const picked = match ? pickHubcapImage(match) : null;
-          // Divalidasi SEBELUM di-cache — supaya nilai yang tersimpan di cache
-          // (dan dipakai berkali-kali sampai TTL habis) sudah pasti http(s)
-          // yang valid, bukan hasil pickHubcapImage yang gagal dinormalisasi.
-          resolved = isValidBannerUrl(picked) ? picked : null;
-          bannerDebugLog('hubcap_library_response', {
-            appId: key, name, searchText,
-            totalResults: rawItems.length,
-            matchFound: !!match,
-            matchKeys: match ? Object.keys(match) : null,
-            pickedImageRaw: picked,
-            resolvedValidUrl: resolved
-          });
-          break;
-        }
-        if (hcRes.status === 429) {
-          hubcapKeyManager.markFreeEndpointRateLimited(keyDoc);
-          continue; // coba key lain (rotasi) sebelum benar-benar menyerah
-        }
-        bannerDebugLog('hubcap_http_error', { appId: key, name, status: hcRes.status });
-        break; // error lain (401/403/5xx dst) -> berhenti, jangan diulang percuma
-      }
-    } else {
-      bannerDebugLog('no_active_hubcap_key', { appId: key, name });
-    }
-  } catch (e) {
-    bannerDebugLog('hubcap_request_exception', { appId: key, name, error: e.message });
-    /* best-effort — banner tetap fallback ke data project kalau HubCap gagal/timeout */
-  }
-
-  // Prune ringan biar cache tidak tumbuh tanpa batas kalau App ID-nya banyak sekali.
-  if (hubcapNotifBannerCache.size > 1000) {
-    const now = Date.now();
-    for (const [k, v] of hubcapNotifBannerCache) if (v.expiresAt < now) hubcapNotifBannerCache.delete(k);
-  }
-  hubcapNotifBannerCache.set(key, {
-    url: resolved,
-    expiresAt: Date.now() + (resolved ? HUBCAP_NOTIF_BANNER_CACHE_TTL_MS : HUBCAP_NOTIF_BANNER_NEGATIVE_TTL_MS)
-  });
-  return resolved;
-}
-
-// Fallback TERAKHIR — pola URL resmi Steam CDN buat header/banner store page
-// (mis. https://cdn.cloudflare.steamstatic.com/steam/apps/601050/header.jpg).
-// Asset "header.jpg" ini WAJIB ada untuk setiap game yang listing di Steam
-// Store (beda dari "library_hero"/"library_600x900" yang sifatnya opsional,
-// makanya sering 404 untuk game tertentu — itu penyebab banner sebelumnya
-// suka kosong). Dipakai HANYA kalau HubCap dan data project (heroImageUrl/
-// imageUrl) berdua tidak punya apa-apa untuk App ID ini — tetap BUKAN
-// pengganti HubCap sebagai sumber utama, cuma jaring pengaman terakhir biar
-// notifikasi jarang sekali benar-benar tanpa gambar sama sekali.
+// Bangun URL Steam CDN header.jpg dari App ID — SATU-SATUNYA format yang
+// boleh dipakai (lihat ATURAN MUTLAK di atas). Format TIDAK PERNAH diubah.
 function buildSteamHeaderImageFallback(appId) {
-  if (!appId) return null;
-  return `https://cdn.cloudflare.steamstatic.com/steam/apps/${appId}/header.jpg`;
+  const id = appId != null ? String(appId).trim() : '';
+  if (!id) return null;
+  return `https://cdn.cloudflare.steamstatic.com/steam/apps/${id}/header.jpg`;
 }
 
+// pickCatalogBanner() — dipanggil oleh SEMUA 9 titik notifikasi (Add/Update
+// Game/Bypass, Download Game/Bypass, Request Game Dikirim/Diterima/Ditolak).
+// Mapping WAJIB: doc(Game/Bypass/Request) -> App ID -> Steam CDN URL.
+// `steamAppId` diikutkan sebagai alias App ID legacy (sejumlah dokumen
+// Bypass lama menyimpan App ID di field ini, bukan `appId`) — BUKAN sumber
+// gambar alternatif, cuma nama field lain untuk App ID yang SAMA.
 async function pickCatalogBanner(doc) {
-  // `steamAppId` — field legacy yang masih dipakai di sejumlah dokumen Bypass
-  // lama (lihat pola `b.appId || b.steamAppId` yang sudah dipakai di banyak
-  // tempat lain di file ini), diikutkan supaya lookup HubCap ini juga jalan
-  // untuk data lama yang App ID-nya masih tersimpan di field lama itu.
-  const appId = doc.appId || doc.steamAppId || null;
-  // Nama ASLI game/bypass — dipakai sebagai teks pencarian HubCap (lihat
-  // catatan root-cause di fetchHubcapBannerForAppId di atas). Tidak pernah
-  // dikarang/hardcode — selalu dari dokumen ASLI yang dikirim pemanggil
-  // (doc.name untuk games/bypasses, atau gameData.name snapshot Request Game).
-  const name = doc.name || doc.gameData?.name || null;
-  if (appId) {
-    const hubcapBanner = await fetchHubcapBannerForAppId(appId, name);
-    // Divalidasi lagi di sini (defense-in-depth) — fetchHubcapBannerForAppId
-    // sendiri sudah memvalidasi sebelum di-cache, tapi pickCatalogBanner()
-    // adalah SATU-SATUNYA titik yang dipakai KETUJUH+ notifikasi (Add/Update
-    // Game/Bypass, Download Game/Bypass, Request Game Dikirim/Diterima/
-    // Ditolak), jadi guard dobel di sini memastikan tidak ada jalur manapun
-    // yang bisa meloloskan banner rusak/undefined ke embed manapun.
-    if (isValidBannerUrl(hubcapBanner)) {
-      bannerDebugLog('pickCatalogBanner_result', { appId, name, source: 'hubcap', banner: hubcapBanner });
-      return hubcapBanner;
-    }
-  }
-  // Fallback — data yang SUDAH TERSIMPAN di project (bukan panggilan baru),
-  // TETAP divalidasi supaya field lama yang mungkin berisi path relatif/rusak
-  // tidak ikut lolos sebagai "banner kosong tapi bukan null" ke Discord.
-  const fallback = doc.heroImageUrl || doc.imageUrl || null;
-  if (isValidBannerUrl(fallback)) {
-    bannerDebugLog('pickCatalogBanner_result', { appId, name, source: 'project_fallback', banner: fallback });
-    return fallback;
-  }
-  // Fallback TERAKHIR (permintaan user) — pola header.jpg Steam CDN dari App ID.
-  const steamHeaderFallback = buildSteamHeaderImageFallback(appId);
-  const finalBanner = isValidBannerUrl(steamHeaderFallback) ? steamHeaderFallback : null;
-  bannerDebugLog('pickCatalogBanner_result', { appId, name, source: finalBanner ? 'steam_header_fallback' : 'none', banner: finalBanner });
-  return finalBanner;
+  const appId = doc?.appId || doc?.steamAppId || null;
+  const banner = buildSteamHeaderImageFallback(appId);
+  bannerDebugLog('pickCatalogBanner_result', {
+    appId: appId != null ? String(appId) : null,
+    source: banner ? 'steam_cdn' : 'none',
+    banner
+  });
+  return banner;
 }
 
 
@@ -2000,10 +1835,11 @@ async function pickCatalogBanner(doc) {
 //
 // Yang WAJIB dinamis dari data ASLI (tidak pernah dikarang/hardcode):
 //   - name      : nama game dari request/game ASLI (gameData.name / doc.name).
-//   - banner    : SELALU dari HubCap lewat pickCatalogBanner() yang SUDAH ADA
-//                 (REUSE PENUH, TIDAK bikin sistem Hubcap baru) — TIDAK PERNAH
-//                 fallback ke Steam Store API. Divalidasi isValidBannerUrl()
-//                 sebelum masuk embed.image, sama seperti Add/Update Game.
+//   - banner    : SELALU dari Steam CDN lewat pickCatalogBanner() (App ID ->
+//                 `header.jpg`, SATU-SATUNYA sumber — TIDAK PERNAH HubCap,
+//                 TIDAK PERNAH Steam Store API, TIDAK PERNAH data project).
+//                 Divalidasi isValidBannerUrl() sebelum masuk embed.image,
+//                 sama seperti Add/Update Game.
 //   - thumbnail : avatar Discord USER yang BENAR-BENAR melakukan request
 //                 (lihat resolveRequesterAvatarUrl() di bawah — dari
 //                 collection `users`, field avatarUrl, BUKAN avatar bot/
@@ -2046,7 +1882,7 @@ const REQUEST_GAME_EVENT_TEXT = {
 // event    : 'sent' | 'approved' | 'rejected'
 // name     : nama game ASLI (gameData.name/doc.name) — "-" kalau memang kosong.
 // discordId: Discord User ID requester ASLI — dipakai buat mention <@id>.
-// banner   : hasil pickCatalogBanner() (HubCap, dengan fallback data project).
+// banner   : hasil pickCatalogBanner() (Steam CDN header.jpg dari App ID — SATU-SATUNYA sumber).
 // avatarUrl: hasil resolveRequesterAvatarUrl() (avatar requester ASLI).
 // reason   : rejectReason ASLI (hanya dipakai kalau event === 'rejected').
 function buildRequestGameEmbed({ event, name, discordId, banner, avatarUrl, reason }) {
@@ -2068,7 +1904,7 @@ function buildRequestGameEmbed({ event, name, discordId, banner, avatarUrl, reas
     description
   };
 
-  // Banner HubCap & thumbnail avatar requester — SAMA-SAMA divalidasi dulu
+  // Banner Steam CDN & thumbnail avatar requester — SAMA-SAMA divalidasi dulu
   // (lihat isValidBannerUrl) sebelum masuk embed, supaya embed TIDAK PERNAH
   // terkirim dengan image/thumbnail kosong/undefined/null/object/rusak;
   // kalau salah satu tidak tersedia, field-nya dilewati saja (embed tetap
@@ -4688,7 +4524,6 @@ app.post('/api/history', requireUser, async (req, res) => {
     }).catch(() => {});
 
     const itemNameResolved = item?.name || fallbackName || 'Item';
-    const itemImageResolved = item?.imageUrl || fallbackImage || null;
 
     logActivity({
       type: 'install',
@@ -4709,15 +4544,13 @@ app.post('/api/history', requireUser, async (req, res) => {
       .then(lb => wsBroadcastAll('leaderboard:update', lb))
       .catch(() => {});
 
-    // `item` ada -> pickCatalogBanner() (HubCap dulu, baru fallback tersimpan,
-    // keduanya sudah tervalidasi di dalam fungsi itu sendiri). `item` sudah
-    // tidak ada (mis. dihapus admin di antara proses download & lapor sukses)
-    // -> fallback ke gambar yang dikirim client SEJAK AWAL proses install,
-    // TETAP divalidasi di sini (lihat isValidBannerUrl) supaya tidak ada
-    // celah nilai rusak/undefined yang lolos ke buildDownloadEmbed.
-    const downloadNotifBanner = item
-      ? await pickCatalogBanner(item)
-      : (isValidBannerUrl(itemImageResolved) ? itemImageResolved : undefined);
+    // Banner Discord (DM & channel) — SELALU dari pickCatalogBanner() (App ID
+    // -> Steam CDN header.jpg, lihat ATURAN MUTLAK di definisinya), TIDAK
+    // PERNAH pakai `itemImage` mentah yang dikirim client (field itu HANYA
+    // dipakai untuk `itemImage` histori di atas, bukan buat embed Discord).
+    // Kalau `item` sudah dihapus admin (App ID ikut hilang), banner otomatis
+    // kosong (undefined) — TIDAK diganti sumber gambar lain.
+    const downloadNotifBanner = await pickCatalogBanner(item || {});
     notifyUser(req.user.discordId, {
       type: 'download_success',
       title: 'Download Berhasil',
@@ -4736,7 +4569,7 @@ app.post('/api/history', requireUser, async (req, res) => {
         field('🆔 App ID', item?.appId || item?.steamAppId, true),
         field('🧾 ID Riwayat', String(insertResult.insertedId), true)
       ],
-      image: itemImageResolved,
+      image: downloadNotifBanner,
       meta: { itemType, itemId },
       // Embed CHANNEL (Admin Discord) khusus — desain compact baru (lihat
       // buildDownloadEmbed): hijau untuk Game, ungu untuk Bypass, field polos
@@ -8853,8 +8686,8 @@ app.post('/api/admin/games', requireAdmin, async (req, res) => {
   // fire-and-forget — tidak pernah membuat proses tambah game gagal.
   (async () => {
     try {
-      // appCfg (baca settings) & banner (bisa live-lookup ke HubCap) tidak
-      // saling bergantung -> dijalankan paralel (fix delay), bukan berurutan.
+      // appCfg (baca settings) & banner (App ID -> Steam CDN, tidak butuh
+      // network) tidak saling bergantung -> dijalankan paralel.
       const [appCfg, banner] = await Promise.all([appUpdateManager.getConfig(), pickCatalogBanner(doc)]);
       const { embed: catalogEmbed, components: catalogComponents } = await buildCatalogEmbed({
         kind: 'game', isNew: true,
@@ -8899,11 +8732,11 @@ app.post('/api/admin/games', requireAdmin, async (req, res) => {
       }).catch(() => {});
 
       // Notifikasi Discord "Request Game Diterima" — WAJIB pakai template
-      // JSON referensi (buildRequestGameEmbed), banner SELALU dari HubCap
+      // JSON referensi (buildRequestGameEmbed), banner SELALU dari Steam CDN
       // (pickCatalogBanner — REUSE PERSIS yang sudah dipakai notif Game
-      // Baru di atas, doc di sini sudah punya appId/heroImageUrl/imageUrl
-      // ASLI dari game yang baru dibuat), thumbnail SELALU avatar Discord
-      // requester asli. Best-effort, fire-and-forget.
+      // Baru di atas, doc di sini sudah punya appId ASLI dari game yang
+      // baru dibuat), thumbnail SELALU avatar Discord requester asli.
+      // Best-effort, fire-and-forget.
       (async () => {
         try {
           const [banner, avatarUrl] = await Promise.all([
@@ -14081,8 +13914,10 @@ async function fetchSteamAppSummary(appId, force = false) {
       // Verifikasi library/hero SEBELUM disimpan — sama persis polanya dengan
       // Auto-Isi Add Game (HEAD request, hanya dipakai kalau benar-benar 200),
       // lihat catatan lengkap di atas. Best-effort: kalau HEAD gagal/timeout,
-      // dibiarkan null (fallback pickCatalogBanner tinggal lanjut ke HubCap/
-      // imageUrl lain, BUKAN URL tebakan yang belum tentu ada).
+      // dibiarkan null — field ini HANYA dipakai tampilan detail Request Game
+      // Admin, TIDAK dipakai lagi oleh pickCatalogBanner (notifikasi Discord
+      // sekarang SELALU pakai Steam CDN header.jpg dari App ID, lihat definisi
+      // pickCatalogBanner).
       try {
         const libraryUrl = `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${appId}/library_600x900.jpg`;
         const heroUrl = `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${appId}/library_hero.jpg`;
@@ -14461,26 +14296,20 @@ app.post('/api/requests/games', requireUser, async (req, res) => {
     }).catch(() => {});
 
     // Notifikasi Discord "Request Game Terkirim" — WAJIB pakai template JSON
-    // referensi (buildRequestGameEmbed), banner SELALU dari HubCap
-    // (pickCatalogBanner, TIDAK PERNAH Steam Store API), thumbnail SELALU
-    // avatar Discord requester asli (resolveRequesterAvatarUrl). Best-effort,
-    // fire-and-forget (IIFE) — kegagalan lookup HubCap/avatar tidak pernah
-    // menggagalkan pembuatan Request Game itu sendiri.
+    // referensi (buildRequestGameEmbed), banner SELALU dari Steam CDN
+    // (pickCatalogBanner — App ID -> header.jpg, TIDAK PERNAH HubCap/Steam
+    // Store API/data project), thumbnail SELALU avatar Discord requester
+    // asli (resolveRequesterAvatarUrl). Best-effort, fire-and-forget (IIFE)
+    // — kegagalan lookup avatar tidak pernah menggagalkan pembuatan Request
+    // Game itu sendiri.
     (async () => {
       try {
         const [banner, avatarUrl] = await Promise.all([
-          // BUG FIX (audit banner Request Game Terkirim): `summary` di sini
-          // adalah hasil fetchSteamAppSummary(), yang TIDAK PERNAH punya field
-          // `imageUrl` (field itu cuma ada di dokumen `games`/`bypasses` yang
-          // sudah tersimpan). Field yang benar dari fetchSteamAppSummary() untuk
-          // header/banner adalah `headerImage` (lihat definisinya: `headerImage:
-          // d.header_image || null`). Sebelumnya `summary.imageUrl` SELALU
-          // undefined -> fallback project pertama (heroImageUrl) yang dipakai,
-          // tapi field kedua (imageUrl) di rantai fallback pickCatalogBanner
-          // tidak pernah benar-benar berisi data ASLI dari Steam sesuai response
-          // API yang sebenarnya. Diperbaiki supaya mapping fallback konsisten
-          // dengan bentuk data yang benar-benar dikembalikan fetchSteamAppSummary().
-          pickCatalogBanner({ appId: doc.appId, name: summary.name, heroImageUrl: summary.heroImageUrl, imageUrl: summary.headerImage }),
+          // Banner HANYA butuh App ID request ini (doc.appId) — pickCatalogBanner
+          // tidak lagi memakai `name`/`heroImageUrl`/`imageUrl` dari `summary`
+          // (Steam Store API) sama sekali, jadi tidak ada lagi ketergantungan ke
+          // bentuk field response fetchSteamAppSummary().
+          pickCatalogBanner({ appId: doc.appId }),
           resolveRequesterAvatarUrl(discordId)
         ]);
         await notifyUser(discordId, {
@@ -14584,21 +14413,19 @@ app.put('/api/admin/game-requests/:id/reject', requireAdmin, async (req, res) =>
     }).catch(() => {});
 
     // Notifikasi Discord "Request Game Ditolak" — WAJIB pakai template JSON
-    // referensi (buildRequestGameEmbed), banner SELALU dari HubCap
-    // (pickCatalogBanner), thumbnail SELALU avatar Discord requester asli,
-    // dan Alasan penolakan ASLI dari admin (reason di atas, bisa null kalau
-    // admin tidak isi — buildRequestGameEmbed sudah menangani fallback
-    // teksnya, bukan baris kosong/undefined). Best-effort, fire-and-forget.
+    // referensi (buildRequestGameEmbed), banner SELALU dari Steam CDN
+    // (pickCatalogBanner — App ID -> header.jpg), thumbnail SELALU avatar
+    // Discord requester asli, dan Alasan penolakan ASLI dari admin (reason
+    // di atas, bisa null kalau admin tidak isi — buildRequestGameEmbed sudah
+    // menangani fallback teksnya, bukan baris kosong/undefined). Best-effort,
+    // fire-and-forget.
     (async () => {
       try {
         const gameName = request.gameData?.name || request.appId;
         const [banner, avatarUrl] = await Promise.all([
-          // BUG FIX (audit banner Request Game Ditolak — sama persis kasusnya
-          // dengan Request Game Terkirim): `request.gameData` adalah snapshot
-          // dari fetchSteamAppSummary() (lihat `gameData: summary` saat Request
-          // dibuat), yang field banner-nya bernama `headerImage`, BUKAN
-          // `imageUrl`. `request.gameData?.imageUrl` sebelumnya selalu undefined.
-          pickCatalogBanner({ appId: request.appId, name: request.gameData?.name, heroImageUrl: request.gameData?.heroImageUrl, imageUrl: request.gameData?.headerImage }),
+          // Banner HANYA butuh App ID request ini (request.appId) — App ID yang
+          // di-request SELALU dipakai, TIDAK PERNAH data snapshot gameData lain.
+          pickCatalogBanner({ appId: request.appId }),
           resolveRequesterAvatarUrl(request.discordId)
         ]);
         await notifyUser(request.discordId, {
