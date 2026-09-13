@@ -1692,8 +1692,11 @@ async function buildCatalogEmbed({ kind, isNew, name, appId, publisher, banner, 
     embed.author.url = link;
   }
   // Banner — HubCap (pickCatalogBanner, lihat catatan lengkap di atas),
-  // TIDAK PERNAH gambar statis dari file JSON referensi.
-  if (banner) embed.image = { url: banner };
+  // TIDAK PERNAH gambar statis dari file JSON referensi. DIVALIDASI dulu
+  // (lihat isValidBannerUrl) — kalau bukan http(s) yang valid, field image
+  // DILEWATI SAMA SEKALI (embed tetap terkirim tanpa gambar), BUKAN dikirim
+  // mentah sebagai embed.image.url yang bisa undefined/null/object/rusak.
+  if (isValidBannerUrl(banner)) embed.image = { url: banner };
 
   // Tombol Link "Download 31 Tools" — Discord Message Component (Link
   // Button, style=5), SATU-SATUNYA jenis button yang tidak butuh interaction
@@ -1714,6 +1717,34 @@ async function buildCatalogEmbed({ kind, isNew, name, appId, publisher, banner, 
 function cleanCatalogUrl(u) {
   const s = String(u || '').trim();
   return /^https?:\/\//i.test(s) ? s : null;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// VALIDASI BANNER SEBELUM MASUK embed.image.url (permintaan user — bug "URL
+// banner yang dikirim ke Discord tidak valid/undefined"). SEBELUMNYA di
+// buildCatalogEmbed/buildDownloadEmbed cuma dicek truthy (`if (banner)`) —
+// itu artinya SEMBARANG nilai truthy (string kosong-tidak-mungkin-lolos
+// tapi juga object mentah dari HubCap yang belum ke-normalize, string
+// "undefined"/"null" hasil template literal, path relatif yang gagal
+// dilengkapi, dll) bisa lolos dan dikirim APA ADANYA ke Discord sebagai
+// `embed.image.url`, yang ditolak/dianggap rusak oleh Discord (banner
+// akhirnya kosong di embed walau data game-nya sendiri ADA).
+// Dipakai di SATU tempat ini oleh SEMUA titik yang menaruh gambar ke
+// embed.image (buildCatalogEmbed utk Add/Update Game/Bypass, buildDownloadEmbed
+// utk Download Game/Bypass) — jadi keenam notifikasi otomatis ikut terlindungi
+// begitu fungsi ini dipakai konsisten, TANPA perlu ubah tiap titik pemanggil.
+function isValidBannerUrl(u) {
+  if (typeof u !== 'string') return false; // tolak object/array/undefined/null mentah
+  const s = u.trim();
+  if (!s) return false; // string kosong
+  if (s === 'undefined' || s === 'null' || s === '[object Object]') return false; // hasil coercion rusak
+  if (!/^https?:\/\//i.test(s)) return false; // bukan http(s) -> Discord CDN tidak bisa akses (path relatif lolos ke sini berarti gagal dinormalisasi sebelumnya)
+  try {
+    const parsed = new URL(s);
+    return !!parsed.hostname;
+  } catch {
+    return false; // URL rusak/tidak bisa di-parse
+  }
 }
 
 // Pilih gambar landscape TERBAIK buat banner notif Discord dari data game/
@@ -1755,7 +1786,20 @@ function cleanCatalogUrl(u) {
 //      data yang SUDAH TERSIMPAN di project (doc.heroImageUrl / doc.imageUrl,
 //      yang sudah ada di database dari fitur Auto-Isi/App ID Lookup
 //      sebelumnya) — TIDAK PERNAH request Steam Store API baru di sini.
-const HUBCAP_NOTIF_BANNER_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 jam
+const HUBCAP_NOTIF_BANNER_CACHE_TTL_MS = 6 * 60 * 60 * 1000; // 6 jam — HANYA untuk hasil SUKSES (ada banner valid)
+// BUG FIX (permintaan user — "Saat Add Game, banner kadang kosong/tidak
+// terbaca"): SEBELUMNYA hasil GAGAL/tidak ketemu (resolved = null, mis. game
+// baru saja ditambahkan & belum sempat kena index oleh pencarian HubCap saat
+// itu juga, atau sesaat kena rate-limit) ikut di-cache dengan TTL 6 JAM PENUH
+// yang sama dengan hasil sukses. Akibatnya: begitu 1x lookup gagal utk 1 App
+// ID (murni race condition/timing, DATANYA SEBENARNYA ADA), notifikasi
+// berikutnya utk App ID yang sama (Update/Download) ikut kena "banner kosong"
+// selama 6 jam ke depan walau HubCap sebenarnya sudah punya datanya beberapa
+// detik kemudian. Sekarang hasil gagal HANYA di-cache singkat (5 menit) —
+// sama polanya dengan STEAM_SUMMARY_NEGATIVE_TTL_MS yang sudah ada di file
+// ini utk kasus serupa — supaya lookup berikutnya tetap dicoba ulang dalam
+// waktu wajar, bukan dianggap "gagal permanen" berjam-jam.
+const HUBCAP_NOTIF_BANNER_NEGATIVE_TTL_MS = 5 * 60 * 1000; // 5 menit
 const hubcapNotifBannerCache = new Map(); // appId -> { url: string|null, expiresAt }
 
 async function fetchHubcapBannerForAppId(appId) {
@@ -1775,15 +1819,28 @@ async function fetchHubcapBannerForAppId(appId) {
       if (keyDoc) {
         const hcRes = await axios.get(`${HUBCAP_BASE_URL}/api/v1/library`, {
           headers: { Authorization: `Bearer ${keyDoc.key}` },
-          params: { limit: 10, offset: 0, search: key },
+          // limit dinaikkan dari 10 -> 25: kalau App ID yang dicari bukan hasil
+          // paling relevan di pencarian HubCap (mis. ada beberapa game dengan
+          // nama/ID mirip), exact-match App ID di bawah tetap sempat memeriksa
+          // lebih banyak kandidat sebelum menyerah ke fallback.
+          params: { limit: 25, offset: 0, search: key },
           timeout: 6000,
           validateStatus: () => true
         });
         if (hcRes.status === 200) {
           const body = hcRes.data;
           const rawItems = body.games || body.results || body.data || (Array.isArray(body) ? body : []);
+          // Match App ID PERSIS SAMA (bukan cuma game pertama di hasil search) —
+          // mencegah banner Game/Bypass lain "tertukar" kalau search HubCap
+          // mengembalikan beberapa item sekaligus untuk query yang sama.
           const match = rawItems.find(raw => String(raw.game_id ?? raw.appid ?? raw.app_id ?? raw.id ?? '').trim() === key);
-          if (match) resolved = pickHubcapImage(match);
+          if (match) {
+            const picked = pickHubcapImage(match);
+            // Divalidasi SEBELUM di-cache — supaya nilai yang tersimpan di cache
+            // (dan dipakai berkali-kali sampai TTL habis) sudah pasti http(s)
+            // yang valid, bukan hasil pickHubcapImage yang gagal dinormalisasi.
+            resolved = isValidBannerUrl(picked) ? picked : null;
+          }
         } else if (hcRes.status === 429) {
           hubcapKeyManager.markFreeEndpointRateLimited(keyDoc);
         }
@@ -1796,7 +1853,10 @@ async function fetchHubcapBannerForAppId(appId) {
     const now = Date.now();
     for (const [k, v] of hubcapNotifBannerCache) if (v.expiresAt < now) hubcapNotifBannerCache.delete(k);
   }
-  hubcapNotifBannerCache.set(key, { url: resolved, expiresAt: Date.now() + HUBCAP_NOTIF_BANNER_CACHE_TTL_MS });
+  hubcapNotifBannerCache.set(key, {
+    url: resolved,
+    expiresAt: Date.now() + (resolved ? HUBCAP_NOTIF_BANNER_CACHE_TTL_MS : HUBCAP_NOTIF_BANNER_NEGATIVE_TTL_MS)
+  });
   return resolved;
 }
 
@@ -1808,10 +1868,18 @@ async function pickCatalogBanner(doc) {
   const appId = doc.appId || doc.steamAppId || null;
   if (appId) {
     const hubcapBanner = await fetchHubcapBannerForAppId(appId);
-    if (hubcapBanner) return hubcapBanner;
+    // Divalidasi lagi di sini (defense-in-depth) — fetchHubcapBannerForAppId
+    // sendiri sudah memvalidasi sebelum di-cache, tapi pickCatalogBanner()
+    // adalah SATU-SATUNYA titik yang dipakai keenam notifikasi, jadi guard
+    // dobel di sini memastikan tidak ada jalur manapun yang bisa meloloskan
+    // banner rusak/undefined ke buildCatalogEmbed/buildDownloadEmbed.
+    if (isValidBannerUrl(hubcapBanner)) return hubcapBanner;
   }
-  // Fallback — data yang SUDAH TERSIMPAN di project (bukan panggilan baru).
-  return doc.heroImageUrl || doc.imageUrl || null;
+  // Fallback — data yang SUDAH TERSIMPAN di project (bukan panggilan baru),
+  // TETAP divalidasi supaya field lama yang mungkin berisi path relatif/rusak
+  // tidak ikut lolos sebagai "banner kosong tapi bukan null" ke Discord.
+  const fallback = doc.heroImageUrl || doc.imageUrl || null;
+  return isValidBannerUrl(fallback) ? fallback : null;
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1863,7 +1931,10 @@ function buildDownloadEmbed({ kind, status, itemName, appId, publisher, banner, 
     timestamp: new Date().toISOString(),
     footer: { text: 'ThreeOneStore' }
   };
-  if (banner) embed.image = { url: banner };
+  // Sama seperti buildCatalogEmbed — validasi dulu sebelum masuk embed.image
+  // (lihat isValidBannerUrl), supaya notif Download Game/Bypass juga tidak
+  // pernah mengirim image.url yang undefined/null/kosong/object/rusak.
+  if (isValidBannerUrl(banner)) embed.image = { url: banner };
   return embed;
 }
 
@@ -4414,7 +4485,15 @@ app.post('/api/history', requireUser, async (req, res) => {
       .then(lb => wsBroadcastAll('leaderboard:update', lb))
       .catch(() => {});
 
-    const downloadNotifBanner = item ? await pickCatalogBanner(item) : (itemImageResolved || undefined);
+    // `item` ada -> pickCatalogBanner() (HubCap dulu, baru fallback tersimpan,
+    // keduanya sudah tervalidasi di dalam fungsi itu sendiri). `item` sudah
+    // tidak ada (mis. dihapus admin di antara proses download & lapor sukses)
+    // -> fallback ke gambar yang dikirim client SEJAK AWAL proses install,
+    // TETAP divalidasi di sini (lihat isValidBannerUrl) supaya tidak ada
+    // celah nilai rusak/undefined yang lolos ke buildDownloadEmbed.
+    const downloadNotifBanner = item
+      ? await pickCatalogBanner(item)
+      : (isValidBannerUrl(itemImageResolved) ? itemImageResolved : undefined);
     notifyUser(req.user.discordId, {
       type: 'download_success',
       title: 'Download Berhasil',
@@ -12239,28 +12318,97 @@ const LIBRARY_GAME_CACHE_MS = 45 * 1000;
 // memang terlihat seperti URL gambar. Ini jauh lebih tahan terhadap variasi
 // penamaan field APAPUN yang dipakai HubCap, tanpa perlu tahu persis skema
 // API mereka lebih dulu.
-const HUBCAP_IMAGE_KEY_HINT = /image|cover|thumb|banner|icon|art|photo|poster|logo|picture|capsule|library|screenshot/i;
+// Hint diperluas: "header"/"hero"/"backdrop"/dst ditambahkan karena contoh
+// asset asli HubCap yang diberikan user (.../header.jpg) bisa saja disimpan
+// di field bernama literal "header"/"hero_image"/"backdrop" dst — nama-nama
+// yang TIDAK mengandung kata "image/cover/thumb/..." sama sekali, jadi tidak
+// pernah ke-detect oleh hint versi sebelumnya walau datanya sudah ADA.
+const HUBCAP_IMAGE_KEY_HINT = /image|cover|thumb|banner|icon|art|photo|poster|logo|picture|capsule|library|screenshot|header|hero|backdrop|wallpaper|splash|key_?art|graphic/i;
 function looksLikeImageUrl(v) {
   if (typeof v !== 'string' || v.length < 5) return false;
-  if (/^https?:\/\//i.test(v)) {
-    return /\.(jpg|jpeg|png|webp|gif|avif)(\?.*)?$/i.test(v) || /\/(image|cover|thumb|banner|icon|capsule|library)/i.test(v);
+  const s = v.trim();
+  if (/^https?:\/\//i.test(s)) {
+    return /\.(jpg|jpeg|png|webp|gif|avif)(\?.*)?$/i.test(s) || /\/(image|cover|thumb|banner|icon|capsule|library|header|hero)/i.test(s);
   }
-  // Kemungkinan path RELATIF (tanpa domain) — mis. "/covers/12345.jpg" —
-  // dianggap kandidat kalau memang berakhiran ekstensi gambar; nanti
-  // di-lengkapi jadi URL absolut di normalizeHubcapImageUrl().
-  return /^\/[^\s]+\.(jpg|jpeg|png|webp|gif|avif)(\?.*)?$/i.test(v);
+  // Kemungkinan path RELATIF (tanpa domain) — mis. "/covers/12345.jpg" ATAU
+  // "store_item_assets/steam/apps/123/header.jpg" (TANPA leading slash, persis
+  // contoh asset HubCap yang diberikan user) — dianggap kandidat kalau memang
+  // berakhiran ekstensi gambar; nanti di-lengkapi jadi URL absolut di
+  // normalizeHubcapImageUrl().
+  return /^\/?[\w.-]+(?:\/[\w.\-%]+)*\.(jpg|jpeg|png|webp|gif|avif)(\?.*)?$/i.test(s);
 }
+// Normalisasi jadi URL ABSOLUT http(s) yang valid, atau `null` kalau memang
+// tidak bisa dikenali/dilengkapi sebagai URL gambar (permintaan user poin 5:
+// "Jika data Hubcap memberikan relative path atau object asset, normalisasi
+// menjadi full URL terlebih dahulu" — dan poin 6: jangan pernah meloloskan
+// string mentah yang bukan URL valid). SEBELUMNYA fungsi ini mengembalikan
+// `v` APA ADANYA kalau bukan http(s) & bukan diawali "/" (mis. path relatif
+// tanpa leading slash) — string mentah semacam itu lolos sampai ke
+// embed.image.url dan dianggap Discord sebagai URL rusak (banner tidak muncul).
 function normalizeHubcapImageUrl(v) {
-  if (!v) return null;
-  if (/^https?:\/\//i.test(v)) return v;
-  if (v.startsWith('/')) return `${HUBCAP_BASE_URL}${v}`;
-  return v;
+  if (!v || typeof v !== 'string') return null;
+  const s = v.trim();
+  if (!s) return null;
+  if (/^https?:\/\//i.test(s)) return s;
+  if (s.startsWith('/')) return `${HUBCAP_BASE_URL}${s}`;
+  // Path relatif TANPA leading slash (mis. contoh HubCap:
+  // "store_item_assets/steam/apps/4896860/.../header.jpg") — tetap dilengkapi
+  // jadi URL absolut, BUKAN dibiarkan mentah.
+  if (/^[\w.-]+(?:\/[\w.\-%]+)+\.(jpg|jpeg|png|webp|gif|avif)(\?.*)?$/i.test(s)) {
+    return `${HUBCAP_BASE_URL}/${s}`;
+  }
+  return null; // bukan URL/path gambar yang bisa dikenali -> jangan diteruskan mentah
 }
+
+// Sub-key generik yang umum dipakai kalau HubCap membungkus gambar sebagai
+// OBJECT asset (mis. `header: { url: "...", width: 460 }`) alih-alih string
+// langsung — permintaan user poin 5. Nama-nama key ini SENGAJA generik (bukan
+// nama field spesifik HubCap yang ditebak/di-hardcode), jadi tetap berlaku
+// walaupun HubCap mengganti struktur object-nya sedikit.
+const HUBCAP_IMAGE_URL_SUBKEYS = ['url', 'href', 'src', 'path', 'full', 'original', 'large', 'big', 'source', 'link'];
+
+// Ekstraksi rekursif (maks 2 level) dari SATU value — dukung string langsung,
+// array (mis. `screenshots: ["...", "..."]` atau `images: [{url:"..."}]`),
+// maupun object asset bersarang. Dipakai oleh pickHubcapImage() di bawah,
+// bukan pengganti/duplikat logic-nya (tetap satu sumber kebenaran, cuma
+// dipecah jadi fungsi kecil supaya bisa dipanggil ulang per level).
+function extractHubcapImageValue(v, depth) {
+  if (v === null || v === undefined || depth > 2) return null;
+  if (typeof v === 'string') return looksLikeImageUrl(v) ? normalizeHubcapImageUrl(v) : null;
+  if (Array.isArray(v)) {
+    for (const item of v) {
+      const found = extractHubcapImageValue(item, depth + 1);
+      if (found) return found;
+    }
+    return null;
+  }
+  if (typeof v === 'object') {
+    // Coba sub-key generik dulu (url/href/src/dst) — INI yang menangani kasus
+    // "object asset" (poin 5), tanpa perlu nama field-nya sendiri cocok hint.
+    for (const subKey of HUBCAP_IMAGE_URL_SUBKEYS) {
+      if (typeof v[subKey] === 'string' && looksLikeImageUrl(v[subKey])) return normalizeHubcapImageUrl(v[subKey]);
+    }
+    // Kalau tidak ada sub-key generik, baru scan key lain DI DALAM object ini
+    // yang namanya cocok hint gambar (mis. `assets: { header: {...} }`).
+    for (const [k2, v2] of Object.entries(v)) {
+      if (HUBCAP_IMAGE_KEY_HINT.test(k2)) {
+        const found = extractHubcapImageValue(v2, depth + 1);
+        if (found) return found;
+      }
+    }
+  }
+  return null;
+}
+
 function pickHubcapImage(raw) {
   if (!raw || typeof raw !== 'object') return null;
-  // 1) Cek langsung di field level teratas.
+  // 1) Cek langsung di field level teratas (string, array, ATAU object asset —
+  //    lihat extractHubcapImageValue).
   for (const [k, v] of Object.entries(raw)) {
-    if (HUBCAP_IMAGE_KEY_HINT.test(k) && looksLikeImageUrl(v)) return normalizeHubcapImageUrl(v);
+    if (HUBCAP_IMAGE_KEY_HINT.test(k)) {
+      const found = extractHubcapImageValue(v, 0);
+      if (found) return found;
+    }
   }
   // 2) Cek 1 level object bersarang (mis. `images: { header: '...' }`,
   //    `media: { cover: '...' }`, dst) — nama container-nya sendiri TIDAK
@@ -12268,7 +12416,10 @@ function pickHubcapImage(raw) {
   for (const v of Object.values(raw)) {
     if (v && typeof v === 'object' && !Array.isArray(v)) {
       for (const [k2, v2] of Object.entries(v)) {
-        if (HUBCAP_IMAGE_KEY_HINT.test(k2) && looksLikeImageUrl(v2)) return normalizeHubcapImageUrl(v2);
+        if (HUBCAP_IMAGE_KEY_HINT.test(k2)) {
+          const found = extractHubcapImageValue(v2, 1);
+          if (found) return found;
+        }
       }
     }
   }
