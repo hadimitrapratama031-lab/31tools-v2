@@ -14019,8 +14019,25 @@ async function fetchSteamAppSummary(appId, force = false) {
         type: d.type || null, // 'game' | 'dlc' | 'demo' | 'music' | 'video' | 'series' | 'episode' | 'tool' | 'hardware' | dst
         headerImage: d.header_image || null,
         capsuleImageUrl: d.capsule_imagev5 || d.capsule_image || `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${appId}/capsule_231x87.jpg`,
-        libraryImageUrl: `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${appId}/library_600x900.jpg`,
-        heroImageUrl: `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${appId}/library_hero.jpg`,
+        // BUG FIX (audit banner Request Game — root cause dari "banner selalu
+        // kosong di notif Request Game Terkirim/Ditolak"): SEBELUMNYA
+        // libraryImageUrl/heroImageUrl di sini ditulis langsung sebagai pola
+        // URL CDN yang DITEBAK, TANPA verifikasi sama sekali — beda dengan
+        // fungsi Auto-Isi Add Game (lihat HEAD-check `libRes`/`heroRes` di
+        // atas di file ini) yang SELALU mem-verifikasi dulu pola URL ini lewat
+        // HEAD request sebelum disimpan, dan membiarkannya `null` kalau 404
+        // (banyak game — termasuk game non-PC-native/lisensi seperti judul
+        // olahraga — TIDAK punya asset "library_hero"/"library_600x900" sama
+        // sekali). Karena tebakan itu SELALU berbentuk URL yang valid secara
+        // SINTAKS, isValidBannerUrl() (yang cuma mengecek format, bukan
+        // ketersediaan) selalu meloloskannya sebagai banner fallback Request
+        // Game — sehingga Discord menerima URL gambar yang sebenarnya 404,
+        // dan diam-diam tidak menampilkan gambar apapun (persis gejala yang
+        // dilaporkan user). Diperbaiki supaya SAMA PERSIS diverifikasi dulu
+        // seperti Auto-Isi Add Game — null kalau memang tidak ada assetnya,
+        // BUKAN pola tebakan mentah.
+        libraryImageUrl: null,
+        heroImageUrl: null,
         description: (d.short_description || '').slice(0, 400) || null,
         fullDescription: d.about_the_game ? d.about_the_game.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() : null,
         developer: Array.isArray(d.developers) && d.developers.length ? d.developers.join(', ') : null,
@@ -14039,6 +14056,22 @@ async function fetchSteamAppSummary(appId, force = false) {
         screenshots: (d.screenshots || []).slice(0, 10).map(s => s.path_full || s.path_thumbnail).filter(Boolean),
         storeUrl: `https://store.steampowered.com/app/${appId}/`
       };
+
+      // Verifikasi library/hero SEBELUM disimpan — sama persis polanya dengan
+      // Auto-Isi Add Game (HEAD request, hanya dipakai kalau benar-benar 200),
+      // lihat catatan lengkap di atas. Best-effort: kalau HEAD gagal/timeout,
+      // dibiarkan null (fallback pickCatalogBanner tinggal lanjut ke HubCap/
+      // imageUrl lain, BUKAN URL tebakan yang belum tentu ada).
+      try {
+        const libraryUrl = `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${appId}/library_600x900.jpg`;
+        const heroUrl = `https://shared.akamai.steamstatic.com/store_item_assets/steam/apps/${appId}/library_hero.jpg`;
+        const [libRes, heroRes] = await Promise.all([
+          axios.head(libraryUrl, { timeout: 8000, validateStatus: () => true }).catch(() => ({ status: 0 })),
+          axios.head(heroUrl, { timeout: 8000, validateStatus: () => true }).catch(() => ({ status: 0 }))
+        ]);
+        if (libRes.status === 200) result.libraryImageUrl = libraryUrl;
+        if (heroRes.status === 200) result.heroImageUrl = heroUrl;
+      } catch (e) { /* best-effort — library/hero opsional, lewati kalau gagal dicek */ }
     }
   } catch (e) { /* noop — dianggap tidak tersedia, dikeluarkan dari hasil browse */ }
 
