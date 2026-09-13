@@ -1378,7 +1378,7 @@ function premiumCleanupBadge(gameCount, bypassCount) {
 //               (mis. nama game, ukuran, sisa limit, dll) — lihat notifTemplates.js.
 // `thumbnail` : URL gambar kecil (icon paket/logo app/icon warning).
 // `image`     : URL gambar besar/cover (dipakai untuk event terkait game).
-async function notifyUser(discordId, { type, title, message, fields = [], thumbnail, image, meta = {}, dm = true, webhook = false, eventId, badge, webhookEmbed, packageCard }) {
+async function notifyUser(discordId, { type, title, message, fields = [], thumbnail, image, meta = {}, dm = true, webhook = false, eventId, badge, webhookEmbed, packageCard, finalEmbed }) {
   const doc = {
     discordId, type, title, message, meta,
     read: false,
@@ -1458,6 +1458,13 @@ async function notifyUser(discordId, { type, title, message, fields = [], thumbn
         fallbackThumbnail: APP_LOGO_URL || undefined
       });
     }
+  } else if (finalEmbed) {
+    // ── EMBED FINAL SUDAH JADI (mis. buildRequestGameEmbed() untuk Request
+    // Game Terkirim/Diterima/Ditolak) — dipakai APA ADANYA, PERSIS sama untuk
+    // DM & Webhook (tidak dibungkus toDmEmbed/badge style), sama seperti
+    // perlakuan packageCard di atas, supaya desain 3 template JSON referensi
+    // tidak berubah/ketimpa gaya generik notifTemplates.
+    embed = finalEmbed;
   } else {
     embed = buildEmbed({
       status: typeMeta.status,
@@ -1484,7 +1491,7 @@ async function notifyUser(discordId, { type, title, message, fields = [], thumbn
     // bukan di sini, supaya berlaku konsisten untuk semua jalur pengiriman
     // webhook di server.js.
     sendDiscordDM(discordId, {
-      embeds: [packageCard ? embed : toDmEmbed(embed)],
+      embeds: [(packageCard || finalEmbed) ? embed : toDmEmbed(embed)],
       ...(packageComponents && packageComponents.length ? { components: packageComponents } : {})
     }, { eventId: resolvedEventId, eventLabel: type }).catch(() => {});
   }
@@ -1493,9 +1500,9 @@ async function notifyUser(discordId, { type, title, message, fields = [], thumbn
     // buildDownloadEmbed untuk Download Berhasil/Gagal), berbeda dari embed
     // generik di atas yang tetap dipakai buat DM. Kalau diisi, otomatis
     // dikirim POLOS (tanpa dibungkus inline-code) — lihat plainEmbed di
-    // discordNotifyManager.js. packageCard juga selalu dikirim POLOS (plainEmbed)
-    // karena sudah final.
-    sendDiscordWebhook(type, webhookEmbed || embed, resolvedEventId, meta, !!(webhookEmbed || packageCard), packageComponents).catch(() => {});
+    // discordNotifyManager.js. packageCard & finalEmbed juga selalu dikirim
+    // POLOS (plainEmbed) karena sudah final (mis. buildRequestGameEmbed()).
+    sendDiscordWebhook(type, webhookEmbed || embed, resolvedEventId, meta, !!(webhookEmbed || packageCard || finalEmbed), packageComponents).catch(() => {});
   }
 
   return inserted;
@@ -1880,6 +1887,124 @@ async function pickCatalogBanner(doc) {
   // tidak ikut lolos sebagai "banner kosong tapi bukan null" ke Discord.
   const fallback = doc.heroImageUrl || doc.imageUrl || null;
   return isValidBannerUrl(fallback) ? fallback : null;
+}
+
+// ══════════════════════════════════════════════════════════════════════════
+// EMBED REQUEST GAME (Dikirim/Diterima/Ditolak) — mengikuti STRUKTUR PERSIS
+// dari 3 template JSON referensi admin ("Request Game Terkirim.txt" /
+// "Request Game Diterima.txt" / "Request Game Ditolak.txt"): warna, author
+// (nama+icon), footer (teks+icon), url, dan layout description (heading
+// emoji + kalimat status + baris Game/Status/Request By/Alasan) — TIDAK ada
+// template/desain baru yang dibuat, HANYA 3 desain referensi ini yang
+// dipakai untuk ketiga status Request Game, dipetakan SATU-SATU:
+//   'sent'     -> Request Game Terkirim.txt  (dikirim/menunggu review)
+//   'approved' -> Request Game Diterima.txt  (disetujui admin)
+//   'rejected' -> Request Game Ditolak.txt   (ditolak admin, + Alasan)
+//
+// Yang WAJIB dinamis dari data ASLI (tidak pernah dikarang/hardcode):
+//   - name      : nama game dari request/game ASLI (gameData.name / doc.name).
+//   - banner    : SELALU dari HubCap lewat pickCatalogBanner() yang SUDAH ADA
+//                 (REUSE PENUH, TIDAK bikin sistem Hubcap baru) — TIDAK PERNAH
+//                 fallback ke Steam Store API. Divalidasi isValidBannerUrl()
+//                 sebelum masuk embed.image, sama seperti Add/Update Game.
+//   - thumbnail : avatar Discord USER yang BENAR-BENAR melakukan request
+//                 (lihat resolveRequesterAvatarUrl() di bawah — dari
+//                 collection `users`, field avatarUrl, BUKAN avatar bot/
+//                 admin/app), juga divalidasi sebelum masuk embed.thumbnail.
+//   - mention   : "Request By:" memakai mention Discord asli <@discordId> —
+//                 dirender Discord jadi @username klik-able (avatar yang
+//                 tampil di thumbnail dijamin avatar ID yang SAMA persis).
+//   - reason    : HANYA diisi utk status Ditolak, dari rejectReason ASLI yang
+//                 diinput admin (fallback teks netral kalau admin tidak isi
+//                 alasan sama sekali — bukan baris kosong/"undefined").
+// Yang TETAP (fixed, PERSIS sesuai 3 template JSON referensi, TIDAK disentuh):
+//   - color (4321431), author.name ("Game Request"), author.icon_url,
+//     footer.text ("ThreeOne — Your Game Library"), footer.icon_url, url
+//     ("https://discord.com"), urutan & teks baris description per status.
+function isValidHttpUrl(u) { return isValidBannerUrl(u); } // alias — validator sama, dipakai juga utk avatar
+
+const REQUEST_GAME_COLOR = 4321431; // PERSIS "color" di 3 template JSON referensi
+const REQUEST_GAME_URL = 'https://discord.com'; // PERSIS "url"/"author.url" di 3 template JSON referensi
+const REQUEST_GAME_AUTHOR_NAME = 'Game Request'; // PERSIS "author.name" di 3 template JSON referensi
+const REQUEST_GAME_FOOTER_TEXT = 'ThreeOne — Your Game Library'; // PERSIS "footer.text" di 3 template JSON referensi
+
+const REQUEST_GAME_EVENT_TEXT = {
+  sent: {
+    heading: '**🎮 GAME REQUEST TERKIRIM**',
+    body: 'Request game kamu berhasil dikirim dan sedang \nmenunggu pemeriksaan oleh admin.',
+    statusLine: '🟡 Menunggu Review'
+  },
+  approved: {
+    heading: '**✅ GAME REQUEST DITERIMA**',
+    body: 'Request game kamu telah diterima oleh admin dan game \nkan sudah ditambahkan ke 31 Tools.',
+    statusLine: '🟢 Diterima'
+  },
+  rejected: {
+    heading: '**❌ GAME REQUEST DITOLAK**',
+    body: 'Request game kamu tidak dapat diproses oleh admin.',
+    statusLine: '🔴 Ditolak'
+  }
+};
+
+// event    : 'sent' | 'approved' | 'rejected'
+// name     : nama game ASLI (gameData.name/doc.name) — "-" kalau memang kosong.
+// discordId: Discord User ID requester ASLI — dipakai buat mention <@id>.
+// banner   : hasil pickCatalogBanner() (HubCap, dengan fallback data project).
+// avatarUrl: hasil resolveRequesterAvatarUrl() (avatar requester ASLI).
+// reason   : rejectReason ASLI (hanya dipakai kalau event === 'rejected').
+function buildRequestGameEmbed({ event, name, discordId, banner, avatarUrl, reason }) {
+  const meta = REQUEST_GAME_EVENT_TEXT[event] || REQUEST_GAME_EVENT_TEXT.sent;
+  const mention = discordId ? `<@${discordId}>` : '@user';
+
+  let description = `${meta.heading}\n\n${meta.body}\n\n**Game:** ${name || '-'}\n**Status:** ${meta.statusLine}\n**Request By:** ${mention}`;
+  if (event === 'rejected') {
+    const cleanReason = reason && String(reason).trim() ? String(reason).trim() : 'Tidak ada alasan yang diberikan.';
+    description += `\n**Alasan:** ${cleanReason}`;
+  }
+
+  const embed = {
+    color: REQUEST_GAME_COLOR,
+    timestamp: new Date().toISOString(),
+    url: REQUEST_GAME_URL,
+    author: { url: REQUEST_GAME_URL, icon_url: CATALOG_BRAND_ICON_URL, name: REQUEST_GAME_AUTHOR_NAME },
+    footer: { text: REQUEST_GAME_FOOTER_TEXT, icon_url: CATALOG_BRAND_ICON_URL },
+    description
+  };
+
+  // Banner HubCap & thumbnail avatar requester — SAMA-SAMA divalidasi dulu
+  // (lihat isValidBannerUrl) sebelum masuk embed, supaya embed TIDAK PERNAH
+  // terkirim dengan image/thumbnail kosong/undefined/null/object/rusak;
+  // kalau salah satu tidak tersedia, field-nya dilewati saja (embed tetap
+  // terkirim tanpa gambar itu), bukan diganti gambar lain/dikarang.
+  if (isValidHttpUrl(banner)) embed.image = { url: banner };
+  if (isValidHttpUrl(avatarUrl)) embed.thumbnail = { url: avatarUrl };
+
+  return embed;
+}
+
+// Avatar Discord user yang BENAR-BENAR melakukan Request Game — dipakai
+// sebagai thumbnail ketiga status Request Game. Sumbernya `users.avatarUrl`
+// (SUDAH ADA & SUDAH diisi valid — avatar custom kalau user punya, atau
+// default avatar Discord kalau tidak, lihat titik login ~baris 3221),
+// REUSE PENUH, tidak menghitung ulang logic avatar dari nol. Fallback hanya
+// dipakai kalau user memang belum pernah tersimpan avatarUrl sama sekali —
+// TETAP default avatar Discord (dihitung dari Discord ID sendiri), BUKAN
+// logo aplikasi/bot/admin, sesuai permintaan "jangan gunakan avatar bot,
+// admin, atau user lain".
+async function resolveRequesterAvatarUrl(discordId) {
+  if (!discordId) return null;
+  try {
+    const u = await db.collection('users').findOne({ discordId: String(discordId) }, { projection: { avatarUrl: 1 } });
+    if (u?.avatarUrl && isValidHttpUrl(u.avatarUrl)) return u.avatarUrl;
+  } catch { /* best-effort — lanjut ke fallback default avatar di bawah */ }
+  try {
+    // Formula default avatar Discord (index 0-5, berbasis Discord ID) —
+    // dipakai HANYA sebagai fallback terakhir kalau avatarUrl belum tersimpan.
+    const idx = Number((BigInt(String(discordId)) >> 22n) % 6n);
+    return `https://cdn.discordapp.com/embed/avatars/${idx}.png`;
+  } catch {
+    return null;
+  }
 }
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -8674,18 +8799,29 @@ app.post('/api/admin/games', requireAdmin, async (req, res) => {
         meta: { requestId: String(linkedRequest._id), gameId: result.insertedId, appId: doc.appId }
       }).catch(() => {});
 
-      notifyUser(linkedRequest.discordId, {
-        type: 'game_request_approved',
-        title: 'Request Game Disetujui!',
-        message: `Request kamu untuk **${doc.name}** disetujui dan sekarang sudah tersedia di aplikasi — langsung cek halaman Games!`,
-        fields: [
-          field('🎮 Nama Game', doc.name, true),
-          field('🆔 App ID', doc.appId, true),
-          field('📦 Role Minimum', String(doc.role || '').toUpperCase(), true)
-        ],
-        thumbnail: doc.capsuleImageUrl || doc.imageUrl || undefined,
-        dm: true, webhook: true
-      }).catch(() => {});
+      // Notifikasi Discord "Request Game Diterima" — WAJIB pakai template
+      // JSON referensi (buildRequestGameEmbed), banner SELALU dari HubCap
+      // (pickCatalogBanner — REUSE PERSIS yang sudah dipakai notif Game
+      // Baru di atas, doc di sini sudah punya appId/heroImageUrl/imageUrl
+      // ASLI dari game yang baru dibuat), thumbnail SELALU avatar Discord
+      // requester asli. Best-effort, fire-and-forget.
+      (async () => {
+        try {
+          const [banner, avatarUrl] = await Promise.all([
+            pickCatalogBanner(doc),
+            resolveRequesterAvatarUrl(linkedRequest.discordId)
+          ]);
+          await notifyUser(linkedRequest.discordId, {
+            type: 'game_request_approved',
+            title: 'Request Game Disetujui!',
+            message: `Request kamu untuk **${doc.name}** disetujui dan sekarang sudah tersedia di aplikasi — langsung cek halaman Games!`,
+            finalEmbed: buildRequestGameEmbed({ event: 'approved', name: doc.name, discordId: linkedRequest.discordId, banner, avatarUrl }),
+            dm: true, webhook: true
+          });
+        } catch (e) {
+          console.error(`[Notif] Gagal kirim notifikasi Request Game Diterima "${doc.name}":`, e.message);
+        }
+      })();
 
       broadcastAdmin('gameRequest:decided', publicGameRequest(updatedRequest));
       wsSendToUser(linkedRequest.discordId, 'gameRequest:update', publicGameRequest(updatedRequest));
@@ -14192,19 +14328,29 @@ app.post('/api/requests/games', requireUser, async (req, res) => {
       meta: { requestId: String(doc._id), appId, name: summary.name }
     }).catch(() => {});
 
-    notifyUser(discordId, {
-      type: 'game_request_created',
-      title: 'Request Game Terkirim',
-      message: `Request kamu untuk **${summary.name}** sudah diterima dan sedang menunggu review Admin.`,
-      fields: [
-        field('👤 Username', username, true),
-        field('🎮 Nama Game', summary.name, true),
-        field('🆔 App ID', appId, true),
-        field('📦 Paket', roleLabelUpper(role), true)
-      ],
-      thumbnail: summary.capsuleImageUrl || summary.headerImage || undefined,
-      dm: true, webhook: true
-    }).catch(() => {});
+    // Notifikasi Discord "Request Game Terkirim" — WAJIB pakai template JSON
+    // referensi (buildRequestGameEmbed), banner SELALU dari HubCap
+    // (pickCatalogBanner, TIDAK PERNAH Steam Store API), thumbnail SELALU
+    // avatar Discord requester asli (resolveRequesterAvatarUrl). Best-effort,
+    // fire-and-forget (IIFE) — kegagalan lookup HubCap/avatar tidak pernah
+    // menggagalkan pembuatan Request Game itu sendiri.
+    (async () => {
+      try {
+        const [banner, avatarUrl] = await Promise.all([
+          pickCatalogBanner({ appId: doc.appId, heroImageUrl: summary.heroImageUrl, imageUrl: summary.imageUrl }),
+          resolveRequesterAvatarUrl(discordId)
+        ]);
+        await notifyUser(discordId, {
+          type: 'game_request_created',
+          title: 'Request Game Terkirim',
+          message: `Request kamu untuk **${summary.name}** sudah diterima dan sedang menunggu review Admin.`,
+          finalEmbed: buildRequestGameEmbed({ event: 'sent', name: summary.name, discordId, banner, avatarUrl }),
+          dm: true, webhook: true
+        });
+      } catch (e) {
+        console.error(`[Notif] Gagal kirim notifikasi Request Game Terkirim "${summary.name}":`, e.message);
+      }
+    })();
 
     broadcastAdmin('gameRequest:new', publicGameRequest(doc));
     wsSendToUser(discordId, 'gameRequest:update', publicGameRequest(doc));
@@ -14294,18 +14440,30 @@ app.put('/api/admin/game-requests/:id/reject', requireAdmin, async (req, res) =>
       meta: { requestId: String(request._id), appId: request.appId, reason }
     }).catch(() => {});
 
-    notifyUser(request.discordId, {
-      type: 'game_request_rejected',
-      title: 'Request Game Ditolak',
-      message: `Request kamu untuk **${request.gameData?.name || request.appId}** ditolak Admin.${reason ? ` Alasan: ${reason}` : ''}`,
-      fields: [
-        field('🎮 Nama Game', request.gameData?.name, true),
-        field('🆔 App ID', request.appId, true),
-        ...(reason ? [field('📝 Alasan', reason, false)] : [])
-      ],
-      thumbnail: request.gameData?.capsuleImageUrl || request.gameData?.headerImage || undefined,
-      dm: true, webhook: true
-    }).catch(() => {});
+    // Notifikasi Discord "Request Game Ditolak" — WAJIB pakai template JSON
+    // referensi (buildRequestGameEmbed), banner SELALU dari HubCap
+    // (pickCatalogBanner), thumbnail SELALU avatar Discord requester asli,
+    // dan Alasan penolakan ASLI dari admin (reason di atas, bisa null kalau
+    // admin tidak isi — buildRequestGameEmbed sudah menangani fallback
+    // teksnya, bukan baris kosong/undefined). Best-effort, fire-and-forget.
+    (async () => {
+      try {
+        const gameName = request.gameData?.name || request.appId;
+        const [banner, avatarUrl] = await Promise.all([
+          pickCatalogBanner({ appId: request.appId, heroImageUrl: request.gameData?.heroImageUrl, imageUrl: request.gameData?.imageUrl }),
+          resolveRequesterAvatarUrl(request.discordId)
+        ]);
+        await notifyUser(request.discordId, {
+          type: 'game_request_rejected',
+          title: 'Request Game Ditolak',
+          message: `Request kamu untuk **${gameName}** ditolak Admin.${reason ? ` Alasan: ${reason}` : ''}`,
+          finalEmbed: buildRequestGameEmbed({ event: 'rejected', name: gameName, discordId: request.discordId, banner, avatarUrl, reason }),
+          dm: true, webhook: true
+        });
+      } catch (e) {
+        console.error(`[Notif] Gagal kirim notifikasi Request Game Ditolak "${request.gameData?.name || request.appId}":`, e.message);
+      }
+    })();
 
     broadcastAdmin('gameRequest:decided', publicGameRequest(updated));
     wsSendToUser(request.discordId, 'gameRequest:update', publicGameRequest(updated));
