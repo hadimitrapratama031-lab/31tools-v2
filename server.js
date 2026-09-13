@@ -1579,9 +1579,10 @@ const appCustomizationManager = require('./appCustomizationManager')({ getDb: ()
 // tidak disentuh sama sekali oleh fitur ini).
 const dashboardBannerManager = require('./dashboardBannerManager')({ getDb: () => db, wsBroadcastAll });
 // CATALOG EMBED ACCENT COLOR — ekstraksi warna dominan/accent dari banner
-// Game/Bypass (Steam CDN header.jpg, lewat pickCatalogBanner() di bawah)
-// untuk embed Add Game/Add Bypass/Game Update/Bypass Update (lihat
-// catalogEmbedColor.js & buildCatalogEmbed() di bawah).
+// Game/Bypass (Cloudflare Steam CDN header.jpg dengan fallback Ryuu, lewat
+// pickCatalogBanner() di bawah) untuk embed Add Game/Add Bypass/Game
+// Update/Bypass Update (lihat catalogEmbedColor.js & buildCatalogEmbed() di
+// bawah).
 const catalogEmbedColor = require('./catalogEmbedColor');
 
 // ══════════════════════════════════════════════════════════════════════════
@@ -1602,12 +1603,14 @@ const catalogEmbedColor = require('./catalogEmbedColor');
 //                   description (posisi & gaya teks persis mengikuti
 //                   template, cuma nilainya dinamis; AppID tampil "-" kalau
 //                   memang belum diisi, bukan dikarang).
-//   - banner      : dipilih oleh pickCatalogBanner() di bawah — SATU-SATUNYA
-//                   sumber adalah Steam CDN `header.jpg` dibangun langsung
-//                   dari App ID dokumen (TIDAK PERNAH HubCap, TIDAK PERNAH
+//   - banner      : dipilih oleh pickCatalogBanner() di bawah — Cloudflare
+//                   Steam CDN `header.jpg` dari App ID dokumen sebagai
+//                   Prioritas 1, fallback ke Ryuu (generator.ryuu.lol) kalau
+//                   Prioritas 1 gagal/404 (TIDAK PERNAH HubCap, TIDAK PERNAH
 //                   data tersimpan di project/heroImageUrl/imageUrl, TIDAK
-//                   PERNAH gambar statis dari JSON template manapun). Kalau
-//                   App ID kosong, embed tetap terkirim tanpa gambar (tidak
+//                   PERNAH gambar statis dari JSON template manapun, TIDAK
+//                   ADA sumber ketiga). Kalau App ID kosong atau KEDUA
+//                   sumber gagal, embed tetap terkirim tanpa gambar (tidak
 //                   error, bukan diganti gambar lain).
 //   - color       : dihitung dari warna dominan/accent banner di atas (lihat
 //                   catalogEmbedColor.js) — fallback ke warna default "31
@@ -1697,12 +1700,13 @@ async function buildCatalogEmbed({ kind, isNew, name, appId, publisher, banner, 
     embed.url = link;
     embed.author.url = link;
   }
-  // Banner — Steam CDN header.jpg (pickCatalogBanner, lihat ATURAN MUTLAK di
-  // definisinya), TIDAK PERNAH gambar statis dari file JSON referensi.
-  // DIVALIDASI dulu (lihat isValidBannerUrl) — kalau bukan http(s) yang
-  // valid, field image DILEWATI SAMA SEKALI (embed tetap terkirim tanpa
-  // gambar), BUKAN dikirim mentah sebagai embed.image.url yang bisa
-  // undefined/null/object/rusak.
+  // Banner — Cloudflare Steam CDN header.jpg dengan fallback Ryuu
+  // (pickCatalogBanner, lihat ATURAN MUTLAK di definisinya), TIDAK PERNAH
+  // gambar statis dari file JSON referensi. DIVALIDASI dulu (lihat
+  // isValidBannerUrl) — kalau bukan http(s) yang valid, field image
+  // DILEWATI SAMA SEKALI (embed tetap terkirim tanpa gambar), BUKAN
+  // dikirim mentah sebagai embed.image.url yang bisa undefined/null/
+  // object/rusak.
   if (isValidBannerUrl(banner)) embed.image = { url: banner };
   bannerDebugLog('buildCatalogEmbed_final_embed_image', { kind, isNew, name, appId, finalImageUrl: embed.image?.url || null });
 
@@ -1756,36 +1760,45 @@ function isValidBannerUrl(u) {
 }
 
 // ══════════════════════════════════════════════════════════════════════════
-// SUMBER BANNER/IMAGE UTAMA GAME — WAJIB & SATU-SATUNYA: Steam CDN
-// `https://cdn.cloudflare.steamstatic.com/steam/apps/{APP_ID}/header.jpg`
+// SUMBER BANNER/IMAGE UTAMA GAME — HANYA 2 SUMBER YANG BOLEH DIPAKAI
 // (permintaan user, berlaku utk SEMUA 9 notifikasi: Add Game, Add Bypass,
 // Update Game, Update Bypass, Request Game Dikirim/Diterima/Ditolak,
 // Download Game, Download Bypass — SEMUA memanggil pickCatalogBanner() di
-// titik pengiriman notifnya, jadi cukup diubah/dikunci di SATU tempat ini).
+// titik pengiriman notifnya, jadi cukup diubah/dikunci di SATU tempat ini):
+//
+//   PRIORITAS 1 — Steam CDN (Cloudflare), WAJIB dicoba lebih dulu:
+//     https://cdn.cloudflare.steamstatic.com/steam/apps/{APP_ID}/header.jpg
+//
+//   PRIORITAS 2 — Ryuu (generator.ryuu.lol), HANYA dipakai kalau Prioritas 1
+//   benar-benar tidak tersedia/gagal/404:
+//     https://generator.ryuu.lol/files/images/{APP_ID}.jpg
 //
 // ATURAN MUTLAK (tidak boleh diubah/ditambah tanpa mengubah instruksi ini):
-//   - HANYA format di atas yang boleh dipakai untuk embed.image.url.
-//   - TIDAK ADA fallback ke HubCap (hubcapmanifest.com) untuk banner.
+//   - HANYA 2 format di atas yang boleh dipakai untuk embed.image.url.
+//   - Steam CDN (Cloudflare) WAJIB jadi sumber utama; Ryuu HANYA fallback.
+//   - TIDAK ADA fallback ke shared.akamai.steamstatic.com.
 //   - TIDAK ADA fallback ke Steam Store API (store.steampowered.com/api).
-//   - TIDAK ADA fallback ke gambar tersimpan di database (heroImageUrl,
-//     imageUrl, libraryImageUrl, capsuleImageUrl, dst).
-//   - TIDAK ADA thumbnail/sumber gambar lain, TIDAK ADA URL alternatif,
-//     TIDAK ADA sistem fallback banner apapun.
-//   - Kalau App ID tidak tersedia -> banner TIDAK diisi sama sekali (embed
-//     tetap terkirim tanpa gambar), BUKAN diganti sumber lain.
+//   - TIDAK ADA fallback ke HubCap (hubcapmanifest.com) untuk banner.
+//   - TIDAK ADA fallback ke library_hero atau gambar tersimpan di database
+//     (heroImageUrl, imageUrl, libraryImageUrl, capsuleImageUrl, dst).
+//   - TIDAK ADA sumber ketiga, TIDAK ADA placeholder/gambar default — kalau
+//     KEDUA sumber di atas gagal, banner TIDAK diisi sama sekali (embed
+//     tetap terkirim tanpa gambar), BUKAN diganti sumber lain/dikarang.
+//   - Kalau App ID tidak tersedia -> banner TIDAK diisi sama sekali, tidak
+//     ada percobaan ke sumber manapun.
+//   - Pengecekan Prioritas 1 WAJIB selesai (network check, bukan cuma bangun
+//     string URL) SEBELUM webhook Discord dikirim; kalau gagal/404 baru
+//     dicoba Prioritas 2 — lihat checkImageUrlAvailable()/pickCatalogBanner()
+//     di bawah.
 //
-// AUDIT root-cause kenapa banner sebelumnya sering tidak muncul: implementasi
-// LAMA fungsi ini mencoba lookup ke HubCap (`/api/v1/library`, pencarian by
-// nama) dulu, baru fallback ke field tersimpan di database (heroImageUrl/
-// imageUrl), dan Steam CDN cuma jadi fallback PALING TERAKHIR — jadi kalau
-// HubCap tidak (atau belum) punya index untuk App ID tsb, DAN field database
-// belum pernah diisi (kasus paling umum untuk game yang baru ditambahkan),
-// banner ikut kosong walau App ID-nya sendiri valid & header.jpg Steam CDN
-// pasti tersedia. Sekarang dihilangkan total: Steam CDN header.jpg dipasang
-// sebagai SATU-SATUNYA sumber, langsung dari App ID dokumen — tidak ada lagi
-// panggilan network (HubCap/Steam Store API) sama sekali di jalur notifikasi
-// banner, jadi hasilnya deterministik & instan, dan proses async/await-nya
-// (Promise.all di setiap titik pemanggil) tetap selesai sebelum embed dikirim.
+// AUDIT (revisi terbaru): implementasi SEBELUMNYA cuma MEMBANGUN string URL
+// Steam CDN dari App ID tanpa pernah benar-benar mengecek apakah header.jpg-
+// nya ADA (banner bisa saja App ID-nya salah/game belum punya asset header
+// di Steam CDN -> notifikasi terkirim dengan embed.image yang 404 di
+// Discord). Sekarang pickCatalogBanner() melakukan pengecekan HTTP nyata ke
+// Prioritas 1 dulu (checkImageUrlAvailable()); kalau gagal/404 baru dicoba
+// Prioritas 2 (Ryuu) dengan pengecekan yang sama; kalau keduanya gagal,
+// embed.image dilewati sama sekali (tidak ada sumber ketiga/placeholder).
 // ── DEBUG SEMENTARA (audit banner notifikasi) ──────────────────────────────
 // Aktifkan dengan set env HUBCAP_BANNER_DEBUG=1 (tidak perlu redeploy kode
 // buat matikan/nyalakan).
@@ -1795,29 +1808,98 @@ function bannerDebugLog(step, data) {
   try { console.log(`[BannerDebug] ${step}:`, JSON.stringify(data)); } catch { console.log(`[BannerDebug] ${step}:`, data); }
 }
 
-// Bangun URL Steam CDN header.jpg dari App ID — SATU-SATUNYA format yang
-// boleh dipakai (lihat ATURAN MUTLAK di atas). Format TIDAK PERNAH diubah.
-function buildSteamHeaderImageFallback(appId) {
+// Timeout pengecekan ketersediaan image per sumber — dijaga singkat supaya
+// kalau salah satu provider lambat/down, notifikasi tidak ikut tertunda
+// lama (worst case kedua sumber timeout = ~2x nilai ini sebelum embed
+// dikirim tanpa gambar).
+const CATALOG_BANNER_CHECK_TIMEOUT_MS = 4000;
+
+// Bangun URL Steam CDN header.jpg (Cloudflare) dari App ID — PRIORITAS 1,
+// SATU-SATUNYA format yang boleh dipakai untuk sumber ini (lihat ATURAN
+// MUTLAK di atas). Format TIDAK PERNAH diubah.
+function buildSteamCloudflareBannerUrl(appId) {
   const id = appId != null ? String(appId).trim() : '';
   if (!id) return null;
   return `https://cdn.cloudflare.steamstatic.com/steam/apps/${id}/header.jpg`;
 }
 
+// Bangun URL Ryuu (generator.ryuu.lol) dari App ID — PRIORITAS 2, HANYA
+// dipakai sebagai fallback kalau Prioritas 1 gagal/404 (lihat ATURAN MUTLAK
+// di atas). Domain ikut RYU_BASE_URL (configurable via env RYU_BASE_URL,
+// sama seperti fitur Ryu API download yang sudah ada) — path & format tetap
+// PERSIS `/files/images/{APP_ID}.jpg`, TIDAK PERNAH diubah.
+function buildRyuuBannerUrl(appId) {
+  const id = appId != null ? String(appId).trim() : '';
+  if (!id) return null;
+  return `${RYU_BASE_URL}/files/images/${id}.jpg`;
+}
+
+// Cek ketersediaan nyata satu image URL lewat network (bukan cuma format
+// string) — dipakai untuk memutuskan Prioritas 1 (Cloudflare) berhasil atau
+// harus fallback ke Prioritas 2 (Ryuu). GET + stream di-destroy segera
+// setelah status code diterima (tidak menunggu body gambar penuh terunduh)
+// supaya cepat & hemat bandwidth, tapi tetap benar-benar mengecek ke server
+// (bukan HEAD-only, karena tidak semua provider image menjamin dukungan
+// HEAD). Status di luar 2xx (termasuk 404) atau error jaringan/timeout ->
+// dianggap TIDAK tersedia.
+async function checkImageUrlAvailable(url) {
+  if (!url) return false;
+  let res;
+  try {
+    res = await axios.get(url, {
+      responseType: 'stream',
+      timeout: CATALOG_BANNER_CHECK_TIMEOUT_MS,
+      maxRedirects: 3,
+      validateStatus: () => true // status ditangani manual di bawah, bukan dilempar sebagai exception
+    });
+  } catch (e) {
+    bannerDebugLog('checkImageUrlAvailable_error', { url, error: e.message });
+    return false;
+  } finally {
+    // Hentikan stream sesegera mungkin (kita cuma butuh status code, bukan
+    // body gambarnya) — aman dipanggil walau request di atas gagal/`res`
+    // undefined.
+    if (res?.data && typeof res.data.destroy === 'function') res.data.destroy();
+  }
+  const ok = res.status >= 200 && res.status < 300;
+  bannerDebugLog('checkImageUrlAvailable_result', { url, status: res.status, ok });
+  return ok;
+}
+
 // pickCatalogBanner() — dipanggil oleh SEMUA 9 titik notifikasi (Add/Update
 // Game/Bypass, Download Game/Bypass, Request Game Dikirim/Diterima/Ditolak).
-// Mapping WAJIB: doc(Game/Bypass/Request) -> App ID -> Steam CDN URL.
-// `steamAppId` diikutkan sebagai alias App ID legacy (sejumlah dokumen
-// Bypass lama menyimpan App ID di field ini, bukan `appId`) — BUKAN sumber
-// gambar alternatif, cuma nama field lain untuk App ID yang SAMA.
+// Mapping WAJIB: doc(Game/Bypass/Request) -> App ID -> Cloudflare Steam CDN
+// (dicek dulu) -> Ryuu (fallback, HANYA kalau Cloudflare gagal/404) -> null
+// (kalau keduanya gagal, TIDAK ADA sumber ketiga). `steamAppId` diikutkan
+// sebagai alias App ID legacy (sejumlah dokumen Bypass lama menyimpan App
+// ID di field ini, bukan `appId`) — BUKAN sumber gambar alternatif, cuma
+// nama field lain untuk App ID yang SAMA.
 async function pickCatalogBanner(doc) {
   const appId = doc?.appId || doc?.steamAppId || null;
-  const banner = buildSteamHeaderImageFallback(appId);
-  bannerDebugLog('pickCatalogBanner_result', {
-    appId: appId != null ? String(appId) : null,
-    source: banner ? 'steam_cdn' : 'none',
-    banner
-  });
-  return banner;
+  const id = appId != null ? String(appId).trim() : '';
+  if (!id) {
+    bannerDebugLog('pickCatalogBanner_result', { appId: null, source: 'none', banner: null });
+    return null;
+  }
+
+  // PRIORITAS 1 — Cloudflare Steam CDN.
+  const cloudflareUrl = buildSteamCloudflareBannerUrl(id);
+  if (await checkImageUrlAvailable(cloudflareUrl)) {
+    bannerDebugLog('pickCatalogBanner_result', { appId: id, source: 'cloudflare_steam_cdn', banner: cloudflareUrl });
+    return cloudflareUrl;
+  }
+
+  // PRIORITAS 2 — Ryuu, HANYA kalau Prioritas 1 di atas gagal/404.
+  const ryuuUrl = buildRyuuBannerUrl(id);
+  if (await checkImageUrlAvailable(ryuuUrl)) {
+    bannerDebugLog('pickCatalogBanner_result', { appId: id, source: 'ryuu', banner: ryuuUrl });
+    return ryuuUrl;
+  }
+
+  // Kedua sumber gagal -> TIDAK ADA sumber ketiga/placeholder (lihat ATURAN
+  // MUTLAK di atas). Embed tetap terkirim, cukup tanpa gambar.
+  bannerDebugLog('pickCatalogBanner_result', { appId: id, source: 'none', banner: null });
+  return null;
 }
 
 
@@ -1835,9 +1917,10 @@ async function pickCatalogBanner(doc) {
 //
 // Yang WAJIB dinamis dari data ASLI (tidak pernah dikarang/hardcode):
 //   - name      : nama game dari request/game ASLI (gameData.name / doc.name).
-//   - banner    : SELALU dari Steam CDN lewat pickCatalogBanner() (App ID ->
-//                 `header.jpg`, SATU-SATUNYA sumber — TIDAK PERNAH HubCap,
-//                 TIDAK PERNAH Steam Store API, TIDAK PERNAH data project).
+//   - banner    : SELALU lewat pickCatalogBanner() (App ID -> Cloudflare
+//                 Steam CDN `header.jpg` diprioritaskan, fallback Ryuu kalau
+//                 gagal/404 — TIDAK PERNAH HubCap, TIDAK PERNAH Steam Store
+//                 API, TIDAK PERNAH data project, TIDAK ADA sumber ketiga).
 //                 Divalidasi isValidBannerUrl() sebelum masuk embed.image,
 //                 sama seperti Add/Update Game.
 //   - thumbnail : avatar Discord USER yang BENAR-BENAR melakukan request
@@ -1882,7 +1965,7 @@ const REQUEST_GAME_EVENT_TEXT = {
 // event    : 'sent' | 'approved' | 'rejected'
 // name     : nama game ASLI (gameData.name/doc.name) — "-" kalau memang kosong.
 // discordId: Discord User ID requester ASLI — dipakai buat mention <@id>.
-// banner   : hasil pickCatalogBanner() (Steam CDN header.jpg dari App ID — SATU-SATUNYA sumber).
+// banner   : hasil pickCatalogBanner() (App ID -> Cloudflare Steam CDN header.jpg, fallback Ryuu kalau gagal/404).
 // avatarUrl: hasil resolveRequesterAvatarUrl() (avatar requester ASLI).
 // reason   : rejectReason ASLI (hanya dipakai kalau event === 'rejected').
 function buildRequestGameEmbed({ event, name, discordId, banner, avatarUrl, reason }) {
@@ -8732,10 +8815,11 @@ app.post('/api/admin/games', requireAdmin, async (req, res) => {
       }).catch(() => {});
 
       // Notifikasi Discord "Request Game Diterima" — WAJIB pakai template
-      // JSON referensi (buildRequestGameEmbed), banner SELALU dari Steam CDN
-      // (pickCatalogBanner — REUSE PERSIS yang sudah dipakai notif Game
-      // Baru di atas, doc di sini sudah punya appId ASLI dari game yang
-      // baru dibuat), thumbnail SELALU avatar Discord requester asli.
+      // JSON referensi (buildRequestGameEmbed), banner lewat
+      // pickCatalogBanner() (REUSE PERSIS yang sudah dipakai notif Game
+      // Baru di atas — Cloudflare Steam CDN header.jpg, fallback Ryuu kalau
+      // gagal/404; doc di sini sudah punya appId ASLI dari game yang baru
+      // dibuat), thumbnail SELALU avatar Discord requester asli.
       // Best-effort, fire-and-forget.
       (async () => {
         try {
@@ -14296,11 +14380,12 @@ app.post('/api/requests/games', requireUser, async (req, res) => {
     }).catch(() => {});
 
     // Notifikasi Discord "Request Game Terkirim" — WAJIB pakai template JSON
-    // referensi (buildRequestGameEmbed), banner SELALU dari Steam CDN
-    // (pickCatalogBanner — App ID -> header.jpg, TIDAK PERNAH HubCap/Steam
-    // Store API/data project), thumbnail SELALU avatar Discord requester
-    // asli (resolveRequesterAvatarUrl). Best-effort, fire-and-forget (IIFE)
-    // — kegagalan lookup avatar tidak pernah menggagalkan pembuatan Request
+    // referensi (buildRequestGameEmbed), banner lewat pickCatalogBanner()
+    // (App ID -> Cloudflare Steam CDN header.jpg, fallback Ryuu kalau
+    // gagal/404, TIDAK PERNAH HubCap/Steam Store API/data project),
+    // thumbnail SELALU avatar Discord requester asli
+    // (resolveRequesterAvatarUrl). Best-effort, fire-and-forget (IIFE) —
+    // kegagalan lookup avatar tidak pernah menggagalkan pembuatan Request
     // Game itu sendiri.
     (async () => {
       try {
@@ -14413,8 +14498,9 @@ app.put('/api/admin/game-requests/:id/reject', requireAdmin, async (req, res) =>
     }).catch(() => {});
 
     // Notifikasi Discord "Request Game Ditolak" — WAJIB pakai template JSON
-    // referensi (buildRequestGameEmbed), banner SELALU dari Steam CDN
-    // (pickCatalogBanner — App ID -> header.jpg), thumbnail SELALU avatar
+    // referensi (buildRequestGameEmbed), banner lewat pickCatalogBanner()
+    // (App ID -> Cloudflare Steam CDN header.jpg, fallback Ryuu kalau
+    // gagal/404), thumbnail SELALU avatar
     // Discord requester asli, dan Alasan penolakan ASLI dari admin (reason
     // di atas, bisa null kalau admin tidak isi — buildRequestGameEmbed sudah
     // menangani fallback teksnya, bukan baris kosong/undefined). Best-effort,
