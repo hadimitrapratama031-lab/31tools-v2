@@ -9291,6 +9291,7 @@ function aczRenderAll(opts = {}) {
   const hasImg = !!img.url;
   document.getElementById('aczImagePreviewWrap').style.display = hasImg ? '' : 'none';
   if (hasImg) document.getElementById('aczImagePreviewImg').src = img.url;
+  aczRenderStorageBadge('aczImageStorageBadge', img.storageStatus);
   document.getElementById('aczImageFit').value = img.fit;
   document.getElementById('aczImagePosition').value = img.position;
   if (!opts.skipImageOpacitySlider) document.getElementById('aczImageOpacitySlider').value = Math.round(img.opacity * 100);
@@ -9313,6 +9314,7 @@ function aczRenderAll(opts = {}) {
   const hasLogo = !!br.logo.url;
   document.getElementById('aczLogoPreviewWrap').style.display = hasLogo ? 'flex' : 'none';
   if (hasLogo) document.getElementById('aczLogoPreviewImg').src = br.logo.url;
+  aczRenderStorageBadge('aczLogoStorageBadge', br.logo.storageStatus);
   if (!opts.skipLogoSizeSlider) document.getElementById('aczLogoSizeSlider').value = br.logo.size;
   document.getElementById('aczLogoSizeValue').textContent = br.logo.size + 'px';
   if (!opts.skipLogoOpacitySlider) document.getElementById('aczLogoOpacitySlider').value = Math.round(br.logo.opacity * 100);
@@ -9344,6 +9346,26 @@ function aczHexToRgba(hex, opacity) {
 // ── Live Preview — SAMA PERSIS logikanya dengan applyAppBackground()/
 // applyAppBranding() di app/app.js (App Desktop asli), supaya apa yang
 // Admin lihat di sini benar-benar merepresentasikan tampilan App. ──
+// Badge kecil di pojok preview gambar App Customization (background/logo)
+// yang menunjukkan status storage-nya — dipakai juga oleh renderBannersPage
+// (lihat public/admin.js bagian Setting Banner) lewat elementId yang beda.
+// 'r2' -> sudah di Cloudflare R2 (hijau). 'legacy' -> MASIH base64 lama di
+// MongoDB, belum dimigrasi (kuning, jalankan `npm run migrate:images` di
+// server). 'external' -> URL gambar eksternal, bukan upload (abu-abu).
+// 'none' (tidak ada gambar) -> badge disembunyikan.
+const ACZ_STORAGE_LABEL = { r2: 'R2', legacy: 'Belum dimigrasi', external: 'URL eksternal' };
+function aczRenderStorageBadge(elId, status) {
+  const el = document.getElementById(elId);
+  if (!el) return;
+  if (!status || status === 'none' || !ACZ_STORAGE_LABEL[status]) {
+    el.style.display = 'none';
+    return;
+  }
+  el.textContent = ACZ_STORAGE_LABEL[status];
+  el.dataset.status = status;
+  el.style.display = '';
+}
+
 function aczRenderPreview() {
   const bg = aczConfig.background, br = aczConfig.branding;
   const bgEl = document.getElementById('aczPreviewBg');
@@ -9839,11 +9861,24 @@ function bnrRenderImagePreview() {
   const url = _bnrImageTouched ? _bnrPendingImageDataUrl : (b ? b.image.url : '');
   if (url) {
     el.style.backgroundImage = `url("${url}")`;
-    el.textContent = '';
   } else {
     el.style.backgroundImage = '';
-    el.textContent = 'Belum ada gambar';
   }
+  // Placeholder teks "Belum ada gambar" — pakai <span> terpisah (bukan
+  // el.textContent langsung) supaya #bnrImageStorageBadge (anak elemen ini,
+  // lihat admin.html) tidak ikut terhapus tiap kali preview dirender ulang.
+  let placeholder = document.getElementById('bnrImagePreviewPlaceholder');
+  if (!placeholder) {
+    placeholder = document.createElement('span');
+    placeholder.id = 'bnrImagePreviewPlaceholder';
+    el.appendChild(placeholder);
+  }
+  placeholder.textContent = url ? '' : 'Belum ada gambar';
+  // Badge status storage R2/legacy/eksternal — disembunyikan selama ada
+  // upload baru yang belum di-Save (_bnrImageTouched), karena status
+  // sebenarnya baru diketahui setelah Save berhasil (lihat
+  // resolveImagePatch() di bannerManager.js).
+  aczRenderStorageBadge('bnrImageStorageBadge', (!_bnrImageTouched && b) ? b.image.storageStatus : null);
 }
 
 function bnrCurrentFormState() {

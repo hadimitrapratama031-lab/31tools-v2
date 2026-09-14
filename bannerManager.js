@@ -29,6 +29,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 
 const { ObjectId } = require('mongodb');
+const r2Storage = require('./r2Storage');
 
 const COLLECTION = 'banners';
 
@@ -164,6 +165,37 @@ const DEFAULT_BANNER_FIELDS = {
   button: { enabled: false, label: '', target: '' }
 };
 
+// ── R2 UPLOAD — dipanggil dari createBanner()/updateBanner() untuk
+// image.url, SEBELUM apa pun disimpan ke MongoDB. Pola SAMA PERSIS dengan
+// resolveImagePatch() di appCustomizationManager.js: validasi ketat dulu
+// (validateImageUrl, MIME whitelist + limit 10MB, sudah ada di atas), BARU
+// upload ke R2 — kalau invalid/upload gagal, Error dilempar sebelum baris
+// database manapun tersentuh (banner lama/gambar lama tetap utuh).
+// Mengembalikan field baru (fields) DAN key R2 lama yang aman dihapus
+// SETELAH banner baru tersimpan (deleteOldKey) — pemanggil yang
+// mengeksekusi actual delete supaya urutannya selalu "simpan baru dulu,
+// baru hapus lama".
+async function resolveImagePatch(rawUrl, currentImage) {
+  const s = typeof rawUrl === 'string' ? rawUrl.trim() : '';
+  const currentKey = currentImage && currentImage.key ? currentImage.key : null;
+
+  if (!s) {
+    return { fields: { url: '', key: null, mimeType: '', fileSize: 0 }, deleteOldKey: currentKey };
+  }
+  if (s.startsWith('data:')) {
+    validateImageUrl(s);
+    const uploaded = await r2Storage.uploadDataUri(s, 'banners');
+    return {
+      fields: { url: uploaded.url, key: uploaded.key, mimeType: uploaded.mimeType, fileSize: uploaded.size },
+      deleteOldKey: (currentKey && currentKey !== uploaded.key) ? currentKey : null
+    };
+  }
+  if (/^https?:\/\//i.test(s)) {
+    return { fields: { url: s, key: null, mimeType: '', fileSize: 0 }, deleteOldKey: currentKey };
+  }
+  throw new Error('Format gambar tidak valid.');
+}
+
 module.exports = function createBannerManager({ getDb, wsBroadcastAll }) {
 
   async function ensureIndexes() {
@@ -193,7 +225,12 @@ module.exports = function createBannerManager({ getDb, wsBroadcastAll }) {
       _id: d._id,
       order: Number.isFinite(d.order) ? d.order : 0,
       status: d.status === 'inactive' ? 'inactive' : 'active',
-      image: { url: (d.image && typeof d.image.url === 'string') ? d.image.url : '' },
+      image: {
+        url: (d.image && typeof d.image.url === 'string') ? d.image.url : '',
+        key: (d.image && typeof d.image.key === 'string' && d.image.key) ? d.image.key : null,
+        mimeType: (d.image && typeof d.image.mimeType === 'string') ? d.image.mimeType : '',
+        fileSize: (d.image && Number.isFinite(Number(d.image.fileSize))) ? Number(d.image.fileSize) : 0
+      },
       eyebrow: sanitizeTextBlock(d.eyebrow, DEFAULT_BANNER_FIELDS.eyebrow, TEXT_LIMITS.eyebrow),
       title: sanitizeTextBlock(d.title, DEFAULT_BANNER_FIELDS.title, TEXT_LIMITS.title),
       description: {
@@ -276,9 +313,21 @@ module.exports = function createBannerManager({ getDb, wsBroadcastAll }) {
   function isHeavyDataUri(v) {
     return typeof v === 'string' && v.startsWith('data:');
   }
-  function toLightPayload(banner, imageBase) {
+  // Sama pola dengan imageStorageStatus() di appCustomizationManager.js —
+  // dipakai HANYA untuk Admin Web (toAdminList, includeStorageStatus=true)
+  // supaya bisa menampilkan badge "belum dimigrasi ke R2" per banner tanpa
+  // Admin Web perlu menebak dari bentuk URL sendiri. Tidak dikirim ke
+  // payload publik App (toPublicList) — tidak relevan buat App.
+  function imageStorageStatus(imgField) {
+    if (!imgField || !imgField.url) return 'none';
+    if (imgField.key) return 'r2';
+    if (isHeavyDataUri(imgField.url)) return 'legacy';
+    return 'external';
+  }
+  function toLightPayload(banner, imageBase, includeStorageStatus) {
     const version = banner.updatedAt ? new Date(banner.updatedAt).getTime() : 0;
     const out = { ...banner, id: String(banner._id), image: { ...banner.image } };
+    if (includeStorageStatus) out.image.storageStatus = imageStorageStatus(banner.image);
     if (isHeavyDataUri(out.image.url)) {
       out.image.url = `${imageBase}/${out.id}/image?v=${version}`;
     }
@@ -308,7 +357,7 @@ module.exports = function createBannerManager({ getDb, wsBroadcastAll }) {
   // jadi solusinya cukup pakai base URL publik yang sudah benar-benar ada
   // ini, BUKAN membuat endpoint admin baru yang duplikat.
   function toAdminList(banners) {
-    return banners.map(b => toLightPayload(b, '/api/banners'));
+    return banners.map(b => toLightPayload(b, '/api/banners', true));
   }
 
   async function getRawImageBuffer(id) {
@@ -343,8 +392,13 @@ module.exports = function createBannerManager({ getDb, wsBroadcastAll }) {
 
   async function createBanner(input, updatedBy) {
     const db = getDb();
+    // Upload ke R2 (kalau ada gambar baru) SEBELUM insert dokumen — Error
+    // dilempar di sini kalau validasi/upload gagal, sebelum Banner baru
+    // sempat dibuat sama sekali.
+    let imageFields = { url: '', key: null, mimeType: '', fileSize: 0 };
     if (input && input.image && typeof input.image.url === 'string') {
-      validateImageUrl(input.image.url);
+      const resolved = await resolveImagePatch(input.image.url, null);
+      imageFields = resolved.fields;
     }
     const all = await listOrderIndex();
     const nextOrder = all.length ? Math.max(...all.map(b => (Number.isFinite(b.order) ? b.order : 0))) + 1 : 0;
@@ -352,7 +406,7 @@ module.exports = function createBannerManager({ getDb, wsBroadcastAll }) {
     const doc = mergeBanner({
       order: nextOrder,
       status: 'active',
-      image: { url: (input && input.image && input.image.url) || '' },
+      image: imageFields,
       eyebrow: input && input.eyebrow,
       title: input && input.title,
       description: input && input.description,
@@ -394,12 +448,23 @@ module.exports = function createBannerManager({ getDb, wsBroadcastAll }) {
     if (!db || !_id) throw new Error('Banner tidak ditemukan.');
     const p = patch || {};
 
-    const currentDoc = await db.collection(COLLECTION).findOne({ _id }, { projection: { image: 0 } });
+    // Projection LENGKAP di sini (bukan { image: 0 }) — updateBanner() butuh
+    // image.key lama (kalau ada) untuk cleanup R2 setelah save berhasil.
+    // Ukuran dokumen banner sudah kecil sejak gambar tidak lagi disimpan
+    // sebagai base64 langsung di sini (lihat resolveImagePatch/R2 di atas),
+    // jadi ini tidak membawa balik masalah performa yang sama seperti dulu.
+    const currentDoc = await db.collection(COLLECTION).findOne({ _id });
     if (!currentDoc) throw new Error('Banner tidak ditemukan.');
     const current = mergeBanner(currentDoc);
 
+    // Upload ke R2 (kalau ada gambar baru) SEBELUM update dokumen — Error
+    // dilempar di sini kalau validasi/upload gagal, sebelum apa pun ditulis
+    // ke database (gambar/banner lama tetap utuh, poin #6/#12 spek).
+    let imagePatch = null, deleteOldKey = null;
     if (p.image && typeof p.image.url === 'string') {
-      validateImageUrl(p.image.url);
+      const resolved = await resolveImagePatch(p.image.url, current.image);
+      imagePatch = resolved.fields;
+      deleteOldKey = resolved.deleteOldKey;
     }
 
     // `merged` cuma dipakai untuk SANITASI nilai (whitelist font/posisi/
@@ -409,7 +474,7 @@ module.exports = function createBannerManager({ getDb, wsBroadcastAll }) {
     // yang benar-benar ada di `patch`).
     const merged = mergeBanner({
       ...current,
-      image: (p.image && typeof p.image.url === 'string') ? { url: p.image.url } : current.image,
+      image: imagePatch || current.image,
       eyebrow: p.eyebrow ? { ...current.eyebrow, ...p.eyebrow } : current.eyebrow,
       title: p.title ? { ...current.title, ...p.title } : current.title,
       description: p.description ? { ...current.description, ...p.description } : current.description,
@@ -420,7 +485,7 @@ module.exports = function createBannerManager({ getDb, wsBroadcastAll }) {
 
     const now = new Date();
     const set = { updatedAt: now, updatedBy };
-    if (p.image && typeof p.image.url === 'string') set.image = merged.image;
+    if (imagePatch) set.image = merged.image;
     if (p.eyebrow) set.eyebrow = merged.eyebrow;
     if (p.title) set.title = merged.title;
     if (p.description) set.description = merged.description;
@@ -429,6 +494,12 @@ module.exports = function createBannerManager({ getDb, wsBroadcastAll }) {
     if (p.status !== undefined) set.status = merged.status;
 
     await db.collection(COLLECTION).updateOne({ _id }, { $set: set });
+
+    // Baru hapus object R2 LAMA setelah banner baru berhasil tersimpan —
+    // kalau updateOne() di atas gagal (exception), baris ini tidak pernah
+    // tereksekusi. Best-effort, tidak pernah throw (lihat r2Storage.deleteObject).
+    if (deleteOldKey) r2Storage.deleteObject(deleteOldKey).catch(() => {});
+
     return await getBannerById(id);
   }
 
@@ -436,7 +507,14 @@ module.exports = function createBannerManager({ getDb, wsBroadcastAll }) {
     const db = getDb();
     const _id = oid(id);
     if (!db || !_id) return false;
+    // Ambil image.key SEBELUM delete — dipakai untuk cleanup R2 setelah
+    // delete dari MongoDB berhasil (bukan broad delete, hanya object milik
+    // banner ini yang dihapus, dan hanya SETELAH dokumennya benar2 hilang).
+    const existingDoc = await db.collection(COLLECTION).findOne({ _id }, { projection: { image: 1 } });
     const result = await db.collection(COLLECTION).deleteOne({ _id });
+    if (result.deletedCount > 0 && existingDoc && existingDoc.image && existingDoc.image.key) {
+      r2Storage.deleteObject(existingDoc.image.key).catch(() => {});
+    }
     if (result.deletedCount > 0) {
       // Rapikan `order` supaya tidak ada celah (0,1,3,4 -> 0,1,2,3) — filter
       // tab "Banner N" di Admin Web & urutan carousel App selalu berurutan

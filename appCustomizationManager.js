@@ -15,6 +15,8 @@
 // project ini (bodyParser limit sudah dinaikkan ke 8mb di server.js).
 // ══════════════════════════════════════════════════════════════════════════
 
+const r2Storage = require('./r2Storage');
+
 const SETTINGS_ID = 'appCustomization';
 
 // ── BACKGROUND IMAGE & LOGO — upload/URL validation ─────────────────────
@@ -67,6 +69,9 @@ const DEFAULTS = {
     image: {
       source: 'upload', // 'upload' | 'url' — cuma penanda UI Admin Web, url tetap satu2nya field yang dipakai App
       url: '',
+      key: null,      // R2 object key (null kalau url eksternal http(s), atau data lama belum dimigrasi)
+      mimeType: '',    // MIME asli file yang diupload ke R2
+      fileSize: 0,     // ukuran byte file yang diupload ke R2
       fit: 'cover',      // 'cover' | 'contain' | 'fill'
       position: 'center', // 'center' | 'top' | 'bottom' | 'left' | 'right'
       opacity: 1,
@@ -82,6 +87,9 @@ const DEFAULTS = {
     logo: {
       enabled: false,
       url: '',
+      key: null,      // R2 object key (null kalau url eksternal http(s), atau data lama belum dimigrasi)
+      mimeType: '',
+      fileSize: 0,     // ukuran byte file logo (JANGAN ketuker dengan `size` di bawah — itu ukuran tampilan/px)
       size: 20,
       opacity: 1
     },
@@ -186,6 +194,44 @@ function validateUploadedImageUrl(v, maxBytes, maxLabel) {
   throw new Error('Image URL tidak valid. Gunakan link http(s):// atau upload file.');
 }
 
+// ── R2 UPLOAD — dipanggil dari updateConfig() untuk background.image.url
+// ATAU branding.logo.url, SEBELUM apa pun disimpan ke MongoDB. Mengembalikan
+// field baru yang siap di-merge (fields) DAN key R2 lama yang sudah tidak
+// dipakai lagi & aman dihapus SETELAH config baru berhasil tersimpan
+// (deleteOldKey) — pemanggil (updateConfig) yang menentukan kapan actual
+// delete dieksekusi, supaya urutan "upload baru dulu, baru hapus lama"
+// (poin #6 spek) selalu terjaga di satu tempat.
+async function resolveImagePatch(rawUrl, prefix, currentField, maxBytes, maxLabel) {
+  const s = typeof rawUrl === 'string' ? rawUrl.trim() : '';
+  const currentKey = currentField && currentField.key ? currentField.key : null;
+
+  if (!s) {
+    // Admin menghapus gambar (field url dikosongkan dari Admin Web).
+    return { fields: { url: '', key: null, mimeType: '', fileSize: 0 }, deleteOldKey: currentKey };
+  }
+  if (s.startsWith('data:')) {
+    // Upload baru dari Admin Web (FileReader -> base64 data URI) — validasi
+    // ketat MIME/ukuran DULU (sama seperti sebelumnya, lempar Error kalau
+    // invalid), BARU upload buffer-nya ke R2. Kalau upload gagal (network/
+    // credential R2), Error dilempar ke atas dan updateConfig() TIDAK PERNAH
+    // menyentuh database — background/logo lama tetap utuh.
+    validateUploadedImageUrl(s, maxBytes, maxLabel);
+    const uploaded = await r2Storage.uploadDataUri(s, prefix);
+    return {
+      fields: { url: uploaded.url, key: uploaded.key, mimeType: uploaded.mimeType, fileSize: uploaded.size },
+      deleteOldKey: (currentKey && currentKey !== uploaded.key) ? currentKey : null
+    };
+  }
+  if (/^https?:\/\//i.test(s)) {
+    // Admin mengisi Image URL eksternal langsung (mode "url", bukan upload)
+    // — tidak ada file baru yang perlu diupload ke R2. Kalau sebelumnya ada
+    // gambar hasil upload R2, object itu sudah tidak dipakai lagi -> aman
+    // dihapus setelah config baru tersimpan.
+    return { fields: { url: s, key: null, mimeType: '', fileSize: 0 }, deleteOldKey: currentKey };
+  }
+  throw new Error('Image URL tidak valid. Gunakan link http(s):// atau upload file.');
+}
+
 module.exports = function createAppCustomizationManager({ getDb, wsBroadcastAll }) {
   const db = () => getDb();
 
@@ -224,6 +270,9 @@ module.exports = function createAppCustomizationManager({ getDb, wsBroadcastAll 
             ? img.source
             : (/^https?:\/\//i.test(String(img.url || '')) ? 'url' : DEFAULTS.background.image.source),
           url: sanitizeImageUrl(img.url),
+          key: (typeof img.key === 'string' && img.key) ? img.key : null,
+          mimeType: typeof img.mimeType === 'string' ? img.mimeType : '',
+          fileSize: Number.isFinite(Number(img.fileSize)) ? Number(img.fileSize) : 0,
           fit: ['cover', 'contain', 'fill'].includes(img.fit) ? img.fit : DEFAULTS.background.image.fit,
           position: ['center', 'top', 'bottom', 'left', 'right'].includes(img.position) ? img.position : DEFAULTS.background.image.position,
           opacity: clamp01(img.opacity, 1),
@@ -239,6 +288,9 @@ module.exports = function createAppCustomizationManager({ getDb, wsBroadcastAll 
         logo: {
           enabled: !!logo.enabled,
           url: sanitizeImageUrl(logo.url),
+          key: (typeof logo.key === 'string' && logo.key) ? logo.key : null,
+          mimeType: typeof logo.mimeType === 'string' ? logo.mimeType : '',
+          fileSize: Number.isFinite(Number(logo.fileSize)) ? Number(logo.fileSize) : 0,
           size: clampInt(logo.size, 14, 48, DEFAULTS.branding.logo.size),
           opacity: clamp01(logo.opacity, 1)
         },
@@ -274,28 +326,36 @@ module.exports = function createAppCustomizationManager({ getDb, wsBroadcastAll 
   }
 
   async function updateConfig(patch, updatedBy) {
-    // Validasi KETAT (throw kalau invalid) untuk Background Image BARU yang
-    // dikirim Admin — 10MB/MIME whitelist. Dicek di sini (SEBELUM merge &
-    // simpan), bukan di dalam mergeDefaults(), supaya jalur GET/getConfig()
-    // baca doc lama tetap aman apapun isinya (lihat komentar
-    // validateBackgroundImageUrl di atas). Kalau patch.background.image.url
-    // tidak dikirim (undefined) sama sekali, berarti Admin cuma ganti
-    // field lain (fit/position/opacity/dll) — TIDAK divalidasi ulang.
-    if (patch.background && patch.background.image && typeof patch.background.image.url === 'string') {
-      validateBackgroundImageUrl(patch.background.image.url);
-    }
-    // Logo — validasi BARU (lihat catatan lengkap di validateLogoImageUrl()
-    // di atas): sebelumnya tidak ada validasi ukuran/MIME sama sekali di
-    // sini untuk logo, cuma ikut lewat sanitizeImageUrl() yang longgar
-    // (format-only). Sama seperti background, HANYA divalidasi kalau Admin
-    // benar-benar mengirim logo BARU (field-nya string) — patch parsial yang
-    // tidak menyertakan logo.url sama sekali tetap tidak tersentuh di sini.
-    if (patch.branding && patch.branding.logo && typeof patch.branding.logo.url === 'string') {
-      validateLogoImageUrl(patch.branding.logo.url);
-    }
-
     const database = db();
     const current = await getConfig();
+
+    // ── Resolve gambar (background image & logo) ke Cloudflare R2 SEBELUM
+    // apa pun disimpan ke MongoDB. resolveImagePatch() sudah menjalankan
+    // validasi ketat (MIME whitelist + limit ukuran, sama seperti
+    // sebelumnya) DULU, baru upload — jadi kalau invalid ATAU upload ke R2
+    // gagal, Error dilempar di sini dan seluruh fungsi berhenti sebelum
+    // baris database manapun tersentuh (background/logo lama tetap utuh,
+    // poin #6/#12 spek). Kalau field url tidak dikirim (undefined), berarti
+    // Admin cuma ganti field lain (fit/opacity/dll) — tidak disentuh.
+    let bgImagePatch = null, bgDeleteKey = null;
+    if (patch.background && patch.background.image && typeof patch.background.image.url === 'string') {
+      const resolved = await resolveImagePatch(
+        patch.background.image.url, 'app-customization/background',
+        current.background.image, MAX_IMAGE_BYTES, '10 MB'
+      );
+      bgImagePatch = resolved.fields;
+      bgDeleteKey = resolved.deleteOldKey;
+    }
+    let logoPatch = null, logoDeleteKey = null;
+    if (patch.branding && patch.branding.logo && typeof patch.branding.logo.url === 'string') {
+      const resolved = await resolveImagePatch(
+        patch.branding.logo.url, 'app-customization/logo',
+        current.branding.logo, LOGO_MAX_BYTES, '5 MB'
+      );
+      logoPatch = resolved.fields;
+      logoDeleteKey = resolved.deleteOldKey;
+    }
+
     const next = mergeDefaults({
       background: { ...current.background, ...(patch.background || {}) },
       branding: { ...current.branding, ...(patch.branding || {}) }
@@ -303,13 +363,16 @@ module.exports = function createAppCustomizationManager({ getDb, wsBroadcastAll 
     // Merge dangkal nested object (background.image/gradient/overlay,
     // branding.logo/text) supaya PATCH parsial (Admin cuma ganti 1 bagian,
     // mis. cuma opacity image) tidak menghapus field lain yang tidak dikirim.
+    // bgImagePatch/logoPatch (hasil upload R2, kalau ada) di-spread PALING
+    // AKHIR supaya url/key/mimeType/fileSize yang tersimpan selalu yang R2
+    // baru, bukan data URI mentah dari patch asli.
     if (patch.background) {
       next.background = mergeDefaults({
         background: {
           mode: patch.background.mode ?? current.background.mode,
           color: patch.background.color ?? current.background.color,
           gradient: { ...current.background.gradient, ...(patch.background.gradient || {}) },
-          image: { ...current.background.image, ...(patch.background.image || {}) },
+          image: { ...current.background.image, ...(patch.background.image || {}), ...(bgImagePatch || {}) },
           overlay: { ...current.background.overlay, ...(patch.background.overlay || {}) }
         }
       }).background;
@@ -317,7 +380,7 @@ module.exports = function createAppCustomizationManager({ getDb, wsBroadcastAll 
     if (patch.branding) {
       next.branding = mergeDefaults({
         branding: {
-          logo: { ...current.branding.logo, ...(patch.branding.logo || {}) },
+          logo: { ...current.branding.logo, ...(patch.branding.logo || {}), ...(logoPatch || {}) },
           text: { ...current.branding.text, ...(patch.branding.text || {}) }
         }
       }).branding;
@@ -332,6 +395,15 @@ module.exports = function createAppCustomizationManager({ getDb, wsBroadcastAll 
         { upsert: true }
       );
     }
+
+    // Baru hapus object R2 LAMA setelah config baru berhasil tersimpan di
+    // MongoDB — kalau updateOne() di atas gagal (exception), baris di bawah
+    // ini tidak pernah tereksekusi, jadi object lama tidak ikut terhapus.
+    // Best-effort (tidak pernah throw, lihat r2Storage.deleteObject) supaya
+    // kegagalan cleanup tidak membuat Save yang sudah sukses balik gagal.
+    if (bgDeleteKey) r2Storage.deleteObject(bgDeleteKey).catch(() => {});
+    if (logoDeleteKey) r2Storage.deleteObject(logoDeleteKey).catch(() => {});
+
     return next;
   }
 
@@ -366,6 +438,20 @@ module.exports = function createAppCustomizationManager({ getDb, wsBroadcastAll 
   function isHeavyDataUri(v) {
     return typeof v === 'string' && v.startsWith('data:');
   }
+  // Dipakai HANYA di toAdminPayload() (admin-only, tidak pernah dikirim ke
+  // App/public) — supaya Admin Web bisa menampilkan badge "Migrasi ke R2
+  // pending" pada gambar lama yang belum dipindah r2Storage (lihat
+  // migrate-images-to-r2.js) tanpa perlu menebak dari bentuk URL sendiri.
+  //   'r2'       -> sudah tersimpan di R2 (image.key ada)
+  //   'legacy'   -> MASIH base64 di MongoDB, belum dimigrasi
+  //   'external' -> URL http(s) eksternal (bukan upload, bukan R2)
+  //   'none'     -> tidak ada gambar
+  function imageStorageStatus(imgField) {
+    if (!imgField || !imgField.url) return 'none';
+    if (imgField.key) return 'r2';
+    if (isHeavyDataUri(imgField.url)) return 'legacy';
+    return 'external';
+  }
   function toAdminPayload(cfg) {
     const version = cfg.updatedAt ? new Date(cfg.updatedAt).getTime() : 0;
     const out = {
@@ -374,6 +460,10 @@ module.exports = function createAppCustomizationManager({ getDb, wsBroadcastAll 
       updatedAt: cfg.updatedAt,
       updatedBy: cfg.updatedBy
     };
+    // Dihitung SEBELUM url diganti path endpoint ringan di bawah (supaya
+    // deteksi 'legacy' masih bisa melihat data URI aslinya).
+    out.background.image.storageStatus = imageStorageStatus(cfg.background.image);
+    out.branding.logo.storageStatus = imageStorageStatus(cfg.branding.logo);
     if (isHeavyDataUri(out.background.image.url)) {
       out.background.image.url = `/api/app-customization/background-image?v=${version}`;
     }

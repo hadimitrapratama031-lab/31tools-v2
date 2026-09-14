@@ -2627,6 +2627,26 @@ button:hover .icon,
   background-size: 10px 10px; position: relative; transition: transform .12s, border-color .15s;
 }
 .acz-swatch:hover { transform: scale(1.05); border-color: var(--violet); }
+
+/* Badge status storage gambar (App Customization background/logo & Banner) —
+   'r2' = sudah di Cloudflare R2, 'legacy' = base64 lama di MongoDB (belum
+   dimigrasi, lihat migrate-images-to-r2.js), 'external' = URL eksternal. */
+.acz-storage-badge {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  padding: 3px 9px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: .3px;
+  text-transform: uppercase;
+  backdrop-filter: blur(4px);
+}
+.acz-storage-badge[data-status="r2"] { background: rgba(34,197,94,.18); color: #4ade80; border: 1px solid rgba(74,222,128,.35); }
+.acz-storage-badge[data-status="legacy"] { background: rgba(234,179,8,.18); color: #facc15; border: 1px solid rgba(250,204,21,.35); }
+.acz-storage-badge[data-status="external"] { background: rgba(148,163,184,.18); color: #cbd5e1; border: 1px solid rgba(203,213,225,.35); }
+
 .acz-swatch::after {
   content: ''; position: absolute; inset: 0; border-radius: inherit; background: var(--acz-swatch-color, transparent);
 }
@@ -2754,6 +2774,7 @@ button:hover .icon,
   width: 220px; height: 130px; border-radius: var(--radius-sm); border: 1px solid var(--line);
   background: var(--navy-900) center/cover no-repeat; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center; color: var(--text-3); font-size: 12px;
+  position: relative;
 }
 .bnr-image-actions { display: flex; flex-direction: column; gap: 8px; align-items: flex-start; }
 .bnr-hint { font-size: 11.5px; color: var(--text-3); max-width: 320px; margin-top: 2px; }
