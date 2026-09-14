@@ -1916,7 +1916,7 @@ select.form-input option {
 }
 
 /* ══════════════════════════════════════════════════════════════════════════
-   BANNER CAROUSEL & TOP INSTALLER — Admin panel additions
+   Admin panel list rows & shared controls (Kategori/Tutorial/Top Installer)
    ══════════════════════════════════════════════════════════════════════════ */
 .banner-admin-list { display: flex; flex-direction: column; }
 .banner-admin-item:last-child { border-bottom: none !important; }
@@ -1936,7 +1936,7 @@ select.form-input option {
 .btn-icon-sm:hover:not(:disabled) { background: rgba(167,139,250,.18); color: #a78bfa; }
 .btn-icon-sm:disabled { cursor: not-allowed; }
 
-/* Toggle switch (Aktif/Nonaktif banner) */
+/* Toggle switch (Aktif/Nonaktif) */
 .switch { position: relative; display: inline-block; width: 38px; height: 21px; flex-shrink: 0; }
 .switch input { opacity: 0; width: 0; height: 0; }
 .switch-slider {
@@ -1954,55 +1954,6 @@ select.form-input option {
 }
 .switch input:checked + .switch-slider { background: linear-gradient(90deg,#7c5cff,#5b8dff); border-color: transparent; }
 .switch input:checked + .switch-slider::before { transform: translateX(17px); }
-
-/* ══════════════════════════════════════════════════════════════════════════
-   BANNER — Image/Code type tabs, code editors (CodeMirror), live preview,
-   badges, drag & drop reorder. Ditambahkan buat fitur Code Banner.
-   ══════════════════════════════════════════════════════════════════════════ */
-.banner-modal { width: 700px; max-width: 92vw; }
-.banner-modal .modal-body { max-height: 72vh; overflow-y: auto; }
-
-.banner-type-tabs { display: flex; gap: 8px; }
-.banner-type-tab {
-  flex: 1; padding: 10px 14px; border-radius: 12px;
-  background: rgba(255,255,255,.04); border: 1px solid var(--border);
-  color: var(--text-dim); font-weight: 700; font-size: 13px; cursor: pointer;
-  transition: all .18s;
-}
-.banner-type-tab:hover { border-color: var(--line-hi); color: var(--text); }
-.banner-type-tab.active {
-  background: linear-gradient(135deg, rgba(123,92,255,.22), rgba(91,141,255,.14));
-  border-color: rgba(123,92,255,.5); color: #fff;
-}
-
-.code-editor-toolbar {
-  display: flex; align-items: center; gap: 8px; margin-bottom: 6px;
-}
-.code-editor-hint { font-size: 11px; color: var(--text-faint); margin-right: auto; }
-.code-editor-box {
-  border: 1px solid var(--border); border-radius: 12px; overflow: hidden; margin-bottom: 4px;
-}
-.code-editor-box .CodeMirror {
-  height: 140px; font-size: 12.5px; font-family: 'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace;
-}
-
-.code-banner-preview-wrap {
-  border-radius: 14px; overflow: hidden; border: 1px solid var(--border);
-  height: 160px; background: linear-gradient(160deg,#241521 0%, #170f22 60%, #0d0a18 100%);
-}
-.code-banner-preview-frame { width: 100%; height: 100%; border: none; }
-.code-banner-preview-error {
-  margin-top: 8px; padding: 10px 12px; border-radius: 10px;
-  background: rgba(248,113,113,.12); border: 1px solid rgba(248,113,113,.3);
-  color: var(--red); font-size: 11.5px; line-height: 1.5;
-}
-
-.banner-badge {
-  display: inline-flex; align-items: center; gap: 4px;
-  font-size: 10px; font-weight: 700; padding: 3px 8px; border-radius: 999px;
-}
-.banner-badge.image { background: rgba(61,217,245,.15); color: var(--cyan); }
-.banner-badge.code  { background: rgba(167,139,250,.18); color: #a78bfa; }
 
 .banner-admin-item[draggable="true"] { cursor: grab; }
 .banner-admin-item.dragging { opacity: .4; }

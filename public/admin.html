@@ -12,15 +12,6 @@
      tampilan font di App, bukan cuma preview di browser Admin saja. -->
 <link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Roboto:wght@400;500;700&family=Montserrat:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&family=Orbitron:wght@400;500;600;700;800&family=Rajdhani:wght@400;500;600;700&family=Bebas+Neue&family=Oswald:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="admin.css">
-<!-- CodeMirror — dipakai khusus buat editor HTML/CSS/JS di modal "Code Banner"
-     (syntax highlighting). Cuma dipakai di Admin Web, tidak ikut ke dalam App. -->
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.css">
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/dracula.min.css">
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/codemirror.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/xml/xml.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/css/css.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
-<script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/htmlmixed/htmlmixed.min.js"></script>
 <!-- Quill — rich text editor dipakai khusus buat "Isi Tutorial" di modal Kelola
      Tutorial. Toolbar sengaja tidak menyertakan tombol image/video — gambar &
      video tutorial punya kolom upload/link sendiri (lihat modal Tutorial). -->
@@ -408,10 +399,6 @@
           <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M7 7h.01M3 11V6a2 2 0 012-2h5.586a1 1 0 01.707.293l7.414 7.414a1 1 0 010 1.414l-6.586 6.586a1 1 0 01-1.414 0L3.293 12.293A1 1 0 013 11.586V11z"/></svg></span>
           Kategori
         </button>
-        <button class="nav-item" data-page="banners">
-          <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><rect x="3" y="5" width="18" height="14" rx="2"/><path stroke-linecap="round" stroke-linejoin="round" d="M3 9h18M8 5v4"/></svg></span>
-          Banner
-        </button>
         <button class="nav-item" data-page="tutorial">
           <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M12 6.253v13M12 6.253C10.832 5.477 9.246 5 7.5 5S4.168 5.477 3 6.253v13C4.168 18.477 5.754 18 7.5 18s4.332.477 5.5 1.253m0-13C13.168 5.477 14.754 5 16.5 5c1.746 0 3.332.477 4.5 1.253v13C19.832 18.477 18.246 18 16.5 18c-1.746 0-3.332.477-4.5 1.253"/></svg></span>
           Tutorial
@@ -774,7 +761,6 @@
       </div>
     </section>
 
-    <!-- BANNERS PAGE -->
     <!-- KELOLA KATEGORI PAGE -->
     <!-- REQUEST GAME PAGE -->
     <section class="page" id="pageRequestgame">
@@ -910,37 +896,6 @@
           </div>
         </div>
         <div id="categoryAdminList" class="banner-admin-list"></div>
-      </div>
-    </section>
-
-    <!-- BANNER PAGE -->
-    <section class="page" id="pageBanners">
-      <div class="page-header">
-        <div class="page-header-left">
-          <div class="page-header-icon" style="background:rgba(255,215,106,.16);"><svg class="icon icon-18"><use href="#ic-image"></use></svg></div>
-          <div>
-            <div class="page-header-title">Banner Carousel</div>
-            <div class="page-header-desc">Kelola banner promosi di halaman utama aplikasi — tanpa gambar statis, 100% dibuat lewat kode.</div>
-          </div>
-        </div>
-        <div class="page-header-actions" style="margin-left:auto;">
-          <button class="btn btn-primary" id="btnAddBanner" style="display:flex;align-items:center;gap:6px;">
-            <svg width="14" height="14" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2.2"><path d="M12 5v14M5 12h14"/></svg>
-            Tambah Banner
-          </button>
-        </div>
-      </div>
-
-      <div class="table-wrap">
-        <div class="table-toolbar">
-          <div class="table-toolbar-title"><svg class="icon icon-18"><use href="#ic-image"></use></svg> Daftar Banner</div>
-          <input class="form-input" id="bannerSearchInput" type="text" placeholder="Cari judul banner..." style="max-width:220px;margin-left:14px;">
-          <div id="bannerTypeFilter" class="filter-chips" style="margin-left:10px;"></div>
-          <div class="table-toolbar-filters" style="margin-left:auto;color:var(--text-faint);font-size:12px;">
-            Geser (drag) baris untuk ubah urutan, atau pakai tombol <svg class="icon icon-16"><use href="#ic-arrow-up"></use></svg> <svg class="icon icon-16"><use href="#ic-arrow-down"></use></svg>.
-          </div>
-        </div>
-        <div id="bannerList" class="banner-admin-list"></div>
       </div>
     </section>
 
@@ -3521,145 +3476,6 @@
     <div class="modal-body" id="logDetailBody"></div>
     <div class="modal-footer">
       <button class="btn btn-secondary" onclick="closeLogDetailModal()">Tutup</button>
-    </div>
-  </div>
-</div>
-
-<!-- ═══ MODAL: BANNER — Tambah/Edit ═══ -->
-<div class="modal-backdrop" id="bannerModalBackdrop" style="display:none;" onclick="if(event.target===this)closeBannerModal()">
-  <div class="modal modal-lg banner-modal">
-    <div class="modal-header">
-      <div>
-        <div class="modal-title" id="bannerModalTitle">Tambah Banner</div>
-        <div class="modal-subtitle">Image Banner (upload gambar) atau Code Banner (HTML/CSS/JS custom).</div>
-      </div>
-      <button class="modal-close" onclick="closeBannerModal()"><svg class="icon icon-18"><use href="#ic-x"></use></svg></button>
-    </div>
-    <div class="modal-body">
-      <div class="form-group">
-        <label class="form-label">Tipe Banner</label>
-        <div class="banner-type-tabs">
-          <button type="button" class="banner-type-tab active" data-type="image" onclick="setBannerType('image')"><svg class="icon icon-18"><use href="#ic-image"></use></svg> Image Banner</button>
-          <button type="button" class="banner-type-tab" data-type="code" onclick="setBannerType('code')"><svg class="icon icon-18"><use href="#ic-laptop"></use></svg> Code Banner</button>
-        </div>
-      </div>
-
-      <div class="form-group">
-        <label class="form-label">Judul</label>
-        <input class="form-input" type="text" id="bannerTitle" placeholder="Contoh: Selamat Datang di ThreeOne Store">
-      </div>
-      <div class="form-group">
-        <label class="form-label">Subjudul <span style="color:var(--text-faint);font-weight:400;">(opsional)</span></label>
-        <input class="form-input" type="text" id="bannerSubtitle" placeholder="Contoh: Akses ribuan game & bypass premium">
-      </div>
-      <div class="form-group">
-        <label class="form-label">Deskripsi Singkat <span style="color:var(--text-faint);font-weight:400;">— juga dipakai sebagai fallback kalau Code Banner error</span></label>
-        <textarea class="form-input" id="bannerDescription" placeholder="Deskripsi singkat banner ini..." style="min-height:64px;"></textarea>
-      </div>
-
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
-        <div class="form-group">
-          <label class="form-label">Teks Tombol CTA <span style="color:var(--text-faint);font-weight:400;">(opsional)</span></label>
-          <input class="form-input" type="text" id="bannerCtaText" placeholder="Contoh: Mulai Download">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Link/Aksi Tombol <span style="color:var(--text-faint);font-weight:400;">(# untuk halaman internal)</span></label>
-          <input class="form-input" type="text" id="bannerCtaLink" placeholder="#store, #games, atau https://...">
-        </div>
-      </div>
-
-      <!-- ── IMAGE BANNER FIELDS ── -->
-      <div id="bannerImageFields">
-        <div class="modal-divider"><span>Gambar Banner</span></div>
-        <div class="form-group">
-          <label class="form-label">Upload Gambar <span style="color:var(--text-faint);font-weight:400;">(PNG/JPG/GIF/WEBP, maks 2MB)</span></label>
-          <input class="form-input" type="file" id="bannerImageFile" accept="image/png,image/jpeg,image/gif,image/webp">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Atau URL Gambar <span style="color:var(--text-faint);font-weight:400;">(opsional, dipakai kalau tidak upload)</span></label>
-          <input class="form-input" type="text" id="bannerImageUrl" placeholder="https://...">
-        </div>
-        <div id="bannerImagePreviewWrap" style="display:none;margin-bottom:12px;position:relative;">
-          <img id="bannerImagePreviewImg" style="width:100%;max-height:160px;object-fit:cover;border-radius:12px;">
-          <button type="button" class="btn btn-danger btn-sm" style="position:absolute;top:8px;right:8px;" onclick="clearBannerImage()"><svg class="icon icon-18"><use href="#ic-trash-2"></use></svg> Hapus Gambar</button>
-        </div>
-        <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:14px;">
-          <div class="form-group">
-            <label class="form-label">Warna Gradient (dari) <span style="color:var(--text-faint);font-weight:400;">— fallback kalau tanpa gambar</span></label>
-            <input class="form-input" type="color" id="bannerGradientFrom" value="#7b5cff" style="height:40px;padding:4px;">
-          </div>
-          <div class="form-group">
-            <label class="form-label">Warna Gradient (ke)</label>
-            <input class="form-input" type="color" id="bannerGradientTo" value="#241a3d" style="height:40px;padding:4px;">
-          </div>
-          <div class="form-group">
-            <label class="form-label">Emoji/Icon <span style="color:var(--text-faint);font-weight:400;">(opsional)</span></label>
-            <input class="form-input" type="text" id="bannerIcon" placeholder="🎮">
-          </div>
-        </div>
-      </div>
-
-      <!-- ── CODE BANNER FIELDS ── -->
-      <div id="bannerCodeFields" style="display:none;">
-        <div class="modal-divider"><span>Code Banner — HTML</span></div>
-        <div class="code-editor-toolbar">
-          <span class="code-editor-hint">Isi konten banner. Tanpa &lt;script&gt;/&lt;style&gt; — CSS &amp; JS ada kolom sendiri di bawah.</span>
-          <button type="button" class="btn-icon-sm" onclick="copyBannerCode('html')" title="Copy"><svg class="icon icon-18"><use href="#ic-clipboard-list"></use></svg></button>
-          <button type="button" class="btn-icon-sm" onclick="resetBannerCode('html')" title="Reset"><svg class="icon icon-18"><use href="#ic-rotate-ccw"></use></svg></button>
-        </div>
-        <div class="code-editor-box" id="cmHtmlBox"></div>
-
-        <div class="modal-divider"><span>Code Banner — CSS</span></div>
-        <div class="code-editor-toolbar">
-          <span class="code-editor-hint">Hanya berlaku di dalam area banner (dirender terisolasi di iframe).</span>
-          <button type="button" class="btn-icon-sm" onclick="copyBannerCode('css')" title="Copy"><svg class="icon icon-18"><use href="#ic-clipboard-list"></use></svg></button>
-          <button type="button" class="btn-icon-sm" onclick="resetBannerCode('css')" title="Reset"><svg class="icon icon-18"><use href="#ic-rotate-ccw"></use></svg></button>
-        </div>
-        <div class="code-editor-box" id="cmCssBox"></div>
-
-        <div class="modal-divider"><span>Code Banner — JavaScript <span style="color:var(--text-faint);font-weight:400;">(opsional)</span></span></div>
-        <div class="code-editor-toolbar">
-          <span class="code-editor-hint">Dijalankan sandbox — tidak bisa akses data/app di luar banner.</span>
-          <button type="button" class="btn-icon-sm" onclick="copyBannerCode('js')" title="Copy"><svg class="icon icon-18"><use href="#ic-clipboard-list"></use></svg></button>
-          <button type="button" class="btn-icon-sm" onclick="resetBannerCode('js')" title="Reset"><svg class="icon icon-18"><use href="#ic-rotate-ccw"></use></svg></button>
-        </div>
-        <div class="code-editor-box" id="cmJsBox"></div>
-
-        <div class="modal-divider"><span>Live Preview</span></div>
-        <div class="code-banner-preview-wrap">
-          <iframe id="bannerCodePreviewFrame" class="code-banner-preview-frame" sandbox="allow-scripts"></iframe>
-        </div>
-        <div id="bannerCodePreviewError" class="code-banner-preview-error" style="display:none;"><svg class="icon icon-18"><use href="#ic-triangle-alert"></use></svg> Kode error / tidak merespons — di App akan otomatis fallback ke banner biasa (judul + deskripsi).</div>
-      </div>
-
-      <div class="modal-divider"><span>Masa Aktif (opsional)</span></div>
-      <div style="display:grid;grid-template-columns:1fr 1fr;gap:14px;">
-        <div class="form-group">
-          <label class="form-label">Mulai Tampil</label>
-          <input class="form-input" type="datetime-local" id="bannerStartAt">
-        </div>
-        <div class="form-group">
-          <label class="form-label">Berhenti Tampil</label>
-          <input class="form-input" type="datetime-local" id="bannerEndAt">
-        </div>
-      </div>
-
-      <div class="form-group" style="display:flex;align-items:center;gap:10px;margin-top:4px;">
-        <input type="checkbox" id="bannerIsActive" checked style="width:16px;height:16px;">
-        <label class="form-label" style="margin:0;" for="bannerIsActive">Aktifkan banner ini sekarang</label>
-      </div>
-
-      <div id="bannerImagePreviewSection">
-        <div class="modal-divider"><span>Preview</span></div>
-        <div id="bannerPreviewBox" style="border-radius:14px;min-height:120px;padding:20px 26px;display:flex;flex-direction:column;justify-content:center;transition:background .2s;background-size:cover;background-position:center;">
-          <div id="bannerPreviewTitle" style="font-family:'Sora',sans-serif;font-weight:800;font-size:22px;color:#fff;margin-bottom:4px;">Judul Banner</div>
-          <div id="bannerPreviewDesc" style="font-size:12.5px;color:rgba(255,255,255,0.7);"></div>
-        </div>
-      </div>
-    </div>
-    <div class="modal-footer">
-      <button class="btn btn-secondary" onclick="closeBannerModal()">Batal</button>
-      <button class="btn btn-primary" id="btnSaveBanner">Simpan Banner</button>
     </div>
   </div>
 </div>
