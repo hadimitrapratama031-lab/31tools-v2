@@ -415,32 +415,19 @@
 
       <!-- ROW 1: Banner (kiri) + Top Installer Mingguan (kanan) — sejajar, tinggi sama -->
       <div class="dash-top-row">
-        <!-- DASHBOARD HERO BANNER — MULTI BANNER DINAMIS (carousel kalau
-             lebih dari 1 banner aktif), diatur penuh dari Admin Web
-             ("Setting Banner") & realtime lewat WS event
-             'dashboard-banner:update' existing. Slide di dalam
-             #dashBannerTrack SEPENUHNYA dirender oleh JS (lihat blok
-             DASHBOARD BANNER di app.js) — markup di bawah ini HANYA
-             kerangka + SATU slide fallback statis (dirender sebelum GET
-             pertama/cache selesai dibaca) supaya tidak pernah blank.
-             #dashBannerDots (dot indicator) disembunyikan lewat JS kalau
-             cuma ada 1 banner aktif. -->
+        <!-- DASHBOARD BANNER — SATU banner STATIC polos hitam (bukan
+             dinamis/carousel lagi). Tidak ada fetch API, tidak ada
+             Socket.IO, tidak ada upload/database untuk banner ini —
+             murni markup diam dengan 3 teks tetap (eyebrow/judul/deskripsi).
+             Layout & typography tetap mengikuti desain Dashboard existing,
+             termasuk hubungan ukuran dengan Top Installer di sebelahnya
+             (lihat .dash-top-row / .dash-banner di styles.css). -->
         <div class="dash-banner" id="dashBannerRoot">
-          <div class="dash-banner-track" id="dashBannerTrack">
-            <div class="dash-banner-slide dash-banner-slide--active" data-index="0">
-              <img class="dash-banner-slide-img" src="https://cdn.akamai.steamstatic.com/steam/apps/1245620/header.jpg" alt="Featured banner">
-              <div class="dash-banner-overlay">
-                <span class="dash-banner-eyebrow">Featured This Week</span>
-                <h2 class="dash-banner-title">Elden Ring</h2>
-                <p class="dash-banner-desc">Jelajahi Lands Between, kumpulkan kekuatan runa, dan hadapi para Demigod dalam dunia terbuka yang luas.</p>
-                <button class="dash-banner-btn" type="button" data-banner-action="click">
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                  <span class="dash-banner-btn-text">Lihat Detail</span>
-                </button>
-              </div>
-            </div>
+          <div class="dash-banner-overlay">
+            <span class="dash-banner-eyebrow">SPECIAL OFFER</span>
+            <h2 class="dash-banner-title">Upgrade ke Platinum</h2>
+            <p class="dash-banner-desc">Nikmati akses lebih lengkap ke 31 Tools dengan penawaran spesial Platinum.</p>
           </div>
-          <div class="dash-banner-dots" id="dashBannerDots" style="display:none;"></div>
         </div>
 
         <div class="dash-top-installer">

@@ -432,7 +432,7 @@ function applyAppCustomization(cfg) {
    dari App Customization GLOBAL di atas (yang diatur Admin Web & berlaku
    untuk semua user): ini murni LOCAL/PERSONAL, disimpan di localStorage
    (mekanisme local preference yang SUDAH ADA, pola sama persis dengan
-   APP_CUSTOMIZATION_CACHE_KEY/DASHBOARD_BANNER_CACHE_KEY di atas — tidak
+   APP_CUSTOMIZATION_CACHE_KEY di atas — tidak
    ada storage/API/database baru). Dirender lewat applyAppBackground() YANG
    SAMA dengan background global (bukan renderer kedua) — lihat
    applyAppCustomization() di atas untuk urutan prioritasnya.
@@ -799,318 +799,6 @@ function applyAppBranding(branding) {
   }
 }
 
-/* ══════════════════════════════════════════════════════════════════════════
-   DASHBOARD HERO BANNER — MULTI BANNER DINAMIS di halaman Dashboard
-   (`.dash-banner`), diatur penuh dari Admin Web ("Setting Banner"), realtime
-   lewat WebSocket event 'dashboard-banner:update' (lihat connectRealtime()
-   di atas & dashboardBannerManager.broadcastUpdate() — TIDAK ada sistem
-   realtime baru, pola SAMA PERSIS dengan App Customization di atas: WS cuma
-   bawa sinyal ringan {changed, version}, App WAJIB fetch ulang lewat REST
-   GET /api/dashboard-banner yang sudah ada).
-
-   1 banner aktif  -> tampil sebagai banner biasa (tanpa dot, tanpa autoplay).
-   >=2 banner aktif -> otomatis jadi carousel: ganti slide tiap 3 detik,
-   animasi slide horizontal halus + fade (~750ms), loop ke banner pertama
-   setelah banner terakhir, dot indicator di bawah (klik dot -> pindah +
-   reset timer autoplay). Semua banner & urutannya 100% dari backend/
-   database (source of truth) — TIDAK ada banner hardcode di sini, kecuali
-   DASHBOARD_BANNER_FALLBACK di bawah yang MURNI anti-blank sebelum data
-   backend sempat dibaca (sama fungsinya dengan markup fallback statis versi
-   lama), bukan sumber data permanen.
-
-   BUKAN sistem carousel `banners` (multi-slide/Code Banner/dot indicator)
-   yang sudah ada di file ini — sistem itu TIDAK disentuh sama sekali di
-   sini, cuma dipakai kalau memang ada UI-nya sendiri di tempat lain.
-
-   Config terakhir yang berhasil diterima di-cache di localStorage (pola
-   SAMA dengan APP_CUSTOMIZATION_CACHE_KEY di atas) supaya banner tetap
-   tampil benar walau App lagi offline, dan langsung diganti config terbaru
-   begitu online lagi.
-   ══════════════════════════════════════════════════════════════════════════ */
-const DASHBOARD_BANNER_CACHE_KEY = 'dashboardBannerCache';
-const DASHBOARD_BANNER_AUTOPLAY_MS = 3000;   // ganti slide tiap 3 detik (poin permintaan)
-const DASHBOARD_BANNER_ANIM_MS = 750;        // 600–900ms, "premium & elegan" (poin permintaan)
-
-function _readDashboardBannerCache() {
-  try { return JSON.parse(localStorage.getItem(DASHBOARD_BANNER_CACHE_KEY) || 'null'); }
-  catch (e) { return null; }
-}
-function _writeDashboardBannerCache(cfg) {
-  try { localStorage.setItem(DASHBOARD_BANNER_CACHE_KEY, JSON.stringify(cfg)); } catch (e) {}
-}
-
-const DASHBOARD_BANNER_FALLBACK = {
-  banners: [{
-    id: '__fallback__',
-    imageUrl: 'https://cdn.akamai.steamstatic.com/steam/apps/1245620/header.jpg',
-    eyebrow: 'Featured This Week',
-    title: 'Elden Ring',
-    description: 'Jelajahi Lands Between, kumpulkan kekuatan runa, dan hadapi para Demigod dalam dunia terbuka yang luas.',
-    buttonText: 'Lihat Detail',
-    buttonTargetType: 'page',
-    buttonTargetPage: 'mygames',
-    buttonTargetUrl: ''
-  }],
-  version: 0
-};
-
-// ── State carousel — semua di satu tempat supaya gampang di-reset & dicegah
-// duplikat (poin permintaan: "jangan sampai ada timer menumpuk / duplicate
-// listener / carousel jalan lebih dari satu"). ──
-let _dashBannerData = [];           // array banner AKTIF yang lagi dirender, urutan = urutan tampil (dari backend)
-let _dashBannerVersion = 0;         // dipakai buat cache-bust Image URL (link), sama pola dengan versi lama
-let _dashBannerIndex = 0;           // index slide yang sedang aktif
-let _dashBannerAutoplayTimer = null;
-let _dashHomePageActive = true;     // Dashboard adalah halaman awal APP -> default true, di-update lewat setNav()
-let _dashBannerDotsBound = false;   // event delegation dot cuma dibind SEKALI (node wrapper-nya persist antar render)
-let _dashBannerTrackBound = false;  // event delegation tombol banner cuma dibind SEKALI
-
-function _dashEscapeHtml(str) {
-  return String(str == null ? '' : str).replace(/[&<>"']/g, (ch) => (
-    { '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[ch]
-  ));
-}
-function _dashBannerImgSrc(b) {
-  if (!b.imageUrl) return '';
-  if (_dashBannerVersion && !b.imageUrl.startsWith('data:')) {
-    return `${b.imageUrl}${b.imageUrl.includes('?') ? '&' : '?'}v=${encodeURIComponent(_dashBannerVersion)}`;
-  }
-  return b.imageUrl;
-}
-
-async function loadDashboardBanner() {
-  // Tampilkan dulu cache terakhir (kalau ada) supaya tidak ada jeda balik
-  // ke fallback statis sebelum fetch selesai (terutama saat offline) —
-  // sama alasan dengan loadAppCustomization() di atas. Kalau belum pernah
-  // ada cache sama sekali (App baru pertama kali dibuka), pakai
-  // DASHBOARD_BANNER_FALLBACK dulu supaya tidak pernah blank.
-  const cached = _readDashboardBannerCache();
-  applyDashboardBanner(cached || DASHBOARD_BANNER_FALLBACK);
-  try {
-    const cfg = await api('/api/dashboard-banner');
-    if (cfg) applyDashboardBanner(cfg);
-  } catch (e) {
-    // Offline/gagal fetch -> tetap pakai cache/fallback yang sudah dirender
-    // di atas (field kosong/belum pernah diatur admin TIDAK BOLEH bikin
-    // blank/crash).
-    console.warn('[Dashboard Banner] GET /api/dashboard-banner GAGAL, tetap pakai cache/fallback:', e);
-  }
-}
-
-// ── Terima config baru (dari cache, REST, atau resync WS) -> render ulang
-// carousel. Menjaga slide yang SEDANG TAMPIL berdasarkan ID banner (bukan
-// posisi array) supaya kalau Admin cuma ubah banner LAIN, slide yang lagi
-// dilihat user tidak loncat/reset tanpa alasan. Kalau banner yang sedang
-// tampil itu sendiri dihapus/dinonaktifkan Admin, otomatis clamp ke banner
-// valid terdekat — TIDAK PERNAH menampilkan slide kosong (poin permintaan).
-function applyDashboardBanner(cfg) {
-  if (!cfg || typeof cfg !== 'object' || !Array.isArray(cfg.banners)) return;
-  _writeDashboardBannerCache(cfg);
-
-  const prevActiveId = _dashBannerData[_dashBannerIndex] ? _dashBannerData[_dashBannerIndex].id : null;
-  _dashBannerVersion = cfg.version || 0;
-  // Kosong total di database -> tetap pakai fallback statis (bukan slide
-  // kosong) — konsisten dengan poin "field kosong tidak boleh bikin blank".
-  _dashBannerData = cfg.banners.length ? cfg.banners.slice() : DASHBOARD_BANNER_FALLBACK.banners.slice();
-
-  let nextIndex = _dashBannerData.findIndex(b => b.id === prevActiveId);
-  if (nextIndex === -1) nextIndex = 0;
-  nextIndex = Math.min(Math.max(nextIndex, 0), _dashBannerData.length - 1);
-
-  _dashCarouselRender(nextIndex);
-}
-
-// ── Rebuild SEMUA slide + dot indicator dari _dashBannerData (bukan diff),
-// lalu tampilkan `activeIndex` TANPA animasi transisi (dipakai saat data
-// baru masuk — animasi geser cuma untuk perpindahan slide lewat autoplay/
-// klik dot, lihat _dashCarouselGoTo()). Rebuild penuh supaya render SELALU
-// konsisten dengan urutan array terbaru dari backend (source of truth). ──
-function _dashCarouselRender(activeIndex) {
-  const track = document.getElementById('dashBannerTrack');
-  const dotsWrap = document.getElementById('dashBannerDots');
-  if (!track) return;
-
-  track.innerHTML = _dashBannerData.map((b, i) => `
-    <div class="dash-banner-slide${i === activeIndex ? ' dash-banner-slide--active' : ''}" data-index="${i}">
-      ${b.imageUrl ? `<img class="dash-banner-slide-img" src="${_dashBannerImgSrc(b)}" alt="">` : ''}
-      <div class="dash-banner-overlay">
-        <span class="dash-banner-eyebrow">${_dashEscapeHtml(b.eyebrow)}</span>
-        <h2 class="dash-banner-title">${_dashEscapeHtml(b.title)}</h2>
-        <p class="dash-banner-desc">${_dashEscapeHtml(b.description)}</p>
-        <button class="dash-banner-btn" type="button" data-banner-action="click">
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          <span class="dash-banner-btn-text">${_dashEscapeHtml(b.buttonText || 'Lihat Detail')}</span>
-        </button>
-      </div>
-    </div>
-  `).join('');
-
-  _dashBannerIndex = activeIndex;
-  _dashCarouselBindTrackEvents(track);
-  _dashCarouselRenderDots(dotsWrap);
-  _dashCarouselRestartAutoplay();
-}
-
-// ── Dot indicator — HANYA ditampilkan kalau banner aktif > 1 (poin
-// permintaan: 1 banner = banner biasa, tanpa dot). Listener klik dibind
-// SEKALI di wrapper-nya (event delegation, node #dashBannerDots sendiri
-// TIDAK pernah diganti — cuma innerHTML-nya — jadi tidak pernah dobel
-// listener walau dirender ulang berkali-kali). ──
-function _dashCarouselRenderDots(dotsWrap) {
-  if (!dotsWrap) return;
-  if (_dashBannerData.length > 1) {
-    dotsWrap.style.display = '';
-    dotsWrap.innerHTML = _dashBannerData.map((b, i) => (
-      `<button type="button" class="dash-banner-dot${i === _dashBannerIndex ? ' active' : ''}" data-dot-index="${i}" aria-label="Banner ${i + 1}"></button>`
-    )).join('');
-  } else {
-    dotsWrap.style.display = 'none';
-    dotsWrap.innerHTML = '';
-  }
-  if (!_dashBannerDotsBound) {
-    dotsWrap.addEventListener('click', (e) => {
-      const dot = e.target.closest('.dash-banner-dot[data-dot-index]');
-      if (!dot) return;
-      const idx = Number(dot.dataset.dotIndex);
-      // Klik dot -> langsung pindah ke banner tersebut, timer autoplay
-      // di-reset (lihat akhir _dashCarouselGoTo()), tunggu 3 detik lagi
-      // sebelum autoplay berikutnya jalan (poin permintaan INDICATOR).
-      if (!Number.isNaN(idx)) _dashCarouselGoTo(idx);
-    });
-    _dashBannerDotsBound = true;
-  }
-}
-function _dashCarouselUpdateDotsActive() {
-  const dotsWrap = document.getElementById('dashBannerDots');
-  if (!dotsWrap) return;
-  dotsWrap.querySelectorAll('.dash-banner-dot').forEach((d, i) => d.classList.toggle('active', i === _dashBannerIndex));
-}
-
-// Tombol "Lihat Detail" tiap slide — event delegation di track (dibind
-// SEKALI, node track TIDAK pernah diganti walau innerHTML-nya di-rebuild).
-function _dashCarouselBindTrackEvents(track) {
-  if (_dashBannerTrackBound) return;
-  track.addEventListener('click', (e) => {
-    const btn = e.target.closest('[data-banner-action="click"]');
-    if (!btn) return;
-    const slideEl = btn.closest('.dash-banner-slide');
-    if (!slideEl) return;
-    const idx = Number(slideEl.dataset.index);
-    handleDashboardBannerClick(idx);
-  });
-  _dashBannerTrackBound = true;
-}
-
-// Tujuan tombol (halaman internal APP via setNav(), ATAU link eksternal)
-// SEPENUHNYA ditentukan config banner itu dari Admin Web — TIDAK ada tujuan
-// hardcode di sini, sama filosofi dengan versi single-banner sebelumnya.
-function handleDashboardBannerClick(index) {
-  const b = _dashBannerData[index];
-  if (!b) return;
-  if (b.buttonTargetType === 'url' && b.buttonTargetUrl) {
-    window.open(b.buttonTargetUrl, '_blank', 'noopener,noreferrer');
-  } else if (typeof setNav === 'function') {
-    setNav(b.buttonTargetPage || 'mygames');
-  }
-}
-
-// ── Pindah slide dengan animasi "slide horizontal halus + fade" premium
-// (poin permintaan ANIMASI — bukan bounce/zoom/rotate/flashy). Slide baru
-// diposisikan di luar frame TANPA transition dulu (loncat instan, tidak
-// ikut teranimasi), lalu di frame berikutnya transition dinyalakan & kedua
-// slide digeser ke posisi akhir — teknik FLIP sederhana biar mulus di
-// segala kecepatan device. ──
-function _dashCarouselGoTo(newIndex, opts) {
-  opts = opts || {};
-  const track = document.getElementById('dashBannerTrack');
-  const total = _dashBannerData.length;
-  if (!track || total < 2) return;
-  newIndex = ((newIndex % total) + total) % total;
-  if (newIndex === _dashBannerIndex && !opts.force) { _dashCarouselRestartAutoplay(); return; }
-
-  const slides = track.querySelectorAll('.dash-banner-slide');
-  const oldEl = slides[_dashBannerIndex];
-  const newEl = slides[newIndex];
-  if (!oldEl || !newEl || oldEl === newEl) { _dashBannerIndex = newIndex; return; }
-
-  const forward = (newIndex === (_dashBannerIndex + 1) % total);
-  const direction = opts.direction || (forward ? 1 : -1);
-
-  newEl.style.transition = 'none';
-  newEl.style.opacity = '0';
-  newEl.style.transform = `translateX(${direction * 32}px)`;
-  newEl.style.zIndex = '2';
-  newEl.classList.add('dash-banner-slide--active');
-  oldEl.style.zIndex = '1';
-  void newEl.offsetWidth; // force reflow — supaya transition:none di atas benar-benar "settle" dulu
-
-  requestAnimationFrame(() => {
-    newEl.style.transition = `transform ${DASHBOARD_BANNER_ANIM_MS}ms cubic-bezier(.4,0,.2,1), opacity ${DASHBOARD_BANNER_ANIM_MS}ms ease`;
-    oldEl.style.transition = `transform ${DASHBOARD_BANNER_ANIM_MS}ms cubic-bezier(.4,0,.2,1), opacity ${DASHBOARD_BANNER_ANIM_MS}ms ease`;
-    newEl.style.opacity = '1';
-    newEl.style.transform = 'translateX(0)';
-    oldEl.style.opacity = '0';
-    oldEl.style.transform = `translateX(${-direction * 32}px)`;
-  });
-
-  _dashBannerIndex = newIndex;
-  _dashCarouselUpdateDotsActive();
-
-  // Bersihkan slide lama setelah animasi selesai supaya statenya "netral"
-  // lagi (siap dipakai dari arah manapun kalau dia jadi target berikutnya).
-  window.setTimeout(() => {
-    if (!oldEl.isConnected) return;
-    oldEl.classList.remove('dash-banner-slide--active');
-    oldEl.style.transition = 'none';
-    oldEl.style.transform = 'translateX(0)';
-    oldEl.style.zIndex = '';
-    void oldEl.offsetWidth;
-    oldEl.style.transition = '';
-  }, DASHBOARD_BANNER_ANIM_MS + 50);
-
-  // Reset timer autoplay setiap kali slide berpindah (baik dari autoplay
-  // itu sendiri maupun klik dot manual) — poin INDICATOR: "reset timer,
-  // tunggu 3 detik sebelum autoplay berikutnya".
-  _dashCarouselRestartAutoplay();
-}
-
-// ── Autoplay — SELALU clearInterval dulu sebelum (mungkin) bikin yang baru,
-// jadi manapun pemicunya (render ulang data baru/reconnect WS/klik dot/
-// pindah halaman) TIDAK PERNAH ada 2 interval jalan bersamaan (poin
-// permintaan: "jangan pakai timer yang menumpuk/duplicate"). Autoplay hanya
-// aktif kalau: banner aktif > 1, halaman Dashboard sedang dibuka, DAN tab
-// App sedang terlihat (document.hidden === false) — supaya tidak jalan
-// sia-sia di background. ──
-function _dashCarouselRestartAutoplay() {
-  if (_dashBannerAutoplayTimer) {
-    clearInterval(_dashBannerAutoplayTimer);
-    _dashBannerAutoplayTimer = null;
-  }
-  if (_dashBannerData.length > 1 && _dashHomePageActive && !document.hidden) {
-    _dashBannerAutoplayTimer = setInterval(() => {
-      _dashCarouselGoTo(_dashBannerIndex + 1, { direction: 1 });
-    }, DASHBOARD_BANNER_AUTOPLAY_MS);
-  }
-}
-
-// Dipanggil dari setNav() (lihat blok nav di bawah file ini) — autoplay
-// cuma jalan "selama halaman Dashboard aktif" (poin permintaan AUTO SLIDE),
-// berhenti begitu user pindah ke halaman lain, jalan lagi begitu balik.
-function _dashCarouselSetHomeActive(active) {
-  _dashHomePageActive = active;
-  _dashCarouselRestartAutoplay();
-}
-
-// Tab/App di-minimize atau window kehilangan visibility -> pause autoplay
-// (hemat kerja & mencegah timer "ngebut mengejar" saat balik terlihat);
-// balik terlihat -> _dashCarouselRestartAutoplay() otomatis nyalakan lagi
-// KALAU memang masih di halaman Dashboard. Listener ini didaftar SEKALI di
-// scope module (bukan di dalam fungsi yang dipanggil berulang), jadi tidak
-// pernah dobel.
-document.addEventListener('visibilitychange', () => {
-  _dashCarouselRestartAutoplay();
-});
-
 function enterApp(user) {
   currentUser = user;
   _saveUser(user);
@@ -1134,12 +822,6 @@ function enterApp(user) {
   // masuk App (GET /api/app-customization, tidak perlu tunggu WS konek dulu),
   // realtime selanjutnya lewat event WS 'app-customization:update' di atas.
   loadAppCustomization();
-
-  // DASHBOARD HERO BANNER — sama pola dengan App Customization di atas:
-  // ambil config terbaru begitu masuk App (poin #10 permintaan — App baru
-  // dibuka HARUS langsung lihat data dari REST, tidak nunggu WS pertama),
-  // realtime selanjutnya lewat event WS 'dashboard-banner:update' di bawah.
-  loadDashboardBanner();
 
   // MAINTENANCE MODE — cek ulang begitu login berhasil, dengan token akun
   // yang baru login (checkMaintenanceStatus() paling awal di titik masuk App
@@ -1695,13 +1377,6 @@ function connectRealtime() {
       // existing (GET /api/maintenance-status, database tetap source of
       // truth) supaya App selalu sinkron begitu reconnect.
       if (typeof checkMaintenanceStatus === 'function') checkMaintenanceStatus();
-      // DASHBOARD BANNER (poin #11 permintaan — "WS sempat putus lalu admin
-      // ubah banner SELAGI putus, begitu APP reconnect, banner harus ikut
-      // di-resync") — sama alasannya dengan resync lain di atas: sinyal
-      // 'dashboard-banner:update' bersifat fire-and-forget (server tidak
-      // nge-queue), jadi perubahan Admin Web SELAGI App disconnect bisa
-      // hilang kalau tidak di-resync manual di sini.
-      if (typeof loadDashboardBanner === 'function') loadDashboardBanner();
       // ACTIVE TOOLS — 'active-tools:config' juga fire-and-forget seperti
       // event lain di atas: kalau koneksi WS sempat putus SELAGI Admin Web
       // mengubah Activation Method/link/command/status enabled, sinyalnya
@@ -1779,15 +1454,6 @@ function connectRealtime() {
       // -> GET /api/app-customization), jadi payload besar tidak pernah
       // lewat WS sama sekali.
       loadAppCustomization();
-    } else if (msg.event === 'dashboard-banner:update') {
-      // Admin ubah Dashboard Hero Banner (Admin Web) -> semua App yang
-      // online langsung berubah TANPA restart/refresh. Sama pola dengan
-      // 'app-customization:update' di atas: WS cuma kirim sinyal ringan
-      // {changed, version} (gambar bisa base64 besar), config lengkap
-      // di-fetch ulang lewat REST yang sudah ada (loadDashboardBanner ->
-      // GET /api/dashboard-banner).
-      console.log('[Dashboard Banner] Received update signal via WS:', msg.data);
-      loadDashboardBanner();
     } else if (msg.event === 'welcome-popup:update') {
       // Admin ubah/simpan Welcome Popup ATAU klik "Paksa Tampil Kembali"
       // (Admin Web) -> semua App yang online langsung sync ulang lewat REST
@@ -4256,13 +3922,6 @@ function openRealBypassDetailById(id) {
     // dibuka (pola sama dengan history/setting/belipaket di atas).
     if (page === 'transaksi' && typeof loadTransaksiPage === 'function') {
       loadTransaksiPage();
-    }
-    // DASHBOARD BANNER CAROUSEL — autoplay cuma jalan "selama halaman
-    // Dashboard aktif" (poin permintaan AUTO SLIDE). Pindah ke halaman lain
-    // -> pause; balik ke Dashboard -> jalan lagi otomatis (lihat
-    // _dashCarouselSetHomeActive() di blok DASHBOARD HERO BANNER di atas).
-    if (typeof _dashCarouselSetHomeActive === 'function') {
-      _dashCarouselSetHomeActive(page === 'home');
     }
   }
 

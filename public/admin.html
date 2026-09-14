@@ -520,16 +520,6 @@
           <span class="nav-icon"><svg class="icon icon-18"><use href="#ic-brush"></use></svg></span>
           App Customization
         </button>
-        <!-- SETTING BANNER — Dashboard Hero Banner (SATU banner, bukan
-             carousel). Halaman baru, mengikuti pola realtime App
-             Customization di atas (lihat dashboardBannerManager.js &
-             renderDashboardBannerPage() di admin.js). Sistem carousel
-             `banners` lama (nav-item "Banner" di atas, kalau ada) TIDAK
-             disentuh sama sekali oleh halaman ini. -->
-        <button class="nav-item" data-page="dashboardbanner">
-          <span class="nav-icon"><svg class="icon icon-18"><use href="#ic-image"></use></svg></span>
-          Setting Banner
-        </button>
         <!-- MODULE BARU — Discord Ticket Management System. Module ini TERPISAH dari
              App (bukan bagian dari page-switching admin.js), makanya dibuka sebagai
              halaman sendiri (tickets-admin.html) supaya modular & tidak mengganggu
@@ -3121,58 +3111,6 @@
             </div>
           </div>
         </div>
-      </div>
-    </section>
-
-    <!-- SETTING BANNER PAGE — MULTI BANNER DINAMIS di Dashboard App
-         (Banner 1, 2, 3, dst, tiap banner setting sendiri: gambar, eyebrow,
-         judul, deskripsi, status aktif/nonaktif, urutan, tombol/action).
-         2+ banner aktif otomatis jadi carousel auto-slide di App (lihat
-         app/app.js). Mengikuti visual language yang SAMA dengan halaman App
-         Customization di atas (card/form-input/acz-pill-group/acz-divider)
-         — bukan style baru yang beda sendiri. Backend:
-         dashboardBannerManager.js + endpoint /api/admin/dashboard-banner
-         (body { banners: [...] }, SATU PUT = seluruh array — tambah/edit/
-         hapus/reorder/status sekaligus), realtime lewat wsBroadcastAll
-         existing (event 'dashboard-banner:update'). Lihat dbn* di admin.js.
-         PENTING: ini BUKAN sistem banner carousel lama (nav-item "Banner"
-         di atas, koleksi `banners`/Code Banner) — itu tidak disentuh. -->
-    <section class="page" id="pageDashboardbanner">
-      <div class="page-header">
-        <div class="page-header-left">
-          <div class="page-header-icon" style="background:rgba(63,182,232,.16);"><svg class="icon icon-18" style="color:#3FB6E8;"><use href="#ic-image"></use></svg></div>
-          <div>
-            <div class="page-header-title">Setting Banner</div>
-            <div class="page-header-desc">Kelola banner Dashboard App. 2+ banner aktif otomatis jadi carousel, perubahan langsung realtime ke semua App.</div>
-          </div>
-        </div>
-        <button type="button" class="btn btn-primary" id="btnAddDashboardBanner" style="display:flex;align-items:center;gap:6px;flex-shrink:0;">
-          <svg class="icon icon-18"><use href="#ic-plus"></use></svg> Tambah Banner
-        </button>
-      </div>
-
-      <!-- Ringkasan singkat (total/aktif/nonaktif) — diisi dbnRenderList() di
-           admin.js, murni turunan dari dbnBanners (tidak ada request baru). -->
-      <div id="dbnStatsBar" class="sbn-stats"></div>
-
-      <div id="dbnEmptyState" class="dbn-empty-state" style="display:none;">
-        <svg class="icon icon-24"><use href="#ic-image"></use></svg>
-        <div>Belum ada banner. Klik <b>+ Tambah Banner</b> di atas untuk membuat banner pertama.</div>
-      </div>
-
-      <!-- Daftar baris banner — di-render ulang oleh dbnRenderList() di
-           admin.js tiap ada perubahan struktural (tambah/hapus/reorder/ganti
-           gambar/ubah status). Tiap baris defaultnya ringkas (collapsed),
-           klik untuk buka form edit + Live Preview. Event listener di-attach
-           SEKALI lewat event delegation ke container ini (dbnBindEvents(),
-           guarded oleh _dbnListenersBound) supaya tidak numpuk listener
-           tiap render ulang. -->
-      <div id="dbnBannerList" class="dbn-banner-list"></div>
-
-      <div class="sbn-actionbar">
-        <button class="btn btn-primary" id="btnSaveDashboardBanner" disabled><svg class="icon icon-18"><use href="#ic-save"></use></svg> Simpan Perubahan</button>
-        <div id="dbnStatus" style="font-size:12px;color:var(--text-dim);"></div>
-        <div id="dbnCountStatus" style="font-size:12px;color:var(--text-faint);margin-left:auto;"></div>
       </div>
     </section>
 
