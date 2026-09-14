@@ -10295,7 +10295,7 @@ async function renderDashboardBannerPage() {
 // sudah dipakai halaman lain di Admin Web) selagi request pertama di sesi
 // ini masih berjalan — halaman langsung terasa "ada isinya" alih-alih blank
 // menunggu roundtrip network + jalan pertama Database.
-function dbnRenderSkeleton(count = 3) {
+function dbnRenderSkeleton(count = 2) {
   const list = document.getElementById('dbnBannerList');
   const empty = document.getElementById('dbnEmptyState');
   if (!list) return;
@@ -10303,19 +10303,20 @@ function dbnRenderSkeleton(count = 3) {
   list.innerHTML = Array.from({ length: count }).map(() => `
     <div class="dbn-banner-card dbn-banner-card--skeleton">
       <div class="dbn-card-header">
-        <span class="skeleton" style="width:90px;height:16px;"></span>
-        <span class="skeleton" style="width:60px;height:16px;margin-left:auto;"></span>
+        <span class="skeleton" style="width:22px;height:22px;border-radius:7px;"></span>
+        <span class="skeleton" style="width:80px;height:14px;"></span>
+        <span class="skeleton" style="width:60px;height:14px;margin-left:auto;"></span>
       </div>
       <div class="dbn-card-body">
         <div class="dbn-card-grid">
           <div class="dbn-card-fields">
-            <span class="skeleton" style="display:block;width:100%;height:150px;border-radius:12px;margin-bottom:14px;"></span>
-            <span class="skeleton" style="display:block;width:70%;height:14px;margin-bottom:10px;"></span>
-            <span class="skeleton" style="display:block;width:90%;height:14px;margin-bottom:10px;"></span>
-            <span class="skeleton" style="display:block;width:50%;height:14px;"></span>
+            <span class="skeleton" style="display:block;width:60%;height:12px;margin-bottom:16px;"></span>
+            <span class="skeleton" style="display:block;width:100%;height:14px;margin-bottom:10px;"></span>
+            <span class="skeleton" style="display:block;width:100%;height:14px;margin-bottom:10px;"></span>
+            <span class="skeleton" style="display:block;width:70%;height:14px;"></span>
           </div>
           <div class="dbn-card-preview-col">
-            <span class="skeleton" style="display:block;width:100%;height:180px;border-radius:12px;"></span>
+            <span class="skeleton" style="display:block;width:100%;height:150px;border-radius:12px;"></span>
           </div>
         </div>
       </div>
@@ -10518,38 +10519,35 @@ function dbnCardTemplate(banner, idx, total) {
           <button type="button" class="btn-icon-sm" data-action="move-up" ${idx === 0 ? 'disabled' : ''} title="Naikkan urutan"><svg class="icon icon-16"><use href="#ic-arrow-up"></use></svg></button>
           <button type="button" class="btn-icon-sm" data-action="move-down" ${idx === total - 1 ? 'disabled' : ''} title="Turunkan urutan"><svg class="icon icon-16"><use href="#ic-arrow-down"></use></svg></button>
         </div>
-        <button type="button" class="btn btn-danger btn-sm" data-action="delete" title="Hapus banner ini"><svg class="icon icon-16"><use href="#ic-trash-2"></use></svg></button>
+        <button type="button" class="btn-icon-sm" data-action="delete" title="Hapus banner ini" style="color:var(--red);"><svg class="icon icon-16"><use href="#ic-trash-2"></use></svg></button>
       </div>
 
       <div class="dbn-card-body" ${collapsed ? 'style="display:none;"' : ''}>
         <div class="dbn-card-grid">
           <div class="dbn-card-fields">
             <div class="form-group">
-              <label class="form-label">Sumber Gambar</label>
+              <label class="form-label">Gambar</label>
               <div class="acz-pill-group dbn-imgsource-group">
                 <button type="button" class="acz-pill ${img.source === 'upload' ? 'active' : ''}" data-imgsource="upload">Upload File</button>
                 <button type="button" class="acz-pill ${img.source === 'url' ? 'active' : ''}" data-imgsource="url">Link URL</button>
               </div>
             </div>
-            <div class="form-group dbn-image-upload-wrap" style="${img.source === 'upload' ? '' : 'display:none;'}">
-              <label class="form-label">Upload Gambar <span style="color:var(--text-faint);font-weight:400;">(PNG/JPG/JPEG/WEBP, maks 5MB — drag & drop atau klik)</span></label>
+            <div class="form-group dbn-image-upload-wrap" style="${img.source === 'upload' ? '' : 'display:none;'}margin-top:-8px;">
               <div class="dbn-dropzone">
                 <svg class="icon icon-24"><use href="#ic-image"></use></svg>
-                <span>Drag & drop gambar di sini, atau <u>Pilih File</u></span>
+                <span>Drag & drop, atau <u>Pilih File</u> <span style="color:var(--text-faint);">— PNG/JPG/WEBP, maks 5MB</span></span>
                 <input class="form-input dbn-image-file" type="file" accept="image/png,image/jpeg,image/webp" style="display:none;">
               </div>
             </div>
-            <div class="form-group dbn-image-url-wrap" style="${img.source === 'url' ? '' : 'display:none;'}">
-              <label class="form-label">Link URL Gambar <span style="color:var(--text-faint);font-weight:400;">(diawali http:// atau https://)</span></label>
+            <div class="form-group dbn-image-url-wrap" style="${img.source === 'url' ? '' : 'display:none;'}margin-top:-8px;">
               <input class="form-input dbn-image-url-input" type="text" placeholder="https://example.com/banner.jpg" value="${img.source === 'url' ? escapeHtml(img.url || '') : ''}">
               <div class="dbn-image-url-status" style="margin-top:6px;font-size:12px;color:var(--text-faint);min-height:16px;"></div>
             </div>
-            <div class="dbn-image-preview-wrap" style="margin-top:4px;position:relative;${img.url ? '' : 'display:none;'}">
-              <img class="dbn-image-preview-img" loading="lazy" decoding="async" style="width:100%;max-height:160px;object-fit:cover;border-radius:12px;border:1px solid var(--line);" src="${escapeHtml(img.url || '')}" ${IMG_ONERROR_ATTR}>
-              <button type="button" class="btn btn-danger btn-sm dbn-remove-image-btn" style="position:absolute;top:8px;right:8px;"><svg class="icon icon-16"><use href="#ic-trash-2"></use></svg> Hapus</button>
+            <div class="dbn-image-preview-wrap" style="margin:-6px 0 18px;position:relative;${img.url ? '' : 'display:none;'}">
+              <img class="dbn-image-preview-img" loading="lazy" decoding="async" style="width:100%;max-height:140px;object-fit:cover;border-radius:10px;border:1px solid var(--line);" src="${escapeHtml(img.url || '')}" ${IMG_ONERROR_ATTR}>
+              <button type="button" class="btn-icon-sm dbn-remove-image-btn" style="position:absolute;top:6px;right:6px;background:rgba(4,6,10,.55);color:#fff;"><svg class="icon icon-16"><use href="#ic-trash-2"></use></svg></button>
             </div>
 
-            <div class="acz-divider"><span>Konten Banner</span></div>
             <div class="form-group">
               <label class="form-label">Teks Atas (Eyebrow)</label>
               <input class="form-input dbn-eyebrow-input" type="text" maxlength="60" placeholder="Featured This Week" value="${escapeHtml(banner.eyebrow || '')}">
@@ -10560,28 +10558,27 @@ function dbnCardTemplate(banner, idx, total) {
             </div>
             <div class="form-group">
               <label class="form-label">Deskripsi</label>
-              <textarea class="form-input dbn-desc-input" maxlength="240" rows="3" placeholder="Deskripsi singkat game/promo yang ditonjolkan...">${escapeHtml(banner.description || '')}</textarea>
+              <textarea class="form-input dbn-desc-input" maxlength="240" rows="2" placeholder="Deskripsi singkat game/promo yang ditonjolkan...">${escapeHtml(banner.description || '')}</textarea>
               <div class="dbn-char-counter dbn-desc-counter">${(banner.description || '').length} / 240</div>
             </div>
 
-            <div class="acz-divider"><span>Tombol</span></div>
-            <div class="form-group">
-              <label class="form-label">Teks Tombol</label>
-              <input class="form-input dbn-buttontext-input" type="text" maxlength="40" placeholder="Lihat Detail" value="${escapeHtml(banner.buttonText || '')}">
-            </div>
-            <div class="form-group">
-              <label class="form-label">Tujuan Tombol</label>
-              <div class="acz-pill-group dbn-targettype-group">
-                <button type="button" class="acz-pill ${banner.buttonTargetType === 'page' ? 'active' : ''}" data-targettype="page">Halaman APP</button>
-                <button type="button" class="acz-pill ${banner.buttonTargetType === 'url' ? 'active' : ''}" data-targettype="url">Link Eksternal</button>
+            <div class="form-group" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:8px;">
+              <div>
+                <label class="form-label">Teks Tombol</label>
+                <input class="form-input dbn-buttontext-input" type="text" maxlength="40" placeholder="Lihat Detail" value="${escapeHtml(banner.buttonText || '')}">
+              </div>
+              <div>
+                <label class="form-label">Tujuan Tombol</label>
+                <div class="acz-pill-group dbn-targettype-group">
+                  <button type="button" class="acz-pill ${banner.buttonTargetType === 'page' ? 'active' : ''}" data-targettype="page">Halaman APP</button>
+                  <button type="button" class="acz-pill ${banner.buttonTargetType === 'url' ? 'active' : ''}" data-targettype="url">Link Luar</button>
+                </div>
               </div>
             </div>
             <div class="form-group dbn-targetpage-wrap" style="${banner.buttonTargetType === 'page' ? '' : 'display:none;'}">
-              <label class="form-label">Pilih Halaman APP</label>
               <select class="form-input dbn-targetpage-select">${dbnPageOptionsHtml(banner.buttonTargetPage)}</select>
             </div>
             <div class="form-group dbn-targeturl-wrap" style="${banner.buttonTargetType === 'url' ? '' : 'display:none;'}">
-              <label class="form-label">Link Eksternal <span style="color:var(--text-faint);font-weight:400;">(diawali http:// atau https://)</span></label>
               <input class="form-input dbn-targeturl-input" type="text" placeholder="https://example.com" value="${escapeHtml(banner.buttonTargetUrl || '')}">
               <div class="dbn-targeturl-status" style="margin-top:6px;font-size:12px;color:var(--text-faint);min-height:16px;"></div>
             </div>
