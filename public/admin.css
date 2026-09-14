@@ -2861,3 +2861,229 @@ button:hover .icon,
   color: var(--text); font-family: 'SFMono-Regular', Consolas, monospace; font-size: 12.5px; padding: 7px 9px;
 }
 .acz-cp-hex:focus { outline: none; border-color: var(--violet); }
+
+/* ══════════════════════════════════════════════════════════════════════
+   KIRIM NOTIFIKASI — Notification Composer + Live Preview
+   Redesign total menggantikan modal prompt()/confirm() lama. Layout 2 kolom
+   (form kiri, live preview kanan) mengikuti pola Package Embed Builder
+   (.peb-layout) yang sudah ada. TIDAK menyentuh style .peb-* existing.
+   ══════════════════════════════════════════════════════════════════════ */
+
+.ns-realtime-badge {
+  display: inline-flex; align-items: center; gap: 7px;
+  font-size: 12px; font-weight: 600; color: var(--text-dim);
+  background: var(--glass); border: 1px solid var(--line); border-radius: 999px;
+  padding: 6px 13px;
+}
+.ns-realtime-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--text-faint); flex: none; }
+.ns-realtime-badge.online { color: #4ade80; border-color: rgba(74,222,128,.35); background: rgba(74,222,128,.08); }
+.ns-realtime-badge.online .ns-realtime-dot { background: #4ade80; box-shadow: 0 0 8px 1px rgba(74,222,128,.6); }
+
+.ns-layout { display: grid; grid-template-columns: minmax(0, 1fr) 400px; gap: 20px; align-items: start; }
+@media (max-width: 1180px) { .ns-layout { grid-template-columns: 1fr; } }
+
+.ns-form-col { display: flex; flex-direction: column; gap: 16px; min-width: 0; }
+.ns-card .card-body { display: flex; flex-direction: column; }
+.ns-count { font-weight: 500; color: var(--text-faint); float: right; }
+
+/* Target mode toggle (Semua User / User Tertentu) */
+.ns-mode-toggle {
+  display: flex; gap: 6px; background: var(--navy-900); border: 1px solid var(--line);
+  border-radius: 12px; padding: 4px; margin-bottom: 14px;
+}
+.ns-mode-btn {
+  flex: 1; display: flex; align-items: center; justify-content: center; gap: 7px;
+  padding: 9px 12px; border-radius: 9px; border: none; background: transparent;
+  color: var(--text-dim); font-family: inherit; font-size: 13px; font-weight: 600; cursor: pointer;
+  transition: background-color .15s ease, color .15s ease;
+}
+.ns-mode-btn:hover { color: var(--text); }
+.ns-mode-btn.active { background: rgba(123,92,255,.16); color: var(--violet); box-shadow: 0 0 0 1px rgba(123,92,255,.35) inset; }
+.ns-target-all-hint {
+  display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: var(--text-dim);
+  background: var(--glass); border: 1px solid var(--line); border-radius: 10px; padding: 11px 13px;
+}
+.ns-target-all-hint svg { flex: none; color: var(--violet); }
+.ns-target-search-row { display: flex; gap: 8px; }
+.ns-target-search-row .form-input { margin: 0; flex: 1; }
+.ns-target-notfound {
+  display: flex; align-items: center; gap: 7px; margin-top: 10px; font-size: 12.5px;
+  color: #ff9f92; background: rgba(224,102,90,.1); border: 1px solid rgba(224,102,90,.28);
+  border-radius: 9px; padding: 9px 12px;
+}
+.ns-target-found {
+  display: flex; align-items: center; gap: 12px;
+  background: var(--glass); border: 1px solid var(--line); border-radius: 12px; padding: 10px 12px;
+}
+.ns-target-avatar { width: 38px; height: 38px; border-radius: 50%; object-fit: cover; flex: none; background: var(--navy-700); }
+.ns-target-found-body { flex: 1; min-width: 0; }
+.ns-target-found-name { font-size: 13.5px; font-weight: 700; color: var(--text); }
+.ns-target-found-meta { display: flex; align-items: center; gap: 8px; margin-top: 3px; }
+.ns-target-found-id { font-size: 11.5px; color: var(--text-faint); font-family: 'SFMono-Regular', Consolas, monospace; }
+.ns-target-clear {
+  flex: none; width: 28px; height: 28px; display: flex; align-items: center; justify-content: center;
+  background: transparent; border: 1px solid var(--line); border-radius: 8px; color: var(--text-dim);
+  cursor: pointer; transition: background-color .15s ease, color .15s ease;
+}
+.ns-target-clear:hover { background: rgba(224,102,90,.12); color: #ff9f92; border-color: rgba(224,102,90,.3); }
+
+/* Type grid (chips dengan icon, mengikuti ADMIN_NOTIF_TYPES existing) */
+.ns-type-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(130px, 1fr)); gap: 8px; }
+.ns-type-chip {
+  display: flex; align-items: center; gap: 8px; padding: 9px 12px;
+  background: var(--navy-900); border: 1px solid var(--line); border-radius: 10px;
+  color: var(--text-dim); font-family: inherit; font-size: 12.5px; font-weight: 600; cursor: pointer;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+}
+.ns-type-chip:hover { border-color: var(--line-hi); color: var(--text); }
+.ns-type-chip.active { background: rgba(123,92,255,.14); border-color: var(--violet); color: var(--violet); }
+.ns-type-chip svg { flex: none; }
+.ns-type-loading { font-size: 12.5px; color: var(--text-faint); padding: 6px 2px; }
+
+/* Priority pills */
+.ns-priority-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.ns-priority-pill {
+  --pill-color: #8993A8;
+  padding: 8px 18px; border-radius: 999px; border: 1px solid var(--line);
+  background: var(--navy-900); color: var(--text-dim); font-family: inherit;
+  font-size: 12.5px; font-weight: 700; cursor: pointer;
+  transition: background-color .15s ease, border-color .15s ease, color .15s ease;
+}
+.ns-priority-pill:hover { border-color: var(--line-hi); color: var(--text); }
+.ns-priority-pill.active {
+  background: color-mix(in srgb, var(--pill-color) 18%, transparent);
+  border-color: var(--pill-color); color: var(--pill-color);
+}
+
+/* Pengiriman Discord — pakai .peb-switch existing */
+.ns-switch-row { display: flex; align-items: flex-start; gap: 12px; padding: 10px 0; }
+.ns-switch-row + .ns-switch-row { border-top: 1px solid var(--line); }
+.ns-switch-row .peb-switch { margin-top: 2px; }
+.ns-switch-label { font-size: 13px; font-weight: 600; color: var(--text); }
+.ns-switch-desc { font-size: 11.5px; color: var(--text-faint); margin-top: 2px; line-height: 1.4; }
+
+.ns-send-btn { width: 100%; justify-content: center; padding: 13px 0; font-size: 14px; margin-top: 2px; }
+.ns-result-banner {
+  display: flex; align-items: center; gap: 9px; font-size: 12.5px; font-weight: 600;
+  border-radius: 11px; padding: 11px 14px; margin-bottom: 4px;
+}
+.ns-result-banner.success { background: rgba(74,222,128,.1); border: 1px solid rgba(74,222,128,.3); color: #4ade80; }
+.ns-result-banner.error { background: rgba(224,102,90,.1); border: 1px solid rgba(224,102,90,.3); color: #ff9f92; }
+
+/* ── Preview column ─────────────────────────────────────────────────── */
+.ns-preview-col { min-width: 0; }
+.ns-preview-sticky { position: sticky; top: 0; display: flex; flex-direction: column; gap: 12px; }
+.ns-preview-topline {
+  display: flex; align-items: center; gap: 7px; font-size: 12px; font-weight: 700;
+  color: var(--text-dim); text-transform: uppercase; letter-spacing: .04em;
+}
+.ns-preview-topline svg { color: var(--violet); }
+
+.ns-preview-shell {
+  background: linear-gradient(155deg, #0d1120, #090c16);
+  border: 1px solid var(--line); border-radius: 20px; padding: 18px 18px 22px;
+  box-shadow: 0 24px 50px -24px rgba(0,0,0,.7);
+}
+.ns-preview-topbar-mock {
+  display: flex; align-items: center; justify-content: space-between;
+  padding-bottom: 14px; margin-bottom: 14px; border-bottom: 1px solid var(--line);
+}
+.ns-preview-app-name { font-family: 'Sora', sans-serif; font-size: 13px; font-weight: 700; color: var(--text); letter-spacing: .02em; }
+
+.ns-preview-summary {
+  background: var(--glass); border: 1px solid var(--line); border-radius: 12px; padding: 12px 14px;
+  display: flex; flex-direction: column; gap: 8px;
+}
+.ns-preview-summary-row { display: flex; align-items: center; justify-content: space-between; font-size: 12px; }
+.ns-preview-summary-row span { color: var(--text-faint); }
+.ns-preview-summary-row b { color: var(--text); font-weight: 700; }
+
+@media (max-width: 1180px) { .ns-preview-sticky { position: static; } }
+
+/* ── Notification Center — DIPINDAH LANGSUNG dari app/styles.css supaya
+   preview di Admin Web pixel-mirip dengan tampilan asli di App (nilai warna
+   & ukuran SAMA, cuma di-scope di bawah .ns-preview-shell supaya tidak
+   bentrok dengan class Admin Web lain). Kalau desain Notification Center di
+   App diubah, blok ini perlu disamakan manual (file CSS terpisah). ── */
+.ns-preview-shell {
+  --ns-violet: #9B87E8;
+  --ns-violet-bg: #9B87E824;
+  --ns-violet-border: #9B87E84d;
+  --ns-border-subtle: #FFFFFF14;
+  --ns-text-secondary: #8993A8;
+  --ns-text-disabled: #4A5568;
+  --ns-radius-pill: 9999px;
+}
+.ns-preview-shell .notif-center-wrap { position: relative; flex: none; }
+.ns-preview-shell .notif-bell-btn {
+  position: relative; display: flex; align-items: center; justify-content: center;
+  width: 38px; height: 38px; padding: 0;
+  background: var(--ns-violet-bg); border: 1px solid var(--ns-violet-border); border-radius: 12px;
+  color: var(--ns-violet); cursor: default;
+}
+.ns-preview-shell .notif-bell-btn svg { width: 18px; height: 18px; }
+.ns-preview-shell .notif-unread-dot {
+  position: absolute; top: 7px; right: 7px; width: 8px; height: 8px; border-radius: 50%;
+  background: var(--ns-violet); box-shadow: 0 0 0 2px #0d1120, 0 0 8px 1px #9B87E870;
+}
+.ns-preview-shell .notif-center-popup {
+  position: static; width: 100%; display: flex; flex-direction: column;
+  background:
+    radial-gradient(180px 120px at 100% 0%, #9B87E81a 0%, transparent 70%),
+    linear-gradient(180deg, #151d30f0, #0B1530f5);
+  border: 1px solid var(--ns-border-subtle); border-radius: 16px;
+  box-shadow: 0 28px 60px -16px rgba(0,0,0,.7), 0 0 0 1px #ffffff08 inset;
+  overflow: hidden;
+}
+.ns-preview-shell .notif-center-header {
+  flex: none; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+  padding: 14px 8px 14px 16px; border-bottom: 1px solid var(--ns-border-subtle);
+}
+.ns-preview-shell .notif-center-title-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.ns-preview-shell .notif-center-title { font-size: 14.5px; font-weight: 700; color: #fff; letter-spacing: .1px; }
+.ns-preview-shell .notif-center-unread-badge {
+  flex: none; font-size: 11px; font-weight: 700; color: var(--ns-violet);
+  background: var(--ns-violet-bg); border: 1px solid var(--ns-violet-border);
+  border-radius: var(--ns-radius-pill); padding: 1px 8px; line-height: 1.5;
+}
+.ns-preview-shell .notif-center-header-actions { display: flex; align-items: center; gap: 4px; flex: none; }
+.ns-preview-shell .notif-mark-all-btn {
+  background: none; border: none; font-family: inherit; cursor: default;
+  font-size: 11.5px; font-weight: 600; color: var(--ns-text-secondary);
+  padding: 6px 8px; border-radius: 8px; white-space: nowrap;
+}
+.ns-preview-shell .notif-close-btn {
+  width: 26px; height: 26px; display: flex; align-items: center; justify-content: center;
+  padding: 0; background: #ffffff08; border: 1px solid var(--ns-border-subtle); border-radius: 8px;
+  color: var(--ns-text-secondary); cursor: default; flex: none;
+}
+.ns-preview-shell .notif-close-btn svg { width: 13px; height: 13px; }
+.ns-preview-shell .notif-center-body { flex: 1 1 auto; min-height: 0; display: flex; flex-direction: column; }
+.ns-preview-shell .notif-item {
+  display: flex; gap: 11px; padding: 14px 16px; border-bottom: 1px solid #ffffff0a;
+  position: relative; background: #9B87E80c;
+}
+.ns-preview-shell .notif-item.unread::before {
+  content: ''; position: absolute; left: 0; top: 0; bottom: 0; width: 2.5px; background: var(--ns-violet);
+}
+.ns-preview-shell .notif-item-icon {
+  flex: none; width: 34px; height: 34px; border-radius: 10px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--ns-violet-bg); color: var(--ns-violet); margin-top: 1px;
+}
+.ns-preview-shell .notif-item-icon svg { width: 16px; height: 16px; }
+.ns-preview-shell .notif-item-body { flex: 1 1 auto; min-width: 0; display: flex; flex-direction: column; gap: 2px; }
+.ns-preview-shell .notif-item-title-row { display: flex; align-items: center; gap: 6px; }
+.ns-preview-shell .notif-item-title {
+  font-size: 13px; font-weight: 600; color: #fff; line-height: 1.35;
+  overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+  -webkit-line-clamp: 1; -webkit-box-orient: vertical; word-break: break-word;
+}
+.ns-preview-shell .notif-item-desc {
+  font-size: 12px; color: var(--ns-text-secondary); line-height: 1.45;
+  overflow: hidden; text-overflow: ellipsis; display: -webkit-box;
+  -webkit-line-clamp: 3; -webkit-box-orient: vertical; word-break: break-word;
+}
+.ns-preview-shell .notif-item-meta-row { display: flex; align-items: center; gap: 6px; margin-top: 2px; }
+.ns-preview-shell .notif-item-time { font-size: 11px; color: var(--ns-text-disabled); }
+.ns-preview-shell .notif-item-unread-mark { width: 6px; height: 6px; border-radius: 50%; background: var(--ns-violet); flex: none; }

@@ -141,6 +141,23 @@
   <line x1="15" x2="15.01" y1="9" y2="9" /></symbol>
   <symbol id="ic-check-check" viewBox="0 0 24 24"><path d="M18 6 7 17l-5-5" />
   <path d="m22 10-7.5 7.5L13 16" /></symbol>
+  <!-- Icon tambahan untuk Notification Center (bell top bar + icon per badge
+       type di notification item) — Lucide-style, gaya SAMA dengan icon lain
+       di sprite ini, tidak menambah library icon baru. -->
+  <symbol id="ic-bell" viewBox="0 0 24 24"><path d="M10.268 21a2 2 0 0 0 3.464 0" />
+  <path d="M3.262 15.326A1 1 0 0 0 4 17h16a1 1 0 0 0 .74-1.673C19.41 13.956 18 12.499 18 8A6 6 0 0 0 6 8c0 4.499-1.411 5.956-2.738 7.326" /></symbol>
+  <symbol id="ic-shield" viewBox="0 0 24 24"><path d="M20 13c0 5-3.5 7.5-7.66 8.95a1 1 0 0 1-.67-.01C7.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.81 17 5 19 5a1 1 0 0 1 1 1z" /></symbol>
+  <symbol id="ic-credit-card" viewBox="0 0 24 24"><rect width="20" height="14" x="2" y="5" rx="2" />
+  <line x1="2" x2="22" y1="10" y2="10" /></symbol>
+  <symbol id="ic-settings" viewBox="0 0 24 24"><path d="M9.671 4.136a2.34 2.34 0 0 1 4.659 0 2.34 2.34 0 0 0 3.319 1.915 2.34 2.34 0 0 1 2.33 4.033 2.34 2.34 0 0 0 0 3.831 2.34 2.34 0 0 1-2.33 4.033 2.34 2.34 0 0 0-3.319 1.915 2.34 2.34 0 0 1-4.659 0 2.34 2.34 0 0 0-3.32-1.915 2.34 2.34 0 0 1-2.33-4.033 2.34 2.34 0 0 0 0-3.831A2.34 2.34 0 0 1 6.35 6.051a2.34 2.34 0 0 0 3.32-1.915" />
+  <circle cx="12" cy="12" r="3" /></symbol>
+  <symbol id="ic-alert-triangle" viewBox="0 0 24 24"><path d="m21.73 18-8-14a2 2 0 0 0-3.48 0l-8 14A2 2 0 0 0 4 21h16a2 2 0 0 0 1.73-3" />
+  <path d="M12 9v4" /><path d="M12 17h.01" /></symbol>
+  <symbol id="ic-log-out" viewBox="0 0 24 24"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
+  <polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></symbol>
+  <symbol id="ic-trash-2" viewBox="0 0 24 24"><path d="M3 6h18" /><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6" />
+  <path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" /><line x1="10" y1="11" x2="10" y2="17" /><line x1="14" y1="11" x2="14" y2="17" /></symbol>
+  <symbol id="ic-user" viewBox="0 0 24 24"><path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2" /><circle cx="12" cy="7" r="4" /></symbol>
 </svg>
 
 <!-- APP CUSTOMIZATION — GLOBAL background layer (Solid/Gradient/Image + Overlay),
@@ -186,16 +203,66 @@
       <img class="app-brand-logo" id="appBrandLogo" alt="" style="display:none;">
       <span class="app-brand-text" id="appBrandText">31 Tools</span>
     </div>
-    <div class="win-controls">
-      <button class="min" title="Minimize" aria-label="Minimize" onclick="minimizeApp()">
-        <svg viewBox="0 0 12 12" fill="none"><line x1="1" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1.2"/></svg>
-      </button>
-      <button class="max" title="Maximize" aria-label="Maximize / Restore" onclick="toggleMaximize()">
-        <svg id="maxIcon" viewBox="0 0 12 12" fill="none"><rect x="1.5" y="1.5" width="9" height="9" stroke="currentColor" stroke-width="1.2"/></svg>
-      </button>
-      <button class="close" title="Close" aria-label="Close" onclick="requestClose()">
-        <svg viewBox="0 0 12 12" fill="none"><line x1="1" y1="1" x2="11" y2="11" stroke="currentColor" stroke-width="1.2"/><line x1="11" y1="1" x2="1" y2="11" stroke="currentColor" stroke-width="1.2"/></svg>
-      </button>
+    <!-- NOTIFICATION CENTER — DIPINDAH ke sini (titlebar), dari sebelumnya
+         di dalam .navbar (antara nav-divider & .profile). ALASAN: .nav-items
+         di .navbar posisinya position:absolute + di-center-kan terhadap
+         LEBAR PENUH .navbar (lihat komentar "UPDATE FINAL" di styles.css),
+         jadi lebar apa pun yang ditambahkan di kolom kanan .navbar (bell,
+         dulu 38px + margin) tetap bisa "kena tabrak" ujung kanan nav-items
+         saat window menyempit / menu makin panjang — itu penyebab bell
+         nabrak ke nav + profile yang dilaporkan. FIX-nya BUKAN mengubah lagi
+         positioning nav-items (itu sudah requirement final tersendiri, tidak
+         disentuh), tapi mengeluarkan bell sepenuhnya dari row .navbar:
+         titlebar adalah row terpisah total (beda container, beda tinggi, di
+         ATAS .navbar), sehingga nav-items yang di-center absolute di dalam
+         .navbar TIDAK PERNAH bisa menjangkau row ini sama sekali — collision
+         jadi mustahil terjadi lagi secara struktural, berapa pun lebar
+         window/menu ke depannya. Dibungkus bareng .win-controls lewat
+         .titlebar-right supaya keduanya tetap nempel di ujung kanan titlebar
+         (titlebar pakai justify-content:space-between 2 kolom). Backend/JS
+         (#notifBellBtn, #notifUnreadDot, #notifCenterPopup,
+         toggleNotifCenter()/markAllNotificationsRead()/closeNotifCenter(),
+         renderNotifCenterList() di app.js, WS event notification*) TIDAK
+         diubah sama sekali — cuma lokasi elemen + ukuran tombol (disesuaikan
+         supaya pas di titlebar yang tipis, 34px) yang berubah. -->
+    <div class="titlebar-right">
+      <div class="notif-center-wrap" id="notifCenterWrap">
+        <button class="notif-bell-btn" id="notifBellBtn" aria-haspopup="true" aria-expanded="false" title="Notifikasi" onclick="toggleNotifCenter()">
+          <svg class="icon icon-18"><use href="#ic-bell"></use></svg>
+          <span class="notif-unread-dot" id="notifUnreadDot" hidden></span>
+        </button>
+
+        <div class="notif-center-popup" id="notifCenterPopup" role="dialog" aria-label="Notifikasi">
+          <div class="notif-center-header">
+            <div class="notif-center-title-row">
+              <span class="notif-center-title">Notifikasi</span>
+              <span class="notif-center-unread-badge" id="notifCenterUnreadBadge" hidden></span>
+            </div>
+            <div class="notif-center-header-actions">
+              <button class="notif-mark-all-btn" id="notifMarkAllBtn" onclick="markAllNotificationsRead()">Tandai semua dibaca</button>
+              <button class="notif-close-btn" aria-label="Tutup" onclick="closeNotifCenter()">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              </button>
+            </div>
+          </div>
+
+          <div class="notif-center-body" id="notifCenterBody">
+            <!-- diisi renderNotifCenterList() — state loading/empty/error/list, lihat app.js -->
+          </div>
+        </div>
+      </div>
+
+      <div class="win-controls">
+        <button class="min" title="Minimize" aria-label="Minimize" onclick="minimizeApp()">
+          <svg viewBox="0 0 12 12" fill="none"><line x1="1" y1="6" x2="11" y2="6" stroke="currentColor" stroke-width="1.2"/></svg>
+        </button>
+        <button class="max" title="Maximize" aria-label="Maximize / Restore" onclick="toggleMaximize()">
+          <svg id="maxIcon" viewBox="0 0 12 12" fill="none"><rect x="1.5" y="1.5" width="9" height="9" stroke="currentColor" stroke-width="1.2"/></svg>
+        </button>
+        <button class="close" title="Close" aria-label="Close" onclick="requestClose()">
+          <svg viewBox="0 0 12 12" fill="none"><line x1="1" y1="1" x2="11" y2="11" stroke="currentColor" stroke-width="1.2"/><line x1="11" y1="1" x2="1" y2="11" stroke="currentColor" stroke-width="1.2"/></svg>
+        </button>
+      </div>
     </div>
   </div>
 
@@ -241,6 +308,12 @@
     </div>
 
     <span class="nav-divider" aria-hidden="true"></span>
+
+    <!-- NOTIFICATION CENTER dipindah ke .titlebar (lihat komentar lengkap di
+         atas .titlebar-right di bagian atas file ini) — sudah TIDAK ada lagi
+         di sini supaya tidak lagi berbagi kolom kanan .navbar dengan
+         .profile, dan tidak bisa ketabrak nav-items yang di-center absolute
+         di .navbar. -->
 
     <button class="profile" id="profileBtn" aria-haspopup="true" aria-expanded="false" onclick="toggleProfileMenu()">
       <span class="avatar">
@@ -970,7 +1043,11 @@
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-x"></use></svg>
       </button>
       <div class="pkgacc-icon" id="pkgAccessIcon"></div>
-      <div class="pkgacc-title">Akses Paket Diperlukan</div>
+      <!-- Teks default (paket) — untuk kasus gated (Marketplace) diganti jadi
+           "Kamu Tidak Memiliki Akses" oleh openPackageAccessModal() di app.js.
+           Diberi id supaya bisa diisi dinamis; TIDAK ada teks baru yang
+           di-hardcode di sini selain default non-Marketplace. -->
+      <div class="pkgacc-title" id="pkgAccessTitle">Akses Paket Diperlukan</div>
       <p class="pkgacc-desc" id="pkgAccessDesc"></p>
       <!-- Kartu requirement — cuma dipakai untuk kasus gated (Marketplace),
            reuse style .mktlock-req-* (sama persis dengan mktLockedModal)
@@ -996,6 +1073,8 @@
         </div>
       </div>
       <button type="button" class="btn-primary pkgacc-cta" id="pkgAccessCtaBtn">Upgrade Sekarang</button>
+      <!-- Teks tombol di atas cuma default (paket) — untuk kasus gated
+           (Marketplace) diganti "Beli Sekarang" oleh openPackageAccessModal(). -->
     </div>
   </div>
 

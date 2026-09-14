@@ -244,6 +244,7 @@ const PAGE_META = {
   welcomepopup: { title: 'Welcome Popup', breadcrumb: 'Pages / Welcome Popup' },
   requestgame:  { title: 'Request Game', breadcrumb: 'Pages / Request Game' },
   websitesettings: { title: 'Website Settings', breadcrumb: 'Pages / Website Settings' },
+  notifsend:    { title: 'Kirim Notifikasi', breadcrumb: 'Pages / Notifikasi / Kirim Notifikasi' },
   packageembeds: { title: 'Package Embed Builder', breadcrumb: 'Pages / Notification Package / Embed Builder' },
   marketplace:  { title: 'Marketplace', breadcrumb: 'Pages / Marketplace' },
   appcustomization: { title: 'App Customization', breadcrumb: 'Pages / App Customization' },
@@ -296,6 +297,7 @@ function loadPage(page) {
   else if (page === 'logs') renderLogs();
   else if (page === 'verifyrole') renderVerifyRole();
   else if (page === 'webhooks') renderWebhookSettings();
+  else if (page === 'notifsend') renderNotifSendPage();
   else if (page === 'packageembeds') renderPackageEmbedsPage();
   else if (page === 'hubcap') renderHubcapPage();
   else if (page === 'paket') renderPaketSettings();
@@ -2533,23 +2535,438 @@ async function doManualPremiumCleanup(discordId, username) {
 window.doManualPremiumCleanup = doManualPremiumCleanup;
 
 // ─── Kirim notifikasi manual (In-App + opsional Discord DM/Webhook) ───
-let _sendNotifTarget = null; // discordId, atau null = broadcast ke semua
+// Sebelumnya modal prompt()/confirm() browser bawaan — sekarang diarahkan ke
+// halaman penuh "Kirim Notifikasi" (Notification Composer + Live Preview),
+// lihat renderNotifSendPage() di bawah. discordId/username (kalau ada)
+// dipakai sebagai prefill target, dicari ulang lewat /api/admin/users/lookup
+// EXISTING (bukan data yang ditempel mentah) supaya tetap tervalidasi.
 function openSendNotifModal(discordId, username) {
-  _sendNotifTarget = discordId || null;
-  const title = discordId ? `Kirim Notifikasi ke ${username}` : 'Kirim Pengumuman ke Semua User';
-  const t = prompt(`${title}\n\nJudul notifikasi:`);
-  if (!t) return;
-  const m = prompt('Isi pesan:');
-  if (!m) return;
-  const sendDm = confirm('Kirim juga sebagai DM Discord? (OK = ya, Cancel = tidak)');
-  api('/api/admin/notifications/send', {
-    method: 'POST',
-    body: JSON.stringify({ target: discordId || 'all', title: t, message: m, dm: sendDm, webhook: true })
-  }).then(res => {
-    showToast(`Notifikasi terkirim ke ${res.sentTo} user.`, 'success');
-  }).catch(e => showToast('Gagal kirim notifikasi: ' + e.message, 'error'));
+  _nsPrefillTarget = discordId ? { discordId, username } : null;
+  document.querySelectorAll('.nav-item').forEach(b => b.classList.toggle('active', b.dataset.page === 'notifsend'));
+  loadPage('notifsend');
 }
 window.openSendNotifModal = openSendNotifModal;
+
+// ══════════════════════════════════════════════════════════════════════════
+// KIRIM NOTIFIKASI — Notification Composer + Live Preview
+// ══════════════════════════════════════════════════════════════════════════
+// Memakai backend notifikasi EXISTING 100%:
+//   GET  /api/admin/notifications/types  -> daftar type (ADMIN_NOTIF_TYPES,
+//        server.js) dipakai isi grid Type & preview icon/badge — TIDAK
+//        di-hardcode di sini, murni mengikuti backend.
+//   GET  /api/admin/users/lookup?q=      -> validasi target user by Discord
+//        ID/username (dipakai jugaoleh modal "Set Paket via Discord ID"),
+//        backend = authority, frontend cuma menampilkan hasilnya.
+//   POST /api/admin/notifications/send   -> kirim beneran (in-app DB + WS
+//        realtime + opsional DM/Webhook Discord), sudah ada & sudah extend
+//        terima `type`/`priority` (lihat catatan progress).
+// TIDAK ADA endpoint/service/socket baru dibuat untuk fitur ini.
+
+// Badge (kategori notifikasi, sama seperti NOTIF_BADGE_ICON di app/app.js)
+// -> icon yang TERSEDIA di sprite Admin Web (lihat <svg id="ic-sprite"> di
+// admin.html). Satu-satunya tempat mapping badge->icon Admin Web.
+const NS_BADGE_ICON = {
+  game: 'ic-gamepad-2', bypass: 'ic-shield-check', game_bypass: 'ic-gamepad-2',
+  user: 'ic-user', paket: 'ic-package', voucher: 'ic-ticket',
+  request_game: 'ic-inbox', payment: 'ic-credit-card', update: 'ic-refresh-cw',
+  admin: 'ic-megaphone', security: 'ic-lock', system: 'ic-settings',
+  maintenance: 'ic-construction', welcome: 'ic-sparkles',
+  gold_trial: 'ic-crown', marketplace: 'ic-shopping-bag', download: 'ic-arrow-down-to-line'
+};
+function _nsIcon(badge) { return NS_BADGE_ICON[badge] || 'ic-bell'; }
+
+const NS_PRIORITIES = [
+  { value: 'low',    label: 'Low',    color: '#8993A8' },
+  { value: 'normal', label: 'Normal', color: '#7b5cff' },
+  { value: 'high',   label: 'High',   color: '#ffd76a' },
+  { value: 'urgent', label: 'Urgent', color: '#f87171' }
+];
+
+let _nsTypes = null;           // cache ADMIN_NOTIF_TYPES dari backend
+let _nsPrefillTarget = null;   // { discordId, username } — diisi openSendNotifModal()
+let _nsSending = false;        // guard cegah double submit
+let _nsRealtimeTimer = null;
+let _ns = {
+  mode: 'all',        // 'all' | 'user'
+  targetQuery: '',
+  targetUser: null,   // hasil /api/admin/users/lookup (publicUser shape)
+  targetSearching: false,
+  targetNotFound: false,
+  title: '',
+  message: '',
+  type: 'announcement',
+  priority: 'normal',
+  dm: false,
+  webhook: true
+};
+
+async function renderNotifSendPage() {
+  const root = document.getElementById('notifSendRoot');
+  if (!root) return;
+
+  // Terapkan prefill (dari tombol "Kirim ke user ini" di halaman Users) —
+  // sekali pakai, langsung dicari ulang lewat backend supaya tetap tervalidasi.
+  if (_nsPrefillTarget) {
+    _ns = { ..._ns, mode: 'user', targetQuery: _nsPrefillTarget.discordId, targetUser: null, targetNotFound: false };
+    const pending = _nsPrefillTarget;
+    _nsPrefillTarget = null;
+    _nsRenderLayout(root);
+    _nsSearchTarget(pending.discordId);
+  } else {
+    _nsRenderLayout(root);
+  }
+
+  if (!_nsTypes) {
+    try {
+      const res = await api('/api/admin/notifications/types');
+      _nsTypes = res.types || [];
+    } catch (e) {
+      _nsTypes = [];
+    }
+    _nsRenderLayout(root);
+  }
+
+  _nsStartRealtimeBadge();
+}
+
+function _nsStartRealtimeBadge() {
+  clearInterval(_nsRealtimeTimer);
+  const tick = () => {
+    const badge = document.getElementById('nsRealtimeBadge');
+    if (!badge || currentPage !== 'notifsend') { clearInterval(_nsRealtimeTimer); return; }
+    const open = typeof _adminWs !== 'undefined' && _adminWs && _adminWs.readyState === WebSocket.OPEN;
+    badge.className = 'ns-realtime-badge' + (open ? ' online' : '');
+    badge.innerHTML = `<span class="ns-realtime-dot"></span> ${open ? 'Realtime Terhubung' : 'Realtime Terputus'}`;
+  };
+  tick();
+  _nsRealtimeTimer = setInterval(tick, 2000);
+}
+
+function _nsRenderLayout(root) {
+  root.innerHTML = `
+    <div class="ns-layout">
+      <div class="ns-form-col">
+        ${_nsFormHtml()}
+      </div>
+      <div class="ns-preview-col">
+        ${_nsPreviewColHtml()}
+      </div>
+    </div>
+  `;
+  _nsBindEvents(root);
+}
+
+function _nsFormHtml() {
+  const typesHtml = (_nsTypes || []).map(t => `
+    <button type="button" class="ns-type-chip${t.value === _ns.type ? ' active' : ''}" data-type="${t.value}">
+      <svg class="icon icon-16"><use href="#${_nsIcon(t.badge)}"></use></svg>
+      <span>${escapeHtml(t.label)}</span>
+    </button>
+  `).join('') || `<div class="ns-type-loading">Memuat daftar type...</div>`;
+
+  const priorityHtml = NS_PRIORITIES.map(p => `
+    <button type="button" class="ns-priority-pill${p.value === _ns.priority ? ' active' : ''}" data-priority="${p.value}" style="--pill-color:${p.color}">
+      ${escapeHtml(p.label)}
+    </button>
+  `).join('');
+
+  return `
+    <div class="card ns-card">
+      <div class="card-header">
+        <div class="card-title"><svg class="icon icon-18"><use href="#ic-target"></use></svg> Target / Penerima</div>
+        <div class="card-sub">Kirim ke semua user, atau cari satu user spesifik lewat Discord ID/username (tervalidasi ke database).</div>
+      </div>
+      <div class="card-body">
+        <div class="ns-mode-toggle">
+          <button type="button" class="ns-mode-btn${_ns.mode === 'all' ? ' active' : ''}" data-mode="all"><svg class="icon icon-16"><use href="#ic-users"></use></svg> Semua User</button>
+          <button type="button" class="ns-mode-btn${_ns.mode === 'user' ? ' active' : ''}" data-mode="user"><svg class="icon icon-16"><use href="#ic-user"></use></svg> User Tertentu</button>
+        </div>
+        ${_ns.mode === 'user' ? _nsTargetSearchHtml() : `<div class="ns-target-all-hint"><svg class="icon icon-16"><use href="#ic-info"></use></svg> Notifikasi akan dikirim ke <b>seluruh user</b> yang terdaftar.</div>`}
+      </div>
+    </div>
+
+    <div class="card ns-card">
+      <div class="card-header">
+        <div class="card-title"><svg class="icon icon-18"><use href="#ic-file-pen-line"></use></svg> Isi Notifikasi</div>
+        <div class="card-sub">Judul & isi pesan yang akan tampil di Notification Center App.</div>
+      </div>
+      <div class="card-body">
+        <div class="form-group">
+          <label class="form-label">Judul <span class="ns-count">${_ns.title.length}/100</span></label>
+          <input class="form-input" id="nsTitle" maxlength="100" placeholder="Contoh: Update Maintenance Server" value="${escapeHtml(_ns.title)}">
+        </div>
+        <div class="form-group" style="margin-bottom:0;">
+          <label class="form-label">Isi Notification <span class="ns-count">${_ns.message.length}/400</span></label>
+          <textarea class="form-input" id="nsMessage" maxlength="400" rows="4" placeholder="Tulis isi pesan notifikasi di sini...">${escapeHtml(_ns.message)}</textarea>
+        </div>
+      </div>
+    </div>
+
+    <div class="card ns-card">
+      <div class="card-header">
+        <div class="card-title"><svg class="icon icon-18"><use href="#ic-tag"></use></svg> Type &amp; Priority</div>
+        <div class="card-sub">Type menentukan icon &amp; kategori notifikasi (mengikuti mapping backend existing).</div>
+      </div>
+      <div class="card-body">
+        <div class="form-group">
+          <label class="form-label">Type</label>
+          <div class="ns-type-grid" id="nsTypeGrid">${typesHtml}</div>
+        </div>
+        <div class="form-group" style="margin-bottom:0;">
+          <label class="form-label">Priority</label>
+          <div class="ns-priority-row" id="nsPriorityRow">${priorityHtml}</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="card ns-card">
+      <div class="card-header">
+        <div class="card-title"><svg class="icon icon-18"><use href="#ic-bot"></use></svg> Pengiriman Discord</div>
+        <div class="card-sub">Opsional — di luar Notification Center in-app yang selalu tersimpan ke database.</div>
+      </div>
+      <div class="card-body">
+        <div class="ns-switch-row">
+          <label class="peb-switch"><input type="checkbox" id="nsWebhook" ${_ns.webhook ? 'checked' : ''}><span class="peb-switch-track"></span></label>
+          <div>
+            <div class="ns-switch-label">Kirim ke Channel Discord</div>
+            <div class="ns-switch-desc">Webhook kategori sesuai type, lewat Discord Bot existing.</div>
+          </div>
+        </div>
+        <div class="ns-switch-row">
+          <label class="peb-switch"><input type="checkbox" id="nsDm" ${_ns.dm ? 'checked' : ''}><span class="peb-switch-track"></span></label>
+          <div>
+            <div class="ns-switch-label">Kirim juga sebagai DM Discord</div>
+            <div class="ns-switch-desc">Langsung ke inbox Discord user yang dituju (butuh target user tertentu, bukan broadcast semua).</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <div id="nsResultBanner"></div>
+    <button class="btn btn-primary ns-send-btn" id="nsSendBtn"><svg class="icon icon-18"><use href="#ic-megaphone"></use></svg> Kirim Notifikasi</button>
+  `;
+}
+
+function _nsTargetSearchHtml() {
+  if (_ns.targetUser) {
+    const u = _ns.targetUser;
+    return `
+      <div class="ns-target-found">
+        <img class="ns-target-avatar" src="${u.avatarUrl || IMG_FALLBACK_SRC}" ${IMG_ONERROR_ATTR}>
+        <div class="ns-target-found-body">
+          <div class="ns-target-found-name">${escapeHtml(u.username || u.discordId)}</div>
+          <div class="ns-target-found-meta">${roleTagHtml(u.role)} <span class="ns-target-found-id">${escapeHtml(u.discordId)}</span></div>
+        </div>
+        <button type="button" class="ns-target-clear" id="nsTargetClear" title="Ganti target"><svg class="icon icon-16"><use href="#ic-x"></use></svg></button>
+      </div>
+    `;
+  }
+  return `
+    <div class="ns-target-search-row">
+      <input class="form-input" id="nsTargetInput" placeholder="Discord ID atau username..." value="${escapeHtml(_ns.targetQuery)}">
+      <button type="button" class="btn btn-secondary btn-sm" id="nsTargetSearchBtn" ${_ns.targetSearching ? 'disabled' : ''}>
+        ${_ns.targetSearching ? '<svg class="icon icon-16 spin"><use href="#ic-loader-circle"></use></svg>' : '<svg class="icon icon-16"><use href="#ic-search"></use></svg>'} Cari
+      </button>
+    </div>
+    ${_ns.targetNotFound ? `<div class="ns-target-notfound"><svg class="icon icon-16"><use href="#ic-circle-x"></use></svg> User tidak ditemukan. Periksa kembali Discord ID/username.</div>` : ''}
+  `;
+}
+
+function _nsPreviewColHtml() {
+  const chosen = (_nsTypes || []).find(t => t.value === _ns.type);
+  const badge = chosen ? chosen.badge : 'admin';
+  const title = _ns.title.trim() || 'Judul notifikasi';
+  const message = _ns.message.trim() || 'Isi pesan notifikasi akan tampil di sini...';
+  const targetLabel = _ns.mode === 'all' ? 'Semua User' : (_ns.targetUser ? (_ns.targetUser.username || _ns.targetUser.discordId) : 'Belum memilih target');
+
+  return `
+    <div class="ns-preview-sticky">
+      <div class="ns-preview-topline">
+        <svg class="icon icon-16"><use href="#ic-monitor"></use></svg> Live Preview — Notification Center App
+      </div>
+      <div class="ns-preview-shell">
+        <div class="ns-preview-topbar-mock">
+          <span class="ns-preview-app-name">31 Tools</span>
+          <div class="notif-center-wrap">
+            <button class="notif-bell-btn" aria-expanded="true" tabindex="-1">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path stroke-linecap="round" stroke-linejoin="round" d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/></svg>
+              <span class="notif-unread-dot"></span>
+            </button>
+          </div>
+        </div>
+        <div class="notif-center-popup open">
+          <div class="notif-center-header">
+            <div class="notif-center-title-row">
+              <span class="notif-center-title">Notifikasi</span>
+              <span class="notif-center-unread-badge">1</span>
+            </div>
+            <div class="notif-center-header-actions">
+              <button class="notif-mark-all-btn" tabindex="-1">Tandai semua dibaca</button>
+              <button class="notif-close-btn" tabindex="-1"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M18 6L6 18M6 6l12 12"/></svg></button>
+            </div>
+          </div>
+          <div class="notif-center-body">
+            <div class="notif-item unread">
+              <div class="notif-item-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><use href="#${_nsIcon(badge)}"></use></svg></div>
+              <div class="notif-item-body">
+                <div class="notif-item-title-row"><span class="notif-item-title">${escapeHtml(title)}</span></div>
+                <div class="notif-item-desc">${escapeHtml(message)}</div>
+                <div class="notif-item-meta-row">
+                  <span class="notif-item-unread-mark"></span>
+                  <span class="notif-item-time">Baru saja</span>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="ns-preview-summary">
+        <div class="ns-preview-summary-row"><span>Target</span><b>${escapeHtml(targetLabel)}</b></div>
+        <div class="ns-preview-summary-row"><span>Type</span><b>${escapeHtml(chosen ? chosen.label : '-')}</b></div>
+        <div class="ns-preview-summary-row"><span>Priority</span><b style="text-transform:capitalize;">${escapeHtml(_ns.priority)}</b></div>
+      </div>
+    </div>
+  `;
+}
+
+function _nsRefreshForm() {
+  const root = document.getElementById('notifSendRoot');
+  if (!root) return;
+  const formCol = root.querySelector('.ns-form-col');
+  if (formCol) formCol.innerHTML = _nsFormHtml();
+  _nsBindEvents(root);
+}
+
+function _nsRefreshPreview() {
+  const root = document.getElementById('notifSendRoot');
+  if (!root) return;
+  const previewCol = root.querySelector('.ns-preview-col');
+  if (previewCol) previewCol.innerHTML = _nsPreviewColHtml();
+}
+
+function _nsBindEvents(root) {
+  root.querySelectorAll('.ns-mode-btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      _ns.mode = btn.dataset.mode;
+      if (_ns.mode === 'all') { _ns.targetUser = null; _ns.targetNotFound = false; }
+      _nsRefreshForm();
+      _nsRefreshPreview();
+    });
+  });
+
+  const targetInput = root.querySelector('#nsTargetInput');
+  if (targetInput) {
+    targetInput.addEventListener('input', () => { _ns.targetQuery = targetInput.value; });
+    targetInput.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); _nsSearchTarget(); } });
+  }
+  const searchBtn = root.querySelector('#nsTargetSearchBtn');
+  if (searchBtn) searchBtn.addEventListener('click', () => _nsSearchTarget());
+  const clearBtn = root.querySelector('#nsTargetClear');
+  if (clearBtn) clearBtn.addEventListener('click', () => {
+    _ns.targetUser = null; _ns.targetQuery = ''; _ns.targetNotFound = false;
+    _nsRefreshForm(); _nsRefreshPreview();
+  });
+
+  const titleInput = root.querySelector('#nsTitle');
+  if (titleInput) titleInput.addEventListener('input', () => {
+    _ns.title = titleInput.value;
+    const counter = root.querySelector('.form-group .ns-count');
+    if (counter) counter.textContent = `${_ns.title.length}/100`;
+    _nsRefreshPreview();
+  });
+  const msgInput = root.querySelector('#nsMessage');
+  if (msgInput) msgInput.addEventListener('input', () => {
+    _ns.message = msgInput.value;
+    const counters = root.querySelectorAll('.ns-count');
+    if (counters[1]) counters[1].textContent = `${_ns.message.length}/400`;
+    _nsRefreshPreview();
+  });
+
+  root.querySelectorAll('.ns-type-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+      _ns.type = chip.dataset.type;
+      root.querySelectorAll('.ns-type-chip').forEach(c => c.classList.toggle('active', c === chip));
+      _nsRefreshPreview();
+    });
+  });
+  root.querySelectorAll('.ns-priority-pill').forEach(pill => {
+    pill.addEventListener('click', () => {
+      _ns.priority = pill.dataset.priority;
+      root.querySelectorAll('.ns-priority-pill').forEach(p => p.classList.toggle('active', p === pill));
+      _nsRefreshPreview();
+    });
+  });
+
+  const dmToggle = root.querySelector('#nsDm');
+  if (dmToggle) dmToggle.addEventListener('change', () => { _ns.dm = dmToggle.checked; });
+  const webhookToggle = root.querySelector('#nsWebhook');
+  if (webhookToggle) webhookToggle.addEventListener('change', () => { _ns.webhook = webhookToggle.checked; });
+
+  const sendBtn = root.querySelector('#nsSendBtn');
+  if (sendBtn) sendBtn.addEventListener('click', _nsSubmit);
+}
+
+async function _nsSearchTarget(forcedQuery) {
+  const root = document.getElementById('notifSendRoot');
+  const q = (forcedQuery || _ns.targetQuery || '').trim();
+  if (!q) { showToast('Masukkan Discord ID atau username dulu.', 'error'); return; }
+  _ns.targetSearching = true;
+  _ns.targetNotFound = false;
+  _nsRefreshForm();
+  try {
+    const user = await api(`/api/admin/users/lookup?q=${encodeURIComponent(q)}`);
+    _ns.targetUser = user;
+    _ns.targetNotFound = false;
+  } catch (e) {
+    _ns.targetUser = null;
+    _ns.targetNotFound = true;
+  } finally {
+    _ns.targetSearching = false;
+    _nsRefreshForm();
+    _nsRefreshPreview();
+  }
+}
+
+async function _nsSubmit() {
+  if (_nsSending) return;
+  if (!_ns.title.trim() || !_ns.message.trim()) { showToast('Judul & isi notifikasi wajib diisi.', 'error'); return; }
+  if (_ns.mode === 'user' && !_ns.targetUser) { showToast('Cari & pilih target user dulu.', 'error'); return; }
+
+  _nsSending = true;
+  const btn = document.getElementById('nsSendBtn');
+  const banner = document.getElementById('nsResultBanner');
+  if (btn) { btn.disabled = true; btn.innerHTML = '<svg class="icon icon-18 spin"><use href="#ic-loader-circle"></use></svg> Mengirim...'; }
+  if (banner) banner.innerHTML = '';
+
+  try {
+    const res = await api('/api/admin/notifications/send', {
+      method: 'POST',
+      body: JSON.stringify({
+        target: _ns.mode === 'all' ? 'all' : _ns.targetUser.discordId,
+        title: _ns.title.trim(),
+        message: _ns.message.trim(),
+        type: _ns.type,
+        priority: _ns.priority,
+        dm: !!_ns.dm,
+        webhook: !!_ns.webhook
+      })
+    });
+    showToast(`Notifikasi terkirim ke ${res.sentTo} user.`, 'success');
+    if (banner) banner.innerHTML = `<div class="ns-result-banner success"><svg class="icon icon-18"><use href="#ic-circle-check-big"></use></svg> Terkirim ke ${res.sentTo} user — tersimpan di database &amp; realtime lewat Socket.IO existing.</div>`;
+    // Reset isi pesan (Judul/Isi) setelah sukses, target & type/priority tetap
+    // (memudahkan kirim beberapa notifikasi type sama ke user berbeda).
+    _ns.title = ''; _ns.message = '';
+    _nsRefreshForm();
+    _nsRefreshPreview();
+  } catch (e) {
+    if (banner) banner.innerHTML = `<div class="ns-result-banner error"><svg class="icon icon-18"><use href="#ic-circle-x"></use></svg> Gagal mengirim: ${escapeHtml(e.message)}</div>`;
+    showToast('Gagal kirim notifikasi: ' + e.message, 'error');
+  } finally {
+    _nsSending = false;
+    const freshBtn = document.getElementById('nsSendBtn');
+    if (freshBtn) { freshBtn.disabled = false; freshBtn.innerHTML = '<svg class="icon icon-18"><use href="#ic-megaphone"></use></svg> Kirim Notifikasi'; }
+  }
+}
 
 // ─── MODAL KELOLA USER — dengan Discord ID search + ringkasan + aksi lengkap ───
 let _setRoleTarget = null; // { discordId, username, currentRole, accountStatus, status, statusReason, stats, lastLoginAt }

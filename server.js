@@ -1358,6 +1358,29 @@ const NOTIF_META = {
   game_request_available:{ status: 'success', label: 'Game Sudah Tersedia',      badge: 'request_game' }
 };
 
+// Daftar jenis notifikasi yang boleh dipilih ADMIN dari form "Kirim Notifikasi"
+// (Admin Web) — dipakai untuk GET /api/admin/notifications/types (mengisi
+// dropdown Type) & disimpan sebagai `type`+`badge` notifikasi supaya Notification
+// Center APP menampilkan icon yang tepat. SATU-SATUNYA sumber kebenaran untuk
+// pilihan ini — TIDAK diduplikasi lagi di admin.js (frontend fetch dari sini).
+// Reuse badge yang sudah ada di BADGE (notifTemplates.js), tidak menambah
+// sistem kategori baru.
+const ADMIN_NOTIF_TYPES = [
+  { value: 'announcement',   label: 'Pengumuman',      badge: 'admin' },
+  { value: 'game_update',    label: 'Game Update',     badge: 'game' },
+  { value: 'bypass_update',  label: 'Bypass Update',   badge: 'bypass' },
+  { value: 'download',       label: 'Download',        badge: 'download' },
+  { value: 'payment',        label: 'Payment',         badge: 'payment' },
+  { value: 'package',        label: 'Package',         badge: 'paket' },
+  { value: 'system',         label: 'System',          badge: 'system' },
+  { value: 'maintenance',    label: 'Maintenance',     badge: 'maintenance' },
+  { value: 'welcome',        label: 'Welcome',         badge: 'welcome' },
+  { value: 'gold_trial',     label: 'Gold Trial',      badge: 'gold_trial' },
+  { value: 'request_game',   label: 'Request Game',    badge: 'request_game' },
+  { value: 'login',          label: 'Login/Logout',    badge: 'security' },
+  { value: 'marketplace',    label: 'Marketplace',     badge: 'marketplace' }
+];
+
 // Badge dinamis untuk notifikasi Auto Remove Premium Content — 'game' kalau cuma
 // game yang kena, 'bypass' kalau cuma bypass, 'game_bypass' kalau dua-duanya
 // (lihat BADGE.game_bypass di notifTemplates.js).
@@ -1378,9 +1401,17 @@ function premiumCleanupBadge(gameCount, bypassCount) {
 //               (mis. nama game, ukuran, sisa limit, dll) — lihat notifTemplates.js.
 // `thumbnail` : URL gambar kecil (icon paket/logo app/icon warning).
 // `image`     : URL gambar besar/cover (dipakai untuk event terkait game).
-async function notifyUser(discordId, { type, title, message, fields = [], thumbnail, image, meta = {}, dm = true, webhook = false, eventId, badge, webhookEmbed, packageCard, finalEmbed }) {
+async function notifyUser(discordId, { type, title, message, fields = [], thumbnail, image, meta = {}, dm = true, webhook = false, eventId, badge, priority = 'normal', webhookEmbed, packageCard, finalEmbed }) {
+  // typeMeta & badge dihitung SEBELUM insert (sebelumnya dihitung sesudah insert
+  // dan tidak pernah ikut disimpan) supaya Notification Center di APP bisa
+  // langsung pakai `badge`/`priority` dari dokumen notifikasi itu sendiri untuk
+  // menentukan icon, tanpa perlu duplikat mapping NOTIF_META di frontend.
+  const typeMeta = NOTIF_META[type] || { status: 'info', label: title };
+  const resolvedBadge = badge || typeMeta.badge || 'system';
   const doc = {
     discordId, type, title, message, meta,
+    badge: resolvedBadge,
+    priority: priority || 'normal',
     read: false,
     createdAt: new Date()
   };
@@ -1400,8 +1431,6 @@ async function notifyUser(discordId, { type, title, message, fields = [], thumbn
     const unread = await db.collection('notifications').countDocuments({ discordId, read: false });
     wsSendToUser(discordId, 'notification:unread-count', { unread });
   } catch {}
-
-  const typeMeta = NOTIF_META[type] || { status: 'info', label: title };
   // Event ID dipakai buat anti-spam (deduplication). SEBELUMNYA fallback-nya
   // pakai `inserted._id` — tapi `_id` itu SELALU baru/unik tiap kali insertOne
   // dipanggil (walau isinya identik/event yang sama benar-benar terulang),
@@ -1510,10 +1539,10 @@ async function notifyUser(discordId, { type, title, message, fields = [], thumbn
 
 // Broadcast pengumuman admin ke SEMUA user (in-app selalu; DM & webhook opsional,
 // dikontrol dari form admin biar tidak spam kalau pengumumannya kecil-kecilan saja).
-async function notifyAllUsers({ title, message, dm = false, webhook = true }) {
+async function notifyAllUsers({ title, message, dm = false, webhook = true, type = 'announcement', badge, priority = 'normal' }) {
   const users = await db.collection('users').find({}, { projection: { discordId: 1 } }).toArray();
   const results = await Promise.allSettled(
-    users.map(u => notifyUser(u.discordId, { type: 'announcement', title, message, dm, webhook: false }))
+    users.map(u => notifyUser(u.discordId, { type, badge, priority, title, message, dm, webhook: false }))
   );
   if (webhook) {
     const embed = buildEmbed({
@@ -8312,13 +8341,19 @@ app.get('/api/admin/watermark-alerts/stats', requireAdmin, async (req, res) => {
 app.get('/api/notifications', requireUser, async (req, res) => {
   try {
     const limit = Math.min(Number(req.query.limit) || 30, 100);
+    // `skip` — dipakai Notification Center APP untuk "Load More" saat list
+    // di-scroll sampai bawah, TANPA slice di frontend (backend yang menentukan
+    // halaman berikutnya, sesuai urutan createdAt terbaru dulu).
+    const skip = Math.max(Number(req.query.skip) || 0, 0);
     const rows = await db.collection('notifications')
       .find({ discordId: req.user.discordId })
       .sort({ createdAt: -1 })
+      .skip(skip)
       .limit(limit)
       .toArray();
     const unread = await db.collection('notifications').countDocuments({ discordId: req.user.discordId, read: false });
-    res.json({ items: rows, unread });
+    const total = await db.collection('notifications').countDocuments({ discordId: req.user.discordId });
+    res.json({ items: rows, unread, total, hasMore: skip + rows.length < total });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -8344,6 +8379,24 @@ app.put('/api/notifications/read-all', requireUser, async (req, res) => {
       { $set: { read: true } }
     );
     res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Hapus SATU notifikasi in-app milik user sendiri (tombol hapus di Notification
+// Center APP) — tidak menyentuh notifikasi user lain, dan tidak mempengaruhi
+// pengiriman Discord DM/Webhook (itu sudah terkirim terpisah, di luar DB ini).
+app.delete('/api/notifications/:id', requireUser, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+    const result = await db.collection('notifications').deleteOne(
+      { _id: new ObjectId(req.params.id), discordId: req.user.discordId }
+    );
+    if (!result.deletedCount) return res.status(404).json({ error: 'Notifikasi tidak ditemukan.' });
+    const unread = await db.collection('notifications').countDocuments({ discordId: req.user.discordId, read: false });
+    wsSendToUser(req.user.discordId, 'notification:unread-count', { unread });
+    res.json({ success: true, unread });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -12015,13 +12068,26 @@ app.post('/api/admin/users/:discordId/device/allow-change', requireAdmin, async 
 // ADMIN — PENGUMUMAN / NOTIFIKASI
 // ══════════════════════════════════════════════════════════════════════════
 // Kirim pengumuman ke SATU user (target=discordId) atau SEMUA user (target='all').
+// Daftar type yang boleh dipilih Admin di form "Kirim Notifikasi" — dipakai
+// mengisi dropdown Type & live preview (Admin Web), lihat ADMIN_NOTIF_TYPES di atas.
+app.get('/api/admin/notifications/types', requireAdmin, (req, res) => {
+  res.json({ types: ADMIN_NOTIF_TYPES });
+});
+
 app.post('/api/admin/notifications/send', requireAdmin, async (req, res) => {
   try {
-    const { target, title, message, dm, webhook } = req.body;
+    const { target, title, message, dm, webhook, type, priority } = req.body;
     if (!title || !message) return res.status(400).json({ error: 'Judul & pesan wajib diisi.' });
 
+    // Type/priority opsional (kompatibel dengan pemanggilan lama yang belum
+    // mengirim field ini) — default tetap 'announcement'/'normal' seperti semula.
+    const chosen = ADMIN_NOTIF_TYPES.find(t => t.value === type) || ADMIN_NOTIF_TYPES[0];
+    const resolvedType = chosen.value;
+    const resolvedBadge = chosen.badge;
+    const resolvedPriority = ['low', 'normal', 'high', 'urgent'].includes(priority) ? priority : 'normal';
+
     if (!target || target === 'all') {
-      const count = await notifyAllUsers({ title, message, dm: !!dm, webhook: webhook !== false });
+      const count = await notifyAllUsers({ title, message, dm: !!dm, webhook: webhook !== false, type: resolvedType, badge: resolvedBadge, priority: resolvedPriority });
       logActivity({
         type: 'announcement',
         username: req.admin?.username || 'Admin',
@@ -12029,7 +12095,7 @@ app.post('/api/admin/notifications/send', requireAdmin, async (req, res) => {
         status: 'success',
         ip: getReqIp(req),
         description: `Admin mengirim broadcast "${title}" ke ${count} user.`,
-        meta: { target: 'all', title, sentTo: count }
+        meta: { target: 'all', title, sentTo: count, notifType: resolvedType, priority: resolvedPriority }
       }).catch(() => {});
       return res.json({ success: true, sentTo: count });
     }
@@ -12037,7 +12103,7 @@ app.post('/api/admin/notifications/send', requireAdmin, async (req, res) => {
     const user = await db.collection('users').findOne({ discordId: target });
     if (!user) return res.status(404).json({ error: 'User tidak ditemukan.' });
     await notifyUser(target, {
-      type: 'announcement', title, message,
+      type: resolvedType, title, message, badge: resolvedBadge, priority: resolvedPriority,
       fields: [
         field('👤 Username', user.username || target, true),
         field('🆔 Discord ID', target, true)
@@ -12053,7 +12119,7 @@ app.post('/api/admin/notifications/send', requireAdmin, async (req, res) => {
       status: 'success',
       ip: getReqIp(req),
       description: `Admin mengirim pesan "${title}" ke ${user.username || target}.`,
-      meta: { target, title }
+      meta: { target, title, notifType: resolvedType, priority: resolvedPriority }
     }).catch(() => {});
     if (dm) {
       logActivity({

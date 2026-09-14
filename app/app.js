@@ -1199,6 +1199,15 @@ function enterApp(user) {
   // atas & resync tiap reconnect (lihat connectRealtime()).
   loadTutorials();
 
+  // NOTIFICATION CENTER — ambil list notifikasi + unread count begitu App
+  // dibuka/login (GET /api/notifications, backend existing). Database adalah
+  // source of truth: kalau event WS 'notification' terlewat selagi App
+  // offline, tetap muncul di sini karena diambil ulang dari backend, bukan
+  // dari state lama. Realtime selanjutnya lewat WS 'notification' &
+  // 'notification:unread-count', resync ulang tiap reconnect (lihat
+  // connectRealtime()).
+  if (typeof loadNotifications === 'function') loadNotifications();
+
   // Nyalakan shell UI APP DEMO (Dashboard/Games/Bypass/Histori) — lihat
   // definisi initAppShellDemo() di bagian bawah file. Dijaga guard supaya
   // tidak dobel-init kalau enterApp() sempat terpanggil lebih dari sekali
@@ -1699,6 +1708,13 @@ function connectRealtime() {
       // hilang begitu saja. Resync sekali di sini (requirement #9/#16 — "saat
       // reconnect, sync ulang konfigurasi/status dari backend").
       if (typeof loadActiveToolsConfig === 'function') loadActiveToolsConfig();
+      // NOTIFICATION CENTER — 'notification'/'notification:unread-count' juga
+      // fire-and-forget seperti event lain di atas: kalau koneksi WS sempat
+      // putus SELAGI Admin mengirim notifikasi, sinyalnya hilang begitu saja.
+      // Database tetap source of truth — resync ulang dari REST di sini
+      // supaya notifikasi yang terlewat tetap muncul setelah reconnect,
+      // tanpa perlu restart/refresh App.
+      if (typeof loadNotifications === 'function') loadNotifications();
     }
     // LIVE CHAT — resync riwayat/status Admin online setiap kali socket
     // (re)connect (lihat onSocketOpen() di livechat.js untuk penjelasan akar
@@ -1799,9 +1815,6 @@ function connectRealtime() {
       // Notifikasi personal (in-app) dari notifyUser() — dipakai a.l. oleh
       // fitur Admin Web "Kirim Notifikasi Gold Trial" (POST
       // /api/admin/gold-trial/notify) & notifikasi klaim sukses/gagal.
-      // Notifikasi jenis lain sengaja dibiarkan lewat dulu (belum ada
-      // halaman/lonceng notifikasi umum di App Demo ini) — lihat TODO di
-      // atas.
       if (typeof handleGoldTrialPushNotification === 'function') handleGoldTrialPushNotification(msg.data);
       // Welcome Popup TEST (Admin Web "Kirim Test" -> POST
       // /api/admin/welcome-popup/test -> notifyUser() existing, type
@@ -1811,6 +1824,17 @@ function connectRealtime() {
       if (msg.data?.type === 'welcome_popup_test' && typeof handleWelcomePopupTestPush === 'function') {
         handleWelcomePopupTestPush(msg.data.meta);
       }
+      // NOTIFICATION CENTER — SEMUA notifikasi (jenis apa pun) masuk ke sini,
+      // ditumpuk paling atas (createdAt terbaru dulu), unread count ikut
+      // bertambah. Kalau popup lagi terbuka, langsung dirender; kalau
+      // tertutup, cukup indicator unread yang bertambah (TIDAK auto-membuka
+      // popup), sesuai requirement poin #9.
+      if (typeof handleIncomingNotification === 'function') handleIncomingNotification(msg.data);
+    } else if (msg.event === 'notification:unread-count') {
+      // Dikirim bareng event 'notification' di atas (lihat notifyUser() di
+      // server.js) supaya badge lonceng bisa update tanpa query tambahan —
+      // juga dikirim sendirian oleh DELETE /api/notifications/:id.
+      if (typeof applyNotifUnreadCount === 'function') applyNotifUnreadCount(msg.data?.unread);
     } else if (msg.event === 'tutorials:update') {
       // Realtime Tutorial — server SUDAH broadcast event ini (lihat
       // broadcastPublishedTutorials() di server.js) setiap kali Admin Web
@@ -4270,6 +4294,327 @@ function openRealBypassDetailById(id) {
       if(menu.classList.contains('open')) closeProfileMenu();
     }
   });
+
+  /* ══════════════════════════════════════════════════════════════════════
+     NOTIFICATION CENTER — memakai backend notifikasi EXISTING 100%:
+       GET    /api/notifications          (list + unread count + pagination)
+       PUT    /api/notifications/:id/read
+       PUT    /api/notifications/read-all
+       DELETE /api/notifications/:id
+       WS 'notification' / 'notification:unread-count' (realtime)
+     TIDAK ada sistem notifikasi baru/duplikat dibuat di sini — murni
+     menyambungkan UI Notification Center ke API & WS existing.
+     ══════════════════════════════════════════════════════════════════════ */
+  let _notifItems = [];       // array notifikasi ter-load, terbaru duluan
+  let _notifUnread = 0;
+  let _notifSkip = 0;
+  let _notifHasMore = false;
+  let _notifLoading = false;
+  let _notifLoadState = 'idle'; // idle | loading | loaded | error
+  const NOTIF_PAGE_SIZE = 20;
+
+  // Badge (kategori notifikasi, disimpan server-side lewat notifyUser()/
+  // NOTIF_META & ADMIN_NOTIF_TYPES) -> icon Lucide di sprite index.html.
+  // SATU-SATUNYA mapping icon di App — kalau backend menambah badge baru,
+  // cukup tambah 1 baris di sini, tidak perlu ubah tempat lain.
+  const NOTIF_BADGE_ICON = {
+    game: 'ic-gamepad-2', bypass: 'ic-shield', game_bypass: 'ic-gamepad-2',
+    user: 'ic-user', paket: 'ic-package', voucher: 'ic-ticket',
+    request_game: 'ic-send', payment: 'ic-credit-card', update: 'ic-refresh-cw',
+    admin: 'ic-shield-check', security: 'ic-lock', system: 'ic-settings',
+    maintenance: 'ic-alert-triangle', welcome: 'ic-sparkles',
+    gold_trial: 'ic-crown', marketplace: 'ic-shopping-bag', download: 'ic-arrow-down-to-line'
+  };
+  function _notifIcon(badge){ return NOTIF_BADGE_ICON[badge] || 'ic-bell'; }
+
+  function _notifTimeAgo(dateStr){
+    const d = new Date(dateStr).getTime();
+    if (!Number.isFinite(d)) return '';
+    const diff = Math.max(0, Date.now() - d);
+    const min = Math.floor(diff / 60000);
+    if (min < 1) return 'Baru saja';
+    if (min < 60) return `${min} menit lalu`;
+    const hr = Math.floor(min / 60);
+    if (hr < 24) return `${hr} jam lalu`;
+    const day = Math.floor(hr / 24);
+    if (day < 7) return `${day} hari lalu`;
+    return new Date(d).toLocaleDateString('id-ID', { day: 'numeric', month: 'short', year: 'numeric' });
+  }
+
+  function toggleNotifCenter(){
+    const popup = document.getElementById('notifCenterPopup');
+    const btn = document.getElementById('notifBellBtn');
+    if (!popup || !btn) return;
+    const willOpen = !popup.classList.contains('open');
+    if (willOpen) {
+      closeProfileMenu();
+      popup.classList.add('open');
+      btn.setAttribute('aria-expanded', 'true');
+      // Kalau belum pernah berhasil load (mis. gagal/error sebelumnya, atau
+      // ini pertama kali dibuka sebelum enterApp() sempat memanggil
+      // loadNotifications()), coba muat sekarang.
+      if (_notifLoadState === 'idle' || _notifLoadState === 'error') loadNotifications();
+    } else {
+      closeNotifCenter();
+    }
+  }
+  function closeNotifCenter(){
+    const popup = document.getElementById('notifCenterPopup');
+    const btn = document.getElementById('notifBellBtn');
+    if (!popup || !btn) return;
+    popup.classList.remove('open');
+    btn.setAttribute('aria-expanded', 'false');
+  }
+  document.addEventListener('click', (e)=>{
+    const popup = document.getElementById('notifCenterPopup');
+    const btn = document.getElementById('notifBellBtn');
+    if (popup && btn && !popup.contains(e.target) && !btn.contains(e.target)) {
+      closeNotifCenter();
+    }
+  });
+  document.addEventListener('keydown', (e)=>{
+    if (e.key === 'Escape') {
+      const popup = document.getElementById('notifCenterPopup');
+      if (popup && popup.classList.contains('open')) closeNotifCenter();
+    }
+  });
+
+  // Update bell indicator (dot) + badge angka unread di header popup —
+  // dipanggil dari loadNotifications(), handleIncomingNotification(), DAN
+  // langsung dari event WS 'notification:unread-count' (applyNotifUnreadCount).
+  function _notifRenderUnreadIndicator(pulse){
+    const dot = document.getElementById('notifUnreadDot');
+    const badge = document.getElementById('notifCenterUnreadBadge');
+    const markAllBtn = document.getElementById('notifMarkAllBtn');
+    if (dot) {
+      dot.hidden = _notifUnread <= 0;
+      if (pulse && _notifUnread > 0) {
+        dot.classList.remove('pulse');
+        void dot.offsetWidth; // restart animation
+        dot.classList.add('pulse');
+      }
+    }
+    if (badge) {
+      badge.hidden = _notifUnread <= 0;
+      badge.textContent = _notifUnread > 99 ? '99+' : String(_notifUnread);
+    }
+    if (markAllBtn) markAllBtn.disabled = _notifUnread <= 0;
+  }
+  function applyNotifUnreadCount(unread){
+    if (typeof unread !== 'number') return;
+    _notifUnread = unread;
+    _notifRenderUnreadIndicator(false);
+  }
+
+  function _notifStateHtml(kind){
+    if (kind === 'loading') {
+      return Array.from({ length: 4 }).map(() => `
+        <div class="notif-skeleton-item">
+          <div class="notif-skeleton-icon"></div>
+          <div class="notif-skeleton-lines">
+            <div class="notif-skeleton-line" style="width:70%;"></div>
+            <div class="notif-skeleton-line" style="width:95%;"></div>
+            <div class="notif-skeleton-line" style="width:40%;"></div>
+          </div>
+        </div>`).join('');
+    }
+    if (kind === 'empty') {
+      return `
+        <div class="notif-center-state">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><use href="#ic-inbox"></use></svg>
+          <span class="notif-state-text">Belum ada notifikasi</span>
+        </div>`;
+    }
+    if (kind === 'error') {
+      return `
+        <div class="notif-center-state">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><use href="#ic-alert-triangle"></use></svg>
+          <span class="notif-state-text">Gagal memuat notifikasi</span>
+          <button class="notif-state-retry" onclick="loadNotifications()">Coba lagi</button>
+        </div>`;
+    }
+    return '';
+  }
+
+  function _notifItemHtml(n){
+    const badge = n.badge || 'system';
+    const isUnread = !n.read;
+    return `
+      <div class="notif-item ${isUnread ? 'unread' : 'read'}" data-id="${escapeHtml(n._id || '')}" onclick="handleNotifItemClick('${escapeHtml(n._id || '')}')">
+        <div class="notif-item-icon"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><use href="#${_notifIcon(badge)}"></use></svg></div>
+        <div class="notif-item-body">
+          <div class="notif-item-title-row"><span class="notif-item-title">${escapeHtml(n.title || '')}</span></div>
+          <div class="notif-item-desc">${escapeHtml(n.message || '')}</div>
+          <div class="notif-item-meta-row">
+            ${isUnread ? '<span class="notif-item-unread-mark"></span>' : ''}
+            <span class="notif-item-time">${_notifTimeAgo(n.createdAt)}</span>
+          </div>
+        </div>
+        <button class="notif-item-delete" title="Hapus" onclick="event.stopPropagation(); deleteNotification('${escapeHtml(n._id || '')}')">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><use href="#ic-trash-2"></use></svg>
+        </button>
+      </div>`;
+  }
+
+  function renderNotifCenterList(){
+    const body = document.getElementById('notifCenterBody');
+    if (!body) return;
+    if (_notifLoadState === 'loading' && !_notifItems.length) {
+      body.innerHTML = _notifStateHtml('loading');
+      return;
+    }
+    if (_notifLoadState === 'error' && !_notifItems.length) {
+      body.innerHTML = _notifStateHtml('error');
+      return;
+    }
+    if (!_notifItems.length) {
+      body.innerHTML = _notifStateHtml('empty');
+      return;
+    }
+    body.innerHTML = _notifItems.map(_notifItemHtml).join('') +
+      (_notifHasMore ? `<button class="notif-load-more" id="notifLoadMoreBtn" onclick="loadMoreNotifications()">Muat lebih banyak</button>` : '');
+  }
+
+  // Ambil halaman PERTAMA (skip=0) — dipanggil dari enterApp() (startup/login)
+  // & connectRealtime() (tiap reconnect), JUGA dipanggil ulang kalau bell
+  // diklik sebelum load pertama berhasil (lihat toggleNotifCenter()).
+  async function loadNotifications(){
+    if (_notifLoading) return;
+    _notifLoading = true;
+    _notifLoadState = 'loading';
+    if (!_notifItems.length) renderNotifCenterList();
+    try {
+      const res = await api(`/api/notifications?limit=${NOTIF_PAGE_SIZE}&skip=0`);
+      _notifItems = res.items || [];
+      _notifSkip = _notifItems.length;
+      _notifHasMore = !!res.hasMore;
+      _notifUnread = res.unread || 0;
+      _notifLoadState = 'loaded';
+      renderNotifCenterList();
+      _notifRenderUnreadIndicator(false);
+    } catch (e) {
+      console.warn('[Notification Center] Gagal memuat notifikasi:', e.message);
+      _notifLoadState = 'error';
+      renderNotifCenterList();
+    } finally {
+      _notifLoading = false;
+    }
+  }
+
+  // "Load more" — TIDAK slice frontend, murni pagination dari backend
+  // (skip/limit), sesuai requirement poin #2.
+  async function loadMoreNotifications(){
+    if (_notifLoading || !_notifHasMore) return;
+    _notifLoading = true;
+    const btn = document.getElementById('notifLoadMoreBtn');
+    if (btn) { btn.disabled = true; btn.textContent = 'Memuat...'; }
+    try {
+      const res = await api(`/api/notifications?limit=${NOTIF_PAGE_SIZE}&skip=${_notifSkip}`);
+      const items = res.items || [];
+      _notifItems = _notifItems.concat(items);
+      _notifSkip += items.length;
+      _notifHasMore = !!res.hasMore;
+      renderNotifCenterList();
+    } catch (e) {
+      showToast('error', 'Gagal memuat notifikasi tambahan.');
+      if (btn) { btn.disabled = false; btn.textContent = 'Muat lebih banyak'; }
+    } finally {
+      _notifLoading = false;
+    }
+  }
+
+  // Klik notification item -> mark as read (kalau masih unread) lewat
+  // endpoint existing, optimistic update di UI supaya terasa instan.
+  function handleNotifItemClick(id){
+    if (!id) return;
+    const item = _notifItems.find(n => String(n._id) === String(id));
+    if (!item || item.read) return;
+    item.read = true;
+    _notifUnread = Math.max(0, _notifUnread - 1);
+    renderNotifCenterList();
+    _notifRenderUnreadIndicator(false);
+    api(`/api/notifications/${id}/read`, { method: 'PUT' }).catch(() => {});
+  }
+  window.handleNotifItemClick = handleNotifItemClick;
+
+  function markAllNotificationsRead(){
+    if (_notifUnread <= 0) return;
+    _notifItems.forEach(n => { n.read = true; });
+    _notifUnread = 0;
+    renderNotifCenterList();
+    _notifRenderUnreadIndicator(false);
+    api('/api/notifications/read-all', { method: 'PUT' }).catch(() => {
+      showToast('error', 'Gagal menandai semua sebagai dibaca.');
+    });
+  }
+  window.markAllNotificationsRead = markAllNotificationsRead;
+
+  // Set id notifikasi yang sedang dalam proses hapus (in-flight) — cuma
+  // penjaga tambahan supaya klik dobel yang sangat cepat (sebelum re-render
+  // sempat melepas tombolnya dari DOM) tidak memicu 2x request DELETE untuk
+  // id yang sama.
+  const _notifDeleting = new Set();
+
+  function deleteNotification(id){
+    if (!id || _notifDeleting.has(id)) return;
+    const idx = _notifItems.findIndex(n => String(n._id) === String(id));
+    if (idx === -1) return;
+    const removed = _notifItems[idx];
+    const wasUnread = !removed.read;
+
+    _notifDeleting.add(id);
+    _notifItems.splice(idx, 1);
+    if (wasUnread) _notifUnread = Math.max(0, _notifUnread - 1);
+    renderNotifCenterList();
+    _notifRenderUnreadIndicator(false);
+
+    api(`/api/notifications/${id}`, { method: 'DELETE' }).then(res => {
+      _notifDeleting.delete(id);
+      if (typeof res?.unread === 'number') applyNotifUnreadCount(res.unread);
+    }).catch(() => {
+      // ROLLBACK — SEBELUMNYA kalau request DELETE ini gagal (network putus,
+      // sesi expired, error server, dst), notifikasi TETAP dihapus dari
+      // _notifItems (cuma toast error yang muncul, item tidak dikembalikan).
+      // Efeknya persis yang dilaporkan: notifikasi "hilang" dari Notification
+      // Center walau sebenarnya gagal terhapus di DB, lalu begitu App dibuka
+      // ulang & list di-fetch ulang dari server, notifikasi itu muncul lagi
+      // (karena memang tidak pernah benar-benar terhapus).
+      // FIX: kalau DELETE gagal, kembalikan item ke posisi semula di
+      // _notifItems + kembalikan status unread-nya, supaya tampilan App
+      // selalu konsisten dengan kondisi asli di server sampai user coba
+      // hapus lagi (dan berhasil).
+      _notifDeleting.delete(id);
+      if (!_notifItems.some(n => String(n._id) === String(id))) {
+        _notifItems.splice(Math.min(idx, _notifItems.length), 0, removed);
+      }
+      if (wasUnread) _notifUnread += 1;
+      renderNotifCenterList();
+      _notifRenderUnreadIndicator(false);
+      showToast('error', 'Gagal menghapus notifikasi. Coba lagi.');
+    });
+  }
+  window.deleteNotification = deleteNotification;
+
+  // Event WS 'notification' — notifikasi BARU masuk realtime. Dedup by _id
+  // (mencegah duplikat kalau server sempat kirim ulang/reconnect race).
+  function handleIncomingNotification(data){
+    if (!data || !data._id) return;
+    const id = String(data._id);
+    if (_notifItems.some(n => String(n._id) === id)) return; // sudah ada, skip
+    _notifItems.unshift(data);
+    if (!data.read) _notifUnread += 1;
+    _notifLoadState = 'loaded';
+    const popup = document.getElementById('notifCenterPopup');
+    if (popup && popup.classList.contains('open')) renderNotifCenterList();
+    _notifRenderUnreadIndicator(true);
+  }
+  window.handleIncomingNotification = handleIncomingNotification;
+  window.applyNotifUnreadCount = applyNotifUnreadCount;
+  window.loadNotifications = loadNotifications;
+  window.loadMoreNotifications = loadMoreNotifications;
+  window.toggleNotifCenter = toggleNotifCenter;
+  window.closeNotifCenter = closeNotifCenter;
+  /* ── AKHIR NOTIFICATION CENTER ── */
 
   /* =====================================================
      REDEEM VOUCHER — popup dibuka dari Profile Dropdown.
@@ -8629,6 +8974,7 @@ function openRealBypassDetailById(id) {
   function openPackageAccessModal({ title, requiredRole, gated, productIds }) {
     const modal = document.getElementById('pkgAccessModal');
     if (!modal) return;
+    const titleEl = document.getElementById('pkgAccessTitle');
     const iconEl = document.getElementById('pkgAccessIcon');
     const descEl = document.getElementById('pkgAccessDesc');
     const compareEl = modal.querySelector('.pkgacc-compare');
@@ -8644,9 +8990,13 @@ function openRealBypassDetailById(id) {
       // Product terkait (lihat hasCatalogAccess() di server.js). Halaman
       // detail Marketplace Product SEKARANG SUDAH ADA (openMarketplaceDetail())
       // jadi CTA-nya diaktifkan lagi (sebelumnya sengaja disembunyikan).
+      // Copy popup ini WAJIB "Kamu Tidak Memiliki Akses" + CTA "Beli Sekarang"
+      // (beda dari kasus non-Marketplace di bawah yang tetap "Akses Paket
+      // Diperlukan" / "Upgrade Sekarang" — TIDAK diubah).
       modal.dataset.accent = 'public';
+      if (titleEl) titleEl.textContent = 'Kamu Tidak Memiliki Akses';
       iconEl.innerHTML = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-lock"></use></svg>';
-      descEl.textContent = `${title || 'Item ini'} adalah konten Marketplace — beli atau minta whitelist product terkait terlebih dahulu untuk membuka akses.`;
+      descEl.textContent = `${title || 'Item ini'} adalah konten Marketplace — kamu perlu membeli produk Marketplace terkait terlebih dahulu untuk mendapatkan akses (atau hubungi admin untuk whitelist).`;
       compareEl.style.display = 'none';
 
       // Satu item BISA masuk ke lebih dari satu Product (lihat komentar
@@ -8669,10 +9019,10 @@ function openRealBypassDetailById(id) {
         }
 
         ctaBtn.style.display = '';
-        ctaBtn.textContent = 'Lihat Produk';
+        ctaBtn.textContent = 'Beli Sekarang';
         ctaBtn.onclick = () => {
           closePackageAccessModal();
-          openMarketplaceDetail(reqProductId); // routing existing, productId dari backend
+          openMarketplaceDetail(reqProductId); // routing existing, productId dari backend — halaman detail produk itulah tempat user benar-benar membeli.
         };
       } else {
         // Fallback aman kalau (secara tidak terduga) productIds kosong —
@@ -8686,6 +9036,7 @@ function openRealBypassDetailById(id) {
       const reqRole = requiredRole || 'gold';
       const reqLabel = ROLE_DISPLAY_NAME[reqRole] || reqRole;
 
+      if (titleEl) titleEl.textContent = 'Akses Paket Diperlukan'; // restore default — beda kasus dari Marketplace di atas
       modal.dataset.accent = reqRole === 'platinum' ? 'platinum' : (reqRole === 'gold' ? 'gold' : 'public');
       iconEl.innerHTML = reqRole === 'platinum'
         ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-gem"></use></svg>'

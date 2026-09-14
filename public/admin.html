@@ -440,6 +440,10 @@
           <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z"/></svg></span>
           Notifications Channel Setting
         </button>
+        <button class="nav-item" data-page="notifsend">
+          <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M18 8a6 6 0 00-12 0c0 7-3 9-3 9h18s-3-2-3-9M13.73 21a2 2 0 01-3.46 0"/></svg></span>
+          Kirim Notifikasi
+        </button>
         <button class="nav-item" data-page="packageembeds">
           <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M9 13h6m-6 4h6M9 5h6a2 2 0 012 2v10a2 2 0 01-2 2H9a2 2 0 01-2-2V7a2 2 0 012-2zM9 9h1"/></svg></span>
           Package Embed Builder
@@ -1336,6 +1340,30 @@
           </div>
           <div class="nc-test-result" id="ncTestResult"></div>
         </div>
+      </div>
+    </section>
+
+    <!-- KIRIM NOTIFIKASI — Notification Composer + Live Preview (redesign total
+         dari modal prompt()/confirm() lama). Memakai backend notifikasi
+         EXISTING 100% (GET /api/admin/notifications/types, POST
+         /api/admin/notifications/send, GET /api/admin/users/lookup) — TIDAK
+         ada endpoint/field baru yang ditambahkan di sini. Lihat renderNotifSendPage()
+         di admin.js. -->
+    <section class="page" id="pageNotifsend">
+      <div class="page-header">
+        <div class="page-header-left">
+          <div class="page-header-icon" style="background:rgba(123,92,255,.16);"><svg class="icon icon-16"><use href="#ic-megaphone"></use></svg></div>
+          <div>
+            <div class="page-header-title">Kirim Notifikasi</div>
+            <div class="page-header-desc">Kirim notifikasi in-app ke satu user atau seluruh user, tersimpan lewat backend &amp; Socket.IO existing, dan langsung muncul di Notification Center App. Preview di kanan mencerminkan tampilan asli yang dilihat user.</div>
+          </div>
+        </div>
+        <div class="page-header-right">
+          <span class="ns-realtime-badge" id="nsRealtimeBadge"><span class="ns-realtime-dot"></span> Memeriksa...</span>
+        </div>
+      </div>
+      <div id="notifSendRoot" class="ns-root">
+        <div class="nc-skeleton-grid"><div class="nc-skeleton-card"></div><div class="nc-skeleton-card"></div></div>
       </div>
     </section>
 

@@ -192,6 +192,16 @@
     letter-spacing:.05em; color:#e9e7f6; opacity:.88; white-space:nowrap;
     overflow:hidden; text-overflow:ellipsis; transition:opacity .3s ease;
   }
+  /* Bungkus NOTIFICATION CENTER + window controls jadi satu grup kanan di
+     titlebar (titlebar cuma punya 2 kolom lewat justify-content:space-between:
+     .app-brand di kiri, grup ini di kanan). Ditaruh di sini (BUKAN di
+     .navbar) supaya bell TIDAK PERNAH bisa ketabrak nav-items (yang
+     di-center position:absolute relatif ke .navbar) atau .profile — beda
+     row/container sama sekali, jadi collision mustahil terjadi lagi berapa
+     pun lebar menu/window. -webkit-app-region:no-drag di-set di sini (bukan
+     cuma di .win-controls seperti sebelumnya) supaya notif-center-wrap yang
+     baru ikut jadi area klik, bukan area drag titlebar. */
+  .titlebar-right{ display:flex; align-items:center; gap:14px; -webkit-app-region: no-drag; }
   .win-controls{ display:flex; align-items:center; gap:16px; -webkit-app-region: no-drag; }
   .win-controls button{
     background:none;border:none;padding:6px;margin:0;
@@ -552,6 +562,190 @@
   .pm-item.pm-danger svg{ color:#E8A7A0; }
   .pm-item.pm-danger:hover{ background:#E0665A1c; color:#FF9F92; }
   .pm-item.pm-danger:hover svg{ color:#FF9F92; }
+
+  /* ══════════════════════════════════════════════════════════════════════
+     NOTIFICATION CENTER — bell icon top bar + popup, memakai backend
+     notifikasi EXISTING 100% (GET/PUT/DELETE /api/notifications*, WS event
+     'notification' & 'notification:unread-count'). Desain: dark premium,
+     deep navy + subtle violet accent (reuse --bg-navy/--violet/--surface-solid
+     yang SUDAH ada, tidak menambah token warna baru), TANPA blur berlebihan
+     (background App Customization tetap harus terlihat natural — beda dengan
+     .profile-menu yang pakai backdrop-filter blur 18px). ══════════════════ */
+  .notif-center-wrap{ position:relative; flex:none; }
+
+  /* Ukuran diperbesar sedikit dari revisi sebelumnya (26px -> 32px) atas
+     permintaan — tetap muat nyaman di dalam .titlebar (height:34px, lihat
+     "Title bar" di atas) karena di-align-items:center. */
+  .notif-bell-btn{
+    position:relative; display:flex; align-items:center; justify-content:center;
+    width:32px; height:32px; padding:0;
+    background:rgba(20,26,42,.38);
+    border:1px solid rgba(255,255,255,.07); border-radius:10px;
+    color:var(--text-secondary); cursor:pointer;
+    transition:background-color .18s ease, border-color .18s ease, color .18s ease;
+  }
+  .notif-bell-btn:hover{ background:rgba(24,34,56,.5); border-color:rgba(255,255,255,.16); color:#fff; }
+  .notif-bell-btn[aria-expanded="true"]{
+    background:var(--violet-bg); border-color:var(--violet-border); color:var(--violet);
+  }
+  .notif-bell-btn svg{ width:17px; height:17px; }
+  .notif-unread-dot{
+    position:absolute; top:2px; right:2px;
+    width:7px; height:7px; border-radius:50%;
+    background:var(--violet); box-shadow:0 0 0 2px #0B1530, 0 0 8px 1px #9B87E870;
+  }
+  .notif-unread-dot[hidden]{ display:none; }
+  .notif-unread-dot.pulse{ animation:notifDotPulse 1.6s ease-out 1; }
+  @keyframes notifDotPulse{
+    0%{ box-shadow:0 0 0 2px #0B1530, 0 0 0 0 #9B87E870; }
+    70%{ box-shadow:0 0 0 2px #0B1530, 0 0 0 8px #9B87E800; }
+    100%{ box-shadow:0 0 0 2px #0B1530, 0 0 8px 1px #9B87E870; }
+  }
+
+  .notif-center-popup{
+    /* top disesuaikan mengikuti tinggi tombol bell yang sekarang 32px di
+       dalam .titlebar (34px) — tetap menggantung rapat tepat di bawahnya. */
+    position:absolute; top:38px; right:0;
+    width:380px; max-width:calc(100vw - 32px);
+    display:none; flex-direction:column;
+    background:
+      radial-gradient(180px 120px at 100% 0%, #9B87E81a 0%, transparent 70%),
+      linear-gradient(180deg, #151d30f0, #0B1530f5);
+    border:1px solid var(--border-subtle);
+    border-radius:16px;
+    box-shadow:0 28px 60px -16px rgba(0,0,0,.7), 0 0 0 1px #ffffff08 inset;
+    z-index:30; overflow:hidden;
+    transform-origin:top right;
+  }
+  .notif-center-popup.open{ display:flex; animation:notifPopupIn .2s cubic-bezier(.4,0,.2,1); }
+  @keyframes notifPopupIn{
+    from{ opacity:0; transform:translateY(-6px) scale(.97); }
+    to{ opacity:1; transform:translateY(0) scale(1); }
+  }
+
+  .notif-center-header{
+    flex:none; display:flex; align-items:center; justify-content:space-between; gap:10px;
+    padding:14px 8px 14px 16px;
+    border-bottom:1px solid var(--border-subtle);
+  }
+  .notif-center-title-row{ display:flex; align-items:center; gap:8px; min-width:0; }
+  .notif-center-title{ font-size:14.5px; font-weight:700; color:#fff; letter-spacing:.1px; }
+  .notif-center-unread-badge{
+    flex:none; font-size:11px; font-weight:700; color:var(--violet);
+    background:var(--violet-bg); border:1px solid var(--violet-border);
+    border-radius:var(--radius-pill); padding:1px 8px; line-height:1.5;
+  }
+  .notif-center-unread-badge[hidden]{ display:none; }
+  .notif-center-header-actions{ display:flex; align-items:center; gap:4px; flex:none; }
+  .notif-mark-all-btn{
+    background:none; border:none; font-family:inherit; cursor:pointer;
+    font-size:11.5px; font-weight:600; color:var(--text-secondary);
+    padding:6px 8px; border-radius:8px; transition:color .15s ease, background-color .15s ease;
+    white-space:nowrap;
+  }
+  .notif-mark-all-btn:hover{ color:var(--violet); background:#ffffff0a; }
+  .notif-mark-all-btn[disabled]{ opacity:.4; pointer-events:none; }
+  .notif-close-btn{
+    width:26px; height:26px; display:flex; align-items:center; justify-content:center;
+    padding:0; background:#ffffff08; border:1px solid var(--border-subtle); border-radius:8px;
+    color:var(--text-secondary); cursor:pointer; flex:none;
+    transition:background-color .15s ease, color .15s ease, border-color .15s ease;
+  }
+  .notif-close-btn svg{ width:13px; height:13px; }
+  .notif-close-btn:hover{ background:#E0665A1c; color:#FF9F92; border-color:#E0665A33; }
+
+  /* Body — scroll internal SAJA (list-nya), header & footer tetap diam.
+     max-height dijaga di semua resolusi target (1280x720 s/d 1920x1080). */
+  .notif-center-body{
+    flex:1 1 auto; min-height:0; max-height:min(56vh, 460px);
+    overflow-y:auto; overflow-x:hidden;
+    display:flex; flex-direction:column;
+    scrollbar-width:thin; scrollbar-color:#3A455C transparent;
+  }
+  .notif-center-body::-webkit-scrollbar{ width:6px; }
+  .notif-center-body::-webkit-scrollbar-thumb{ background:#3A455C; border-radius:99px; }
+
+  .notif-item{
+    display:flex; gap:11px; padding:12px 16px;
+    border-bottom:1px solid #ffffff0a;
+    cursor:pointer; position:relative;
+    transition:background-color .18s ease;
+  }
+  .notif-item:last-child{ border-bottom:none; }
+  .notif-item:hover{ background:#ffffff07; }
+  .notif-item.unread{ background:#9B87E80c; }
+  .notif-item.unread:hover{ background:#9B87E815; }
+  .notif-item.unread::before{
+    content:''; position:absolute; left:0; top:0; bottom:0; width:2.5px;
+    background:var(--violet);
+  }
+  .notif-item-icon{
+    flex:none; width:34px; height:34px; border-radius:10px;
+    display:flex; align-items:center; justify-content:center;
+    background:var(--violet-bg); color:var(--violet); margin-top:1px;
+  }
+  .notif-item-icon svg{ width:16px; height:16px; }
+  .notif-item-body{ flex:1 1 auto; min-width:0; display:flex; flex-direction:column; gap:2px; }
+  .notif-item-title-row{ display:flex; align-items:center; gap:6px; }
+  .notif-item-title{
+    font-size:13px; font-weight:600; color:#fff; line-height:1.35;
+    overflow:hidden; text-overflow:ellipsis; display:-webkit-box;
+    -webkit-line-clamp:1; -webkit-box-orient:vertical;
+  }
+  .notif-item.read .notif-item-title{ color:var(--text-secondary); font-weight:500; }
+  .notif-item-desc{
+    font-size:12px; color:var(--text-secondary); line-height:1.45;
+    overflow:hidden; text-overflow:ellipsis; display:-webkit-box;
+    -webkit-line-clamp:2; -webkit-box-orient:vertical;
+  }
+  .notif-item.read .notif-item-desc{ color:var(--text-disabled); }
+  .notif-item-meta-row{ display:flex; align-items:center; gap:6px; margin-top:2px; }
+  .notif-item-time{ font-size:11px; color:var(--text-disabled); }
+  .notif-item-unread-mark{ width:6px; height:6px; border-radius:50%; background:var(--violet); flex:none; }
+  .notif-item-delete{
+    flex:none; align-self:flex-start; width:24px; height:24px; margin-top:1px;
+    display:flex; align-items:center; justify-content:center; padding:0;
+    background:none; border:none; border-radius:7px; color:var(--text-disabled);
+    opacity:0; cursor:pointer; transition:opacity .15s ease, background-color .15s ease, color .15s ease;
+  }
+  .notif-item:hover .notif-item-delete{ opacity:1; }
+  .notif-item-delete svg{ width:14px; height:14px; }
+  .notif-item-delete:hover{ background:#E0665A1c; color:#FF9F92; }
+
+  .notif-load-more{
+    flex:none; margin:6px 16px 14px; padding:9px; text-align:center;
+    background:#ffffff08; border:1px solid var(--border-subtle); border-radius:10px;
+    color:var(--text-secondary); font-size:12px; font-weight:600; cursor:pointer;
+    transition:background-color .15s ease, color .15s ease;
+  }
+  .notif-load-more:hover{ background:#ffffff10; color:#fff; }
+  .notif-load-more[disabled]{ opacity:.5; pointer-events:none; }
+
+  /* Loading — skeleton item, bukan spinner besar mengganggu */
+  .notif-skeleton-item{ display:flex; gap:11px; padding:12px 16px; }
+  .notif-skeleton-icon{ width:34px; height:34px; border-radius:10px; flex:none; background:#ffffff0c; }
+  .notif-skeleton-lines{ flex:1; display:flex; flex-direction:column; gap:7px; padding-top:3px; }
+  .notif-skeleton-line{ height:9px; border-radius:5px; background:#ffffff0c; }
+  .notif-skeleton-icon, .notif-skeleton-line{ animation:notifSkeletonPulse 1.3s ease-in-out infinite; }
+  @keyframes notifSkeletonPulse{ 0%,100%{ opacity:.6; } 50%{ opacity:1; } }
+
+  /* Empty / Error state — tanpa emoji, icon Lucide + teks singkat */
+  .notif-center-state{
+    flex:1; display:flex; flex-direction:column; align-items:center; justify-content:center;
+    text-align:center; gap:10px; padding:44px 24px;
+  }
+  .notif-center-state svg{ width:34px; height:34px; color:var(--text-disabled); }
+  .notif-center-state .notif-state-text{ font-size:13px; color:var(--text-secondary); font-weight:500; }
+  .notif-center-state .notif-state-retry{
+    margin-top:2px; background:var(--violet-bg); border:1px solid var(--violet-border);
+    color:var(--violet); font-family:inherit; font-size:12px; font-weight:700;
+    padding:7px 16px; border-radius:9px; cursor:pointer; transition:background-color .15s ease;
+  }
+  .notif-center-state .notif-state-retry:hover{ background:#9B87E836; }
+
+  @media (max-width:1366px){
+    .notif-center-popup{ width:340px; }
+  }
 
   /* ---------- Page content ---------- */
   .page{ flex:1 1 auto; display:none; flex-direction:column; min-height:0; }

@@ -54,7 +54,17 @@ const BADGE = {
   update:       { emoji: '🚀', label: 'Update' },
   admin:        { emoji: '🛡️', label: 'Admin' },
   security:     { emoji: '🔐', label: 'Security' },
-  system:       { emoji: '⚙️', label: 'System' }
+  system:       { emoji: '⚙️', label: 'System' },
+  // Ditambahkan untuk lengkapi Notification Center (APP) & Admin Web
+  // "Kirim Notifikasi" — badge/kategori TAMBAHAN, dipakai sebagai satu-satunya
+  // sumber kebenaran icon/label baik untuk embed Discord (di sini) maupun
+  // Notification Center di APP (lihat GET /api/admin/notifications/types &
+  // NOTIF_BADGE_ICON di app.js). Tidak mengubah/menghapus badge yang sudah ada.
+  maintenance:  { emoji: '🧰', label: 'Maintenance' },
+  welcome:      { emoji: '👋', label: 'Welcome' },
+  gold_trial:   { emoji: '👑', label: 'Gold Trial' },
+  marketplace:  { emoji: '🛍️', label: 'Marketplace' },
+  download:     { emoji: '⬇️', label: 'Download' }
 };
 
 function badgeMeta(badge) {
