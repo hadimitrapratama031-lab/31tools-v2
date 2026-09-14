@@ -81,6 +81,13 @@ const APP_ROUTE_IDS = APP_ROUTES.map(r => r.id);
 const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB — cukup longgar untuk banner tapi tidak seberat App Customization background (10MB)
 const IMAGE_MIME_WHITELIST = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
 
+// Dipakai HANYA oleh listBannersLight() di bawah — placeholder pengganti
+// data URI base64 asli supaya isHeavyDataUri()/toLightPayload() tetap
+// mengarahkan client ke endpoint gambar ringan (/api/banners/:id/image),
+// TANPA byte base64 sungguhan pernah ditarik dari MongoDB saat listing.
+// Bukan gambar sungguhan — tidak pernah didekode di mana pun.
+const DATA_URI_SENTINEL = 'data:image/placeholder;base64,';
+
 function oid(id) {
   return ObjectId.isValid(id) ? new ObjectId(id) : null;
 }
@@ -204,6 +211,52 @@ module.exports = function createBannerManager({ getDb, wsBroadcastAll }) {
     const db = getDb();
     if (!db) return [];
     const docs = await db.collection(COLLECTION).find({}).sort({ order: 1 }).toArray();
+    return docs.map(mergeBanner);
+  }
+
+  // ── PERF — AKAR MASALAH SISA "Memuat banner..." lama ─────────────────────
+  // GET /api/banners (publik, dipanggil APP tiap buka Dashboard/reconnect) &
+  // GET /api/admin/banners (dipanggil Admin Web tiap buka Setting Banner)
+  // SEBELUMNYA sama-sama memanggil listBannersRaw() — yaitu menarik dokumen
+  // LENGKAP tiap banner dari MongoDB, TERMASUK gambar base64 (sampai 8 MB
+  // PER banner), padahal toPublicList()/toAdminList() ujung-ujungnya CUMA
+  // memakai path endpoint ringan (/api/banners/:id/image) dan MEMBUANG
+  // base64-nya. Jadi setiap kali halaman Setting Banner dibuka atau APP
+  // fetch ulang banner (termasuk tiap sinyal WS 'banners:update'), server
+  // tetap menarik SEMUA byte gambar dari database ke Node cuma untuk
+  // dibuang — inilah sisa penyebab nyata "Memuat banner..." masih lama
+  // walau reorder/delete/broadcastUpdate() sudah diperbaiki (lihat
+  // listOrderIndex() & broadcastUpdate() di atas, pola PERF yang sama).
+  //
+  // Perbaikan: aggregation dengan $project yang mendeteksi "apakah image.url
+  // ini data URI base64?" LANGSUNG DI DALAM MongoDB (via $substrCP pada 5
+  // karakter pertama) — kalau ya, ganti dengan DATA_URI_SENTINEL (string
+  // pendek, cuma dipakai supaya toLightPayload()/isHeavyDataUri() tetap
+  // mengenalinya sebagai "butuh diarahkan ke endpoint gambar", TANPA byte
+  // base64 aslinya pernah keluar dari MongoDB/lewat network sama sekali).
+  // URL http(s) biasa (atau kosong) diteruskan apa adanya (sudah ringan).
+  // Field lain (eyebrow/title/description/button/dll) kecil, jadi tetap
+  // diproyeksikan penuh seperti biasa — tidak ada perilaku yang hilang,
+  // cuma byte gambar yang tidak pernah ditarik saat listing.
+  async function listBannersLight() {
+    const db = getDb();
+    if (!db) return [];
+    const docs = await db.collection(COLLECTION).aggregate([
+      { $sort: { order: 1 } },
+      { $project: {
+          order: 1, status: 1, eyebrow: 1, title: 1, description: 1, position: 1, button: 1,
+          createdAt: 1, updatedAt: 1,
+          image: {
+            url: {
+              $cond: [
+                { $eq: [ { $substrCP: [ { $ifNull: ['$image.url', ''] }, 0, 5 ] }, 'data:' ] },
+                DATA_URI_SENTINEL,
+                { $ifNull: ['$image.url', ''] }
+              ]
+            }
+          }
+      } }
+    ]).toArray();
     return docs.map(mergeBanner);
   }
 
@@ -401,9 +454,15 @@ module.exports = function createBannerManager({ getDb, wsBroadcastAll }) {
     return result.deletedCount > 0;
   }
 
+  // PERF: return value fungsi ini dipakai oleh server.js HANYA sebagai
+  // fallback kalau butuh sesuatu untuk dikembalikan (jarang) — pemanggil
+  // normal di /api/admin/banners/reorder mengambil daftar terbaru sendiri
+  // lewat listBannersLight() setelah ini selesai. Supaya fungsi ini juga
+  // tidak diam-diam menarik base64 semua banner, dua-duanya sekarang pakai
+  // listBannersLight() (bukan listBannersRaw()) juga.
   async function reorderBanners(orderedIds) {
     const db = getDb();
-    if (!db || !Array.isArray(orderedIds) || !orderedIds.length) return await listBannersRaw();
+    if (!db || !Array.isArray(orderedIds) || !orderedIds.length) return await listBannersLight();
     // PERF: validasi id lewat listOrderIndex() (projection { image: 0 }) —
     // drag & drop reorder cuma butuh memastikan id valid, tidak pernah
     // butuh gambar banner lain.
@@ -415,7 +474,7 @@ module.exports = function createBannerManager({ getDb, wsBroadcastAll }) {
     await Promise.all(clean.map((id, idx) =>
       db.collection(COLLECTION).updateOne({ _id: oid(id) }, { $set: { order: idx } })
     ));
-    return await listBannersRaw();
+    return await listBannersLight();
   }
 
   // Dipanggil setelah create/update/delete/reorder berhasil — broadcast
@@ -452,6 +511,7 @@ module.exports = function createBannerManager({ getDb, wsBroadcastAll }) {
   return {
     ensureIndexes,
     listBannersRaw,
+    listBannersLight,
     getBannerById,
     createBanner,
     updateBanner,

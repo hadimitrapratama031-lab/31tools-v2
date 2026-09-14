@@ -8094,7 +8094,11 @@ app.get('/api/app-customization/logo', async (req, res) => {
 // bannerManager.js), supaya body JSON ini tidak pernah membawa base64 berat.
 app.get('/api/banners', async (req, res) => {
   try {
-    const banners = await bannerManager.listBannersRaw();
+    // PERF: listBannersLight() (bukan listBannersRaw()) — daftar publik ini
+    // dipanggil APP tiap buka Dashboard & tiap sinyal WS 'banners:update',
+    // jadi byte gambar base64 tidak boleh ikut ditarik dari MongoDB tiap
+    // kali (lihat komentar listBannersLight() di bannerManager.js).
+    const banners = await bannerManager.listBannersLight();
     res.set('Cache-Control', 'no-cache'); // sama alasan dengan /api/app-customization — validasi ulang tiap request, browser tetap boleh pakai ETag/304
     res.json({ items: bannerManager.toPublicList(banners) });
   } catch (e) {
@@ -8125,7 +8129,12 @@ app.get('/api/banners/:id/image', async (req, res) => {
 // GET /api/admin/app-customization).
 app.get('/api/admin/banners', requireAdmin, async (req, res) => {
   try {
-    const banners = await bannerManager.listBannersRaw();
+    // PERF — AKAR MASALAH SISA "Memuat banner..." lama: endpoint ini yang
+    // dipanggil setiap kali Admin Web membuka halaman Setting Banner.
+    // listBannersLight() (bukan listBannersRaw()) supaya MongoDB tidak
+    // perlu mengalirkan base64 gambar tiap banner (bisa 8 MB/banner) hanya
+    // untuk dibuang oleh toAdminList() beberapa baris di bawah.
+    const banners = await bannerManager.listBannersLight();
     res.set('Cache-Control', 'no-cache');
     res.json({
       items: bannerManager.toAdminList(banners),
@@ -8171,7 +8180,9 @@ app.put('/api/admin/banners/reorder', requireAdmin, async (req, res) => {
     }).catch(() => {});
 
     await bannerManager.broadcastUpdate();
-    const banners = await bannerManager.listBannersRaw();
+    // PERF: listBannersLight() — response reorder cuma perlu urutan+meta
+    // ringan buat re-render tab Admin Web, bukan byte gambar tiap banner.
+    const banners = await bannerManager.listBannersLight();
     res.json({ items: bannerManager.toAdminList(banners) });
   } catch (e) {
     res.status(400).json({ error: e.message });
@@ -8210,7 +8221,9 @@ app.delete('/api/admin/banners/:id', requireAdmin, async (req, res) => {
     }).catch(() => {});
 
     await bannerManager.broadcastUpdate();
-    const banners = await bannerManager.listBannersRaw();
+    // PERF: listBannersLight() — response delete cuma perlu daftar sisa
+    // banner buat re-render tab, bukan byte gambar tiap banner yang tersisa.
+    const banners = await bannerManager.listBannersLight();
     res.json({ items: bannerManager.toAdminList(banners) });
   } catch (e) {
     res.status(400).json({ error: e.message });
