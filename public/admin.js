@@ -9983,7 +9983,9 @@ function bnrBindEvents() {
   });
 }
 
-const BNR_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+// Disamakan dengan MAX_IMAGE_BYTES di bannerManager.js (10 MB) — lihat
+// komentar di sana (Final Test poin #4/#14: "Upload image 5–10 MB").
+const BNR_IMAGE_MAX_BYTES = 10 * 1024 * 1024;
 const BNR_IMAGE_MIME_WHITELIST = ['image/png', 'image/jpeg', 'image/webp'];
 
 function bnrHandleImageFile(e) {
@@ -9995,7 +9997,7 @@ function bnrHandleImageFile(e) {
     return;
   }
   if (file.size > BNR_IMAGE_MAX_BYTES) {
-    showToast('Ukuran gambar maksimal 8 MB.', 'error');
+    showToast('Ukuran gambar maksimal 10 MB.', 'error');
     return;
   }
   const reader = new FileReader();

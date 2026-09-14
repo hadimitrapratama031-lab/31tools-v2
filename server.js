@@ -172,10 +172,10 @@ app.post('/api/discord/interactions', express.raw({ type: 'application/json' }),
   res.json({ type: 1 });
 });
 
-// Limit dinaikkan dari default 100kb -> 8mb SUPAYA banner bertipe "Image" bisa upload
+// Limit dinaikkan dari default 100kb -> 26mb SUPAYA banner bertipe "Image" bisa upload
 // gambar sebagai base64 (data URI) langsung lewat body JSON (lihat ADMIN — BANNER
 // CAROUSEL di bawah). Ukuran gambar aslinya sendiri tetap dibatasi lebih ketat
-// (BANNER_MAX_IMAGE_BYTES) di handler, ini cuma pagar atas di level parser.
+// (MAX_IMAGE_BYTES = 10MB, di bannerManager.js) di handler, ini cuma pagar atas di level parser.
 // HARDENING (App Customization image upload): background image (maks 10MB
 // asli, MAX_IMAGE_BYTES di appCustomizationManager.js) + logo (maks 5MB
 // asli, LOGO_MAX_BYTES — dinaikkan dari 1MB atas permintaan) dikirim sebagai

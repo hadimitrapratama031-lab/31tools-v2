@@ -1,6 +1,27 @@
 const SERVER_URL = 'https://31store-production.up.railway.app';
 const WS_URL = SERVER_URL.replace(/^http/, 'ws') + '/ws';
 
+// ── FIX AKAR MASALAH "image tidak diterapkan ke Banner (& fitur relative-
+// image lain) di APP" ────────────────────────────────────────────────────
+// Dokumen APP ini di-load lewat mainWindow.loadFile('app/index.html') di
+// main.js -> origin-nya `file://`. Semua endpoint gambar ringan backend
+// (banner, app-customization, dll) SENGAJA mengembalikan RELATIVE path
+// (mis. "/api/banners/<id>/image?v=...") supaya Admin Web (yang di-serve
+// dari origin server yang sama) bisa langsung pakai apa adanya. Tapi kalau
+// path relative itu dipasang mentah-mentah di dokumen `file://` ini,
+// browser Chromium meresolve-nya relatif terhadap `file://` -> request
+// otomatis gagal (bukan ke server), gambar tidak pernah termuat walau
+// sudah benar di database. `_absAssetUrl()` mengubah path relative
+// (diawali '/') jadi absolute dengan prefix SERVER_URL (satu-satunya
+// tempat SERVER_URL didefinisikan di file ini) SEBELUM dipakai di CSS/
+// <img src>. URL yang sudah absolute (http/https) atau data: URI
+// dibiarkan apa adanya.
+function _absAssetUrl(url) {
+  if (typeof url !== 'string' || !url) return url;
+  if (url.startsWith('/') && !url.startsWith('//')) return SERVER_URL + url;
+  return url;
+}
+
 let currentUser = null;
 let loginStatusEl, pollTimer = null;
 
@@ -652,7 +673,10 @@ function applyAppBackground(bg, version) {
     // Cache-bust HANYA untuk Image URL (http/https) yang bisa saja dipakai
     // ulang persis sama walau isinya diganti — lihat _cacheBustImageUrl().
     // Upload/data: URI tidak pernah kena ini.
-    const url = _cacheBustImageUrl(rawUrl, version);
+    // FIX bug sama seperti Banner: bg.image.url dari backend relative path
+    // -> harus di-absolute-kan (_absAssetUrl) SEBELUM dipakai, atau APP
+    // (origin file://) akan gagal memuatnya sama sekali.
+    const url = _cacheBustImageUrl(_absAssetUrl(rawUrl), version);
     console.log('[App Customization] Mode Image terdeteksi. Source:', bg.image.source || '(auto)', '| Panjang url:', rawUrl.length, '| Preview awal:', rawUrl.slice(0, 60));
     // Preload dulu supaya kalau gagal, layer TIDAK ikut berubah (tetap
     // tampilan sebelumnya) — bukan langsung diset lalu pecah/kosong.
@@ -777,7 +801,9 @@ function applyAppBranding(branding) {
 
   const logo = branding.logo || {};
   if (logo.enabled && logo.url) {
-    logoEl.src = logo.url;
+    // FIX bug sama seperti Banner (lihat _absAssetUrl()) — logo.url dari
+    // backend juga relative path, harus di-absolute-kan dulu di APP.
+    logoEl.src = _absAssetUrl(logo.url);
     logoEl.style.display = '';
     logoEl.style.width = `${logo.size || 20}px`;
     logoEl.style.height = `${logo.size || 20}px`;
@@ -887,7 +913,22 @@ function _dashBannerSlideHTML(banner, index) {
   const desc = banner.description || {};
   const btn = banner.button || {};
   const position = ['left', 'center', 'right'].includes(banner.position) ? banner.position : 'left';
-  const imgUrl = (banner.image && banner.image.url) || '';
+  // ── FIX AKAR MASALAH "image tidak diterapkan ke Banner di APP" ──────────
+  // APP (Electron) di-load lewat mainWindow.loadFile('app/index.html')
+  // (lihat main.js) -> origin dokumennya `file://`, BUKAN server. Tapi
+  // banner.image.url dari backend SELALU relative path
+  // ("/api/banners/<id>/image?v=..." — lihat toLightPayload() di
+  // bannerManager.js, SENGAJA relative supaya Admin Web yang di-serve dari
+  // origin server yang sama bisa langsung pakai apa adanya). Kalau relative
+  // path itu dipasang mentah-mentah ke background-image di sini, Chromium
+  // meresolve-nya relatif terhadap `file://` (jadi `file:///api/banners/...`)
+  // -> request otomatis gagal, gambar TIDAK PERNAH muncul di APP walau
+  // sudah benar tersimpan di database & sudah benar tampil di Admin Web.
+  // Fix: kalau url dimulai '/', jadikan ABSOLUTE dengan prefix SERVER_URL
+  // (SUDAH ADA, dipakai semua fetch lain lewat api()/SERVER_URL di file
+  // ini) SEBELUM dipasang ke CSS. URL http(s) penuh atau data: URI (kalau
+  // suatu saat ada) dibiarkan apa adanya.
+  const imgUrl = _absAssetUrl((banner.image && banner.image.url) || '');
 
   const eyebrowText = escapeHtml(eyebrow.text || '');
   const titleText = escapeHtml(title.text || '');

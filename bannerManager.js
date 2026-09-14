@@ -78,7 +78,7 @@ const APP_ROUTES = [
 ];
 const APP_ROUTE_IDS = APP_ROUTES.map(r => r.id);
 
-const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB — cukup longgar untuk banner tapi tidak seberat App Customization background (10MB)
+const MAX_IMAGE_BYTES = 10 * 1024 * 1024; // 10 MB — disamakan dengan App Customization background & dengan Final Test poin #4/#14 ("Upload image 5–10 MB") di prompt; SEBELUMNYA 8MB, jadi upload persis 9-10MB (sesuai instruksi test sendiri) selalu ditolak validasi walau body-parser (26mb, lihat server.js) sudah cukup longgar menampungnya.
 const IMAGE_MIME_WHITELIST = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
 
 // Dipakai HANYA oleh listBannersLight() di bawah — placeholder pengganti
@@ -131,7 +131,7 @@ function validateImageUrl(v) {
     }
     const bytes = dataUriByteSize(s);
     if (bytes > MAX_IMAGE_BYTES) {
-      throw new Error('Ukuran gambar melebihi 8 MB. Gunakan gambar yang lebih kecil/kompres dulu.');
+      throw new Error('Ukuran gambar melebihi 10 MB. Gunakan gambar yang lebih kecil/kompres dulu.');
     }
     return;
   }
