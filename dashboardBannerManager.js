@@ -36,11 +36,80 @@
 // dbnSave() versi lama — bukan endpoint CRUD terpisah per banner). Ini
 // pola yang SUDAH ADA di project ini (satu PUT = satu source of truth),
 // bukan sistem baru.
+//
+// ── PERF (halaman Setting Banner di Admin Web lambat dibuka/disimpan) ──────
+// PENYEBAB UTAMA sama persis dengan yang sudah pernah diaudit & diperbaiki
+// di App Customization (lihat appCustomizationManager.js toAdminPayload()):
+// tiap banner.image.url upload disimpan sebagai data URI base64 LANGSUNG di
+// dokumen (bisa sampai ~6.7MB base64 dari batas 5MB/banner), dan SEBELUM
+// optimasi ini base64 itu ikut utuh di body JSON setiap kali GET/PUT
+// /api/admin/dashboard-banner dipanggil — dikali sampai MAX_BANNERS (20)
+// banner sekaligus, jadi bisa >100MB bolak-balik hanya untuk buka halaman.
+//
+// Fix (pola SAMA PERSIS dengan App Customization, diperluas untuk array N
+// banner alih-alih 1 field gambar):
+//  1. toAdminPayload()/toPublicPayload() TIDAK PERNAH mengirim data URI berat
+//     mentah — diganti path endpoint ringan (/api/admin/dashboard-banner/
+//     image/:id atau /api/dashboard-banner/image/:id, lihat server.js) yang
+//     menyajikan gambar yang SAMA PERSIS lewat <img src="..."> terpisah,
+//     paralel, lazy (tidak nge-block parsing JSON config), dan ikut HTTP
+//     cache browser biasa.
+//  2. Endpoint admin (?thumb=1) menyajikan THUMBNAIL (resize ringan lewat
+//     `sharp`, sudah jadi dependency project — dipakai persis pola yang sama
+//     dengan catalogEmbedColor.js: require aman try/catch, gagal load native
+//     binding TIDAK BOLEH bikin server crash, cuma fallback ke gambar
+//     original apa adanya) — bukan storage/sistem gambar baru, cuma
+//     transform on-the-fly dari data yang SUDAH tersimpan, di-cache di
+//     memori (lihat thumbCache di bawah) supaya tidak resize ulang tiap
+//     request yang sama.
+//  3. Admin Web (admin.js) sisi Save juga TIDAK mengirim ulang image.url
+//     kalau admin tidak benar-benar upload/ganti gambar banner itu (lihat
+//     _imageTouched di dbnCleanBanner()/dbnSave() admin.js) — updateConfig()
+//     di bawah mengisi balik dari banner tersimpan (by id) kalau field ini
+//     tidak dikirim. Kombinasi load ringan + save parsial ini yang
+//     menghilangkan bottleneck utama, TANPA mengubah struktur dokumen/skema
+//     database sama sekali (source of truth tetap dokumen `settings` yang
+//     sama, field image.url tetap data URI base64 penuh di DB).
 // ══════════════════════════════════════════════════════════════════════════
 
 const crypto = require('crypto');
 
+// Require aman: kalau native binding `sharp` gagal dimuat di platform deploy
+// tertentu, halaman Setting Banner TIDAK BOLEH ikut rusak — efeknya cuma
+// endpoint thumbnail (?thumb=1) diam-diam fallback menyajikan gambar
+// original apa adanya (masih benar, cuma tidak diperkecil). Pola SAMA
+// PERSIS dengan catalogEmbedColor.js.
+let sharp = null;
+try {
+  sharp = require('sharp');
+} catch (e) {
+  console.warn('[DashboardBanner] Module "sharp" gagal dimuat — thumbnail Setting Banner akan fallback ke gambar original:', e.message);
+}
+
 const SETTINGS_ID = 'dashboardBanner';
+
+// ── Thumbnail preview khusus Admin Web (list card + live preview) — lebar
+// cukup untuk kartu banner kecil di Admin Web, jauh dari ukuran carousel
+// App sebenarnya. Kualitas/ukuran original 5-10MB TIDAK PERNAH disentuh/
+// dirusak di database, ini murni turunan sementara untuk tampilan admin.
+const THUMB_MAX_WIDTH = 480;
+const THUMB_WEBP_QUALITY = 62;
+
+// Cache in-memori sederhana (BUKAN collection DB baru, best-effort, boleh
+// kosong lagi kapan saja) — kunci `${id}:${updatedAtMs}` supaya otomatis
+// "batal" begitu banner diedit/disave ulang (updatedAt berubah -> key baru),
+// tidak perlu invalidasi manual. Dibatasi jumlah entry, pola SAMA PERSIS
+// dengan colorCache di catalogEmbedColor.js, supaya tidak tumbuh tanpa batas
+// kalau banner sering diganti-ganti.
+const THUMB_CACHE_MAX_ENTRIES = 100;
+const thumbCache = new Map(); // key -> { mime, buffer }
+function thumbCacheSet(key, val) {
+  if (thumbCache.size >= THUMB_CACHE_MAX_ENTRIES) {
+    const oldestKey = thumbCache.keys().next().value;
+    if (oldestKey !== undefined) thumbCache.delete(oldestKey);
+  }
+  thumbCache.set(key, val);
+}
 
 // ── VALIDASI GAMBAR (upload) — pola SAMA PERSIS dengan MAX_IMAGE_BYTES/
 // IMAGE_MIME_WHITELIST di appCustomizationManager.js. Limit diturunkan ke
@@ -124,6 +193,24 @@ function dataUriByteSize(dataUri) {
   const padding = base64.endsWith('==') ? 2 : base64.endsWith('=') ? 1 : 0;
   return Math.max(0, Math.floor((base64.length * 3) / 4) - padding);
 }
+// ── Decode data URI -> {mime, buffer}, dipakai bareng oleh getBannerImageAsset
+// (endpoint gambar) & (tidak sama sekali oleh jalur simpan/baca biasa — field
+// mentah di DB tidak pernah didekode kecuali memang mau disajikan sebagai
+// file gambar). TIDAK PERNAH throw — data URI aneh/korup cukup dianggap
+// "tidak ada gambar" (null), sama filosofi dengan sanitizeImageUrl().
+function decodeDataUri(dataUri) {
+  const m = /^data:([^;,]+);base64,(.+)$/i.exec(dataUri || '');
+  if (!m) return null;
+  try {
+    return { mime: m[1].toLowerCase(), buffer: Buffer.from(m[2], 'base64') };
+  } catch (e) {
+    return null;
+  }
+}
+function isHeavyDataUri(v) {
+  return typeof v === 'string' && v.startsWith('data:');
+}
+
 function validateBannerImageUrl(v, label) {
   if (typeof v !== 'string') return;
   const s = v.trim();
@@ -228,10 +315,19 @@ module.exports = function createDashboardBannerManager({ getDb, wsBroadcastAll }
 
   // Payload publik SATU banner (dipakai APP lewat GET /api/dashboard-banner)
   // — HANYA field yang memang perlu ditampilkan/dipakai APP.
+  //
+  // PERF: kalau imageUrl adalah data URI upload (bisa 5MB), diganti path
+  // endpoint ringan GET /api/dashboard-banner/image/:id (lihat server.js) —
+  // App memuatnya lewat <img src="..."> terpisah (sudah pola yang App pakai
+  // dari dulu untuk Image URL/link biasa, lihat _dashBannerImgSrc() di
+  // app/app.js — otomatis dapat cache-busting ?v= juga karena bukan lagi
+  // data: URI). Gambarnya SAMA PERSIS, cuma jalur pengirimannya dipisah dari
+  // JSON config supaya GET ini ringan & cepat di-parse walau banner banyak.
   function toPublicBanner(b) {
+    const heavy = isHeavyDataUri(b.image.url);
     return {
       id: b.id,
-      imageUrl: b.image.url,
+      imageUrl: heavy ? `/api/dashboard-banner/image/${encodeURIComponent(b.id)}` : b.image.url,
       eyebrow: b.eyebrow,
       title: b.title,
       description: b.description,
@@ -255,11 +351,99 @@ module.exports = function createDashboardBannerManager({ getDb, wsBroadcastAll }
     };
   }
 
+  // Payload ADMIN (dipakai GET & PUT-response /api/admin/dashboard-banner)
+  // — SEMUA banner (termasuk nonaktif, admin perlu edit semuanya), tapi
+  // data URI berat diganti path endpoint thumbnail ringan
+  // (/api/admin/dashboard-banner/image/:id?thumb=1) — lihat catatan PERF di
+  // atas file ini. TIDAK mengubah apapun yang tersimpan di DB, murni lapisan
+  // response HTTP. url yang sudah http(s) biasa (mode "Image URL") dibiarkan
+  // apa adanya karena memang sudah ringan.
+  function toAdminPayload(cfg) {
+    const version = cfg.updatedAt ? new Date(cfg.updatedAt).getTime() : 0;
+    const banners = cfg.banners.map((b) => {
+      const heavy = isHeavyDataUri(b.image.url);
+      return {
+        ...b,
+        image: {
+          source: b.image.source,
+          url: heavy ? `/api/admin/dashboard-banner/image/${encodeURIComponent(b.id)}?thumb=1&v=${version}` : b.image.url
+        }
+      };
+    });
+    return {
+      _id: cfg._id,
+      banners,
+      updatedAt: cfg.updatedAt,
+      updatedBy: cfg.updatedBy,
+      version
+    };
+  }
+
+  // ── Ambil bytes gambar SATU banner (original atau thumbnail) — dipakai
+  // endpoint GET /api/dashboard-banner/image/:id (App) & GET
+  // /api/admin/dashboard-banner/image/:id (Admin Web, ?thumb=1). Dibaca
+  // ULANG dari DB tiap kali (getConfig() TANPA cache), konsisten dengan
+  // prinsip realtime project ini — cuma HASIL RESIZE thumbnail yang
+  // di-cache di memori (thumbCache), bukan datanya.
+  // Return: { status: 'ok', mime, buffer } | { status: 'redirect', url } |
+  //         { status: 'notfound' }
+  async function getBannerImageAsset(id, { thumb } = {}) {
+    const cfg = await getConfig();
+    const banner = cfg.banners.find(b => b.id === id);
+    const url = banner && banner.image && banner.image.url;
+    if (!url) return { status: 'notfound' };
+
+    if (/^https?:\/\//i.test(url)) return { status: 'redirect', url };
+
+    const decoded = decodeDataUri(url);
+    if (!decoded) return { status: 'notfound' };
+
+    if (!thumb || !sharp) return { status: 'ok', mime: decoded.mime, buffer: decoded.buffer };
+
+    const cacheKey = `${id}:${cfg.updatedAt ? new Date(cfg.updatedAt).getTime() : 0}`;
+    const cached = thumbCache.get(cacheKey);
+    if (cached) return { status: 'ok', mime: cached.mime, buffer: cached.buffer };
+
+    try {
+      const buffer = await sharp(decoded.buffer)
+        .resize({ width: THUMB_MAX_WIDTH, withoutEnlargement: true })
+        .webp({ quality: THUMB_WEBP_QUALITY })
+        .toBuffer();
+      const result = { mime: 'image/webp', buffer };
+      thumbCacheSet(cacheKey, result);
+      return { status: 'ok', mime: result.mime, buffer: result.buffer };
+    } catch (e) {
+      console.warn('[DashboardBanner] Gagal membuat thumbnail, fallback ke gambar original:', e.message);
+      return { status: 'ok', mime: decoded.mime, buffer: decoded.buffer };
+    }
+  }
+
   async function updateConfig(patch, updatedBy) {
     const incoming = Array.isArray(patch && patch.banners) ? patch.banners : [];
     if (incoming.length > MAX_BANNERS) {
       throw new Error(`Maksimal ${MAX_BANNERS} banner.`);
     }
+
+    // ── PERF — SAVE PARSIAL PER BANNER ────────────────────────────────────
+    // Admin Web (dbnCleanBanner() di admin.js) SENGAJA tidak mengirim ulang
+    // `image.url` untuk banner yang gambarnya TIDAK disentuh di sesi edit
+    // ini (cuma ganti teks/status/urutan/dll) — base64 bisa beberapa MB per
+    // banner, dikali sampai 20 banner percuma dikirim ulang kalau memang
+    // tidak berubah. Di sini, untuk tiap banner masuk yang punya `id` cocok
+    // dengan banner YANG SUDAH TERSIMPAN dan tidak menyertakan image.url
+    // (field-nya bukan string sama sekali — beda dengan string kosong '',
+    // yang berarti admin memang mau MENGHAPUS gambar), isi balik dari
+    // gambar yang sudah tersimpan supaya tidak hilang. Banner BARU (tanpa id
+    // yang cocok) tetap wajib bawa gambarnya sendiri kalau mau ada gambar.
+    const current = await getConfig();
+    const currentById = new Map(current.banners.map(b => [b.id, b]));
+    incoming.forEach((raw) => {
+      const hasUrlField = raw && raw.image && typeof raw.image.url === 'string';
+      if (!hasUrlField && raw && typeof raw.id === 'string' && currentById.has(raw.id)) {
+        const existingImg = currentById.get(raw.id).image;
+        raw.image = { source: existingImg.source, url: existingImg.url };
+      }
+    });
 
     // Validasi KETAT tiap banner SEBELUM disimpan — satu banner invalid
     // menggagalkan SELURUH save (pola sama dengan validasi single-banner
@@ -316,5 +500,5 @@ module.exports = function createDashboardBannerManager({ getDb, wsBroadcastAll }
     return payload;
   }
 
-  return { getConfig, updateConfig, toPublicPayload, broadcastUpdate, BANNER_DEFAULTS, PAGE_WHITELIST, MAX_BANNERS };
+  return { getConfig, updateConfig, toPublicPayload, toAdminPayload, getBannerImageAsset, broadcastUpdate, BANNER_DEFAULTS, PAGE_WHITELIST, MAX_BANNERS };
 };

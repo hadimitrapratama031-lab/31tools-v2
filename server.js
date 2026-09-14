@@ -8141,6 +8141,13 @@ app.get('/api/dashboard-banner', requireUser, async (req, res) => {
 app.get('/api/admin/dashboard-banner', requireAdmin, async (req, res) => {
   try {
     const cfg = await dashboardBannerManager.getConfig();
+    // PERF (lihat catatan lengkap di dashboardBannerManager.js) — pakai
+    // toAdminPayload() (BUKAN cfg mentah) supaya body JSON GET ini tidak
+    // ikut membawa base64 penuh tiap banner (bisa sampai ~6.7MB/banner x 20
+    // banner). Gambar tetap SAMA PERSIS, cuma disajikan lewat endpoint
+    // thumbnail terpisah (/api/admin/dashboard-banner/image/:id?thumb=1)
+    // yang dimuat <img> Admin Web secara paralel & lazy.
+    //
     // pageOptions: whitelist tujuan Halaman APP yang valid (lihat
     // PAGE_WHITELIST di dashboardBannerManager.js) — dikirim bareng config
     // supaya dropdown "Tujuan Tombol" di Admin Web SELALU sinkron dengan
@@ -8148,7 +8155,8 @@ app.get('/api/admin/dashboard-banner', requireAdmin, async (req, res) => {
     // yang bisa typo). maxBanners dikirim juga supaya Admin Web bisa
     // menonaktifkan tombol "+ Tambah Banner" begitu batas tercapai, tanpa
     // hardcode angka terpisah di frontend.
-    res.json({ ...cfg, pageOptions: dashboardBannerManager.PAGE_WHITELIST, maxBanners: dashboardBannerManager.MAX_BANNERS });
+    const payload = dashboardBannerManager.toAdminPayload(cfg);
+    res.json({ ...payload, pageOptions: dashboardBannerManager.PAGE_WHITELIST, maxBanners: dashboardBannerManager.MAX_BANNERS });
   } catch (e) {
     res.status(500).json({ error: e.message });
   }
@@ -8170,9 +8178,62 @@ app.put('/api/admin/dashboard-banner', requireAdmin, async (req, res) => {
     // TANPA restart/refresh (lihat dashboardBannerManager.broadcastUpdate).
     const publicPayload = await dashboardBannerManager.broadcastUpdate();
 
-    res.json({ config: next, applied: publicPayload });
+    // PERF — respons PUT ini juga lewat toAdminPayload() (bukan `next`
+    // mentah), sama alasan dengan GET di atas: kalau admin cuma edit
+    // teks/status/urutan banner lain, respons Save tidak perlu ikut
+    // membawa balik base64 gambar yang (tidak berubah) tapi tetap besar.
+    res.json({ config: dashboardBannerManager.toAdminPayload(next), applied: { version: publicPayload.version } });
   } catch (e) {
     res.status(400).json({ error: e.message });
+  }
+});
+
+// ── Endpoint gambar SATU banner — dipakai APP (lewat imageUrl di
+// GET /api/dashboard-banner, lihat toPublicBanner()) & Admin Web (lewat
+// image.url di GET/PUT /api/admin/dashboard-banner, ?thumb=1 minta versi
+// thumbnail ringan). BUKAN sistem storage baru — cuma men-decode data URI
+// base64 yang SUDAH tersimpan di banner (by id) dan menyajikannya sebagai
+// file gambar biasa, pola SAMA PERSIS dengan /api/app-customization/logo &
+// /api/app-customization/background-image di atas. Publik (requireUser,
+// bukan requireAdmin) karena App yang sedang login perlu memuatnya tanpa
+// hak admin — sama pola dengan GET /api/dashboard-banner itu sendiri.
+app.get('/api/dashboard-banner/image/:id', requireUser, async (req, res) => {
+  try {
+    const asset = await dashboardBannerManager.getBannerImageAsset(req.params.id, { thumb: false });
+    if (asset.status === 'redirect') return res.redirect(302, asset.url);
+    if (asset.status !== 'ok') return res.status(404).end();
+    res.set('Content-Type', asset.mime);
+    // Cache pendek (5 menit) — cukup supaya browser tidak fetch ulang
+    // terus-menerus tapi tetap singkat supaya gambar baru yang diganti
+    // admin cepat kepakai (App fetch ulang GET /api/dashboard-banner tiap
+    // sinyal realtime 'dashboard-banner:update', lihat app/app.js).
+    res.set('Cache-Control', 'public, max-age=300');
+    res.send(asset.buffer);
+  } catch (e) {
+    console.warn('[DashboardBanner] Gagal menyajikan gambar publik:', e.message);
+    res.status(500).end();
+  }
+});
+
+// Versi ADMIN — sama seperti di atas, tapi guard requireAdmin (dokumen bisa
+// berisi banner nonaktif yang tidak boleh diakses App biasa) dan mendukung
+// ?thumb=1 untuk versi resize/WebP ringan (lihat THUMB_MAX_WIDTH di
+// dashboardBannerManager.js) yang dipakai kartu list & Live Preview Admin
+// Web supaya halaman cepat dibuka walau banner originalnya 5-10MB. Tanpa
+// ?thumb=1, menyajikan gambar ORIGINAL apa adanya (dipakai kalau memang
+// perlu kualitas penuh) — tidak pernah merusak/menimpa gambar original di
+// database, ini murni transform sementara di lapisan response.
+app.get('/api/admin/dashboard-banner/image/:id', requireAdmin, async (req, res) => {
+  try {
+    const asset = await dashboardBannerManager.getBannerImageAsset(req.params.id, { thumb: req.query.thumb === '1' });
+    if (asset.status === 'redirect') return res.redirect(302, asset.url);
+    if (asset.status !== 'ok') return res.status(404).end();
+    res.set('Content-Type', asset.mime);
+    res.set('Cache-Control', 'public, max-age=300');
+    res.send(asset.buffer);
+  } catch (e) {
+    console.warn('[DashboardBanner] Gagal menyajikan gambar admin:', e.message);
+    res.status(500).end();
   }
 });
 

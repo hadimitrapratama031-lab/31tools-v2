@@ -2816,6 +2816,14 @@ button:hover .icon,
 .dbn-card-body { padding: 18px 18px 20px; }
 .dbn-card-grid { display: grid; grid-template-columns: minmax(0, 1fr) 260px; gap: 20px; align-items: start; }
 @media (max-width: 900px) { .dbn-card-grid { grid-template-columns: 1fr; } }
+/* PERF — skeleton placeholder (dbnRenderSkeleton() di admin.js), tampil
+   selagi request PERTAMA Setting Banner di sesi ini masih berjalan (belum
+   ada cache in-memory buat stale-while-revalidate). Pakai class `.skeleton`
+   shimmer yang SUDAH ADA (lihat ─── SKELETON LOADING ─── di atas), cuma
+   dikunci non-interaktif supaya tidak kelihatan seperti card yang bisa
+   diklik sebelum datanya benar-benar ada. */
+.dbn-banner-card--skeleton { pointer-events: none; }
+.dbn-banner-card--skeleton .dbn-card-header { border-bottom: 1px solid var(--line); }
 .dbn-card-preview-col { position: sticky; top: 20px; }
 .dbn-card-preview-label { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: .05em; color: var(--text-faint); margin-bottom: 8px; }
 .dbn-card-preview-frame { aspect-ratio: 16/10; min-height: 160px; }

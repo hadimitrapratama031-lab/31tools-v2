@@ -10125,6 +10125,38 @@ let _dbnOriginal = null; // snapshot JSON (versi "bersih", tanpa field transient
 let dbnPageOptions = [];
 let dbnMaxBanners = 20;
 
+// ── PERF — CACHE + STALE-WHILE-REVALIDATE ────────────────────────────────
+// Snapshot terakhir yang berhasil dimuat dari server (in-memory, per sesi
+// Admin Web ini saja — BUKAN localStorage, karena gambar walau sudah lewat
+// endpoint thumbnail tetap lebih aman tidak disimpan ke storage browser
+// yang punya batas kuota). Dipakai renderDashboardBannerPage(): kalau
+// halaman Setting Banner dibuka LAGI di sesi yang sama (nav pindah-pindah
+// halaman lalu balik lagi), tampilkan cache ini DULU (instan, tanpa
+// menunggu network), baru fetch ulang di background dan perbarui kalau ada
+// perubahan — supaya tetap konsisten dengan Database sebagai source of
+// truth, tapi UI tidak pernah nge-block/blank nunggu roundtrip yang sama.
+let _dbnCache = null; // { pageOptions, maxBanners, banners, updatedAt, updatedBy } | null
+let _dbnLoadToken = 0; // guard request in-flight yang basi (nav cepat pindah2 halaman lalu balik)
+
+function dbnMapServerBanners(list) {
+  return (Array.isArray(list) ? list : []).map(b => ({
+    _cid: dbnNewCid(), _collapsed: false,
+    // _imageTouched: PERF — flag transient (TIDAK PERNAH dikirim ke
+    // backend, lihat dbnCleanBanner()) yang menandai admin BENAR-BENAR
+    // upload/ganti/hapus gambar banner ini di sesi edit sekarang. Baru
+    // dimuat dari server = belum ada perubahan gambar sama sekali, jadi
+    // mulai `false`. Kalau tetap `false` sampai Simpan, dbnCleanBanner()
+    // TIDAK mengirim ulang image.url (bisa beberapa MB) — backend mengisi
+    // balik dari gambar tersimpan otomatis (lihat updateConfig() di
+    // dashboardBannerManager.js), jadi field teks/status/urutan tetap bisa
+    // diedit & disimpan cepat walau ada banner besar lain yang tidak diubah.
+    _imageTouched: false,
+    id: b.id, image: { ...b.image }, eyebrow: b.eyebrow, title: b.title, description: b.description,
+    buttonText: b.buttonText, buttonTargetType: b.buttonTargetType,
+    buttonTargetPage: b.buttonTargetPage, buttonTargetUrl: b.buttonTargetUrl, active: b.active
+  }));
+}
+
 const DBN_IMAGE_MIME_WHITELIST = ['image/png', 'image/jpeg', 'image/webp'];
 
 function dbnNewCid() {
@@ -10149,12 +10181,25 @@ function dbnDefaultBanner() {
 }
 
 // Bentuk "bersih" yang dikirim ke backend / dipakai buat dirty-state compare
-// — buang field transient (_cid, _collapsed), order tidak dikirim (backend
-// men-derive dari posisi array, lihat dashboardBannerManager.mergeBanner()).
+// — buang field transient (_cid, _collapsed, _imageTouched), order tidak
+// dikirim (backend men-derive dari posisi array, lihat
+// dashboardBannerManager.mergeBanner()).
+//
+// PERF: `image.url` HANYA disertakan kalau banner ini benar-benar BARU
+// (belum punya id dari server) ATAU gambarnya memang disentuh admin di sesi
+// edit ini (_imageTouched, lihat dbnMapServerBanners() & dbnBindEvents()).
+// Selain itu, image.url SENGAJA dihilangkan dari payload — bukan dikosongkan
+// (string kosong berarti "hapus gambar", beda arti) — backend mengisi balik
+// dari gambar tersimpan otomatis by id (lihat updateConfig() di
+// dashboardBannerManager.js). Ini yang membuat Simpan tetap cepat walau ada
+// banner lain berukuran beberapa MB yang tidak diubah sama sekali.
 function dbnCleanBanner(b) {
+  const image = (!b.id || b._imageTouched)
+    ? { source: b.image.source, url: b.image.url || '' }
+    : { source: b.image.source };
   return {
     id: b.id || null,
-    image: { source: b.image.source, url: b.image.url || '' },
+    image,
     eyebrow: b.eyebrow || '',
     title: b.title || '',
     description: b.description || '',
@@ -10167,33 +10212,114 @@ function dbnCleanBanner(b) {
 }
 function dbnSnapshot(banners) { return JSON.stringify(banners.map(dbnCleanBanner)); }
 
+function dbnApplyLoadedConfig(cfg, statusEl) {
+  dbnPageOptions = Array.isArray(cfg.pageOptions) ? cfg.pageOptions : [];
+  dbnMaxBanners = Number.isFinite(cfg.maxBanners) ? cfg.maxBanners : 20;
+  dbnBanners = dbnMapServerBanners(cfg.banners);
+  if (statusEl) {
+    statusEl.textContent = cfg.updatedAt ? `Terakhir disimpan: ${new Date(cfg.updatedAt).toLocaleString('id-ID')} oleh ${cfg.updatedBy || 'Admin'}` : 'Belum pernah disimpan.';
+  }
+  _dbnCache = { pageOptions: dbnPageOptions, maxBanners: dbnMaxBanners, banners: cfg.banners, updatedAt: cfg.updatedAt, updatedBy: cfg.updatedBy };
+}
+
+// PERF — halaman langsung usable (target ~1-3 detik) walau ada banner
+// dengan gambar original 5-10MB:
+//  1. Kalau ada cache dari kunjungan sebelumnya di sesi ini, TAMPILKAN DULU
+//     (instan, 0ms network) sambil fetch ulang di background lalu
+//     perbarui kalau memang ada perubahan (stale-while-revalidate) —
+//     Database tetap satu-satunya source of truth, cache di sini murni buat
+//     tampilan awal tidak nge-block.
+//  2. Kalau belum ada cache (kunjungan pertama di sesi ini), tampilkan
+//     skeleton (dbnRenderSkeleton) SELAGI menunggu response pertama —
+//     halaman tidak pernah terasa blank/nge-freeze menunggu network.
+//  3. Body JSON GET /api/admin/dashboard-banner sendiri sudah ringan
+//     (metadata + path thumbnail, BUKAN base64 penuh — lihat
+//     toAdminPayload() di dashboardBannerManager.js), jadi request ini
+//     TIDAK PERNAH menunggu gambar besar selesai didownload — gambar
+//     dimuat belakangan & terpisah oleh tiap <img loading="lazy"> begitu
+//     card-nya masuk viewport.
+//  4. _dbnLoadToken menjaga supaya kalau admin pindah halaman lalu balik
+//     lagi dengan cepat (beberapa request in-flight sekaligus), cuma
+//     response TERAKHIR yang benar-benar diterapkan ke UI.
 async function renderDashboardBannerPage() {
   if (!_dbnListenersBound) {
     dbnBindEvents();
     _dbnListenersBound = true;
   }
   const statusEl = document.getElementById('dbnStatus');
+  const myToken = ++_dbnLoadToken;
+
+  if (_dbnCache) {
+    // Cache tersedia — render instan dulu, tidak menunggu network sama
+    // sekali. Dirty-state (tombol Simpan) sengaja di-reset ke "bersih"
+    // karena ini representasi ULANG dari data tersimpan terakhir, bukan
+    // draft yang sedang diedit (draft tidak dipertahankan lintas navigasi
+    // halaman, sama seperti perilaku sebelumnya).
+    dbnApplyLoadedConfig(_dbnCache, statusEl);
+    _dbnOriginal = dbnSnapshot(dbnBanners);
+    dbnRenderList();
+  } else {
+    dbnRenderSkeleton();
+  }
+
   try {
     const cfg = await api('/api/admin/dashboard-banner');
-    dbnPageOptions = Array.isArray(cfg.pageOptions) ? cfg.pageOptions : [];
-    dbnMaxBanners = Number.isFinite(cfg.maxBanners) ? cfg.maxBanners : 20;
-    dbnBanners = (Array.isArray(cfg.banners) ? cfg.banners : []).map(b => ({
-      _cid: dbnNewCid(), _collapsed: false,
-      id: b.id, image: { ...b.image }, eyebrow: b.eyebrow, title: b.title, description: b.description,
-      buttonText: b.buttonText, buttonTargetType: b.buttonTargetType,
-      buttonTargetPage: b.buttonTargetPage, buttonTargetUrl: b.buttonTargetUrl, active: b.active
-    }));
-    if (statusEl) {
-      statusEl.textContent = cfg.updatedAt ? `Terakhir disimpan: ${new Date(cfg.updatedAt).toLocaleString('id-ID')} oleh ${cfg.updatedBy || 'Admin'}` : 'Belum pernah disimpan.';
-    }
+    if (myToken !== _dbnLoadToken) return; // sudah ada request lebih baru / halaman sudah dipindah, buang hasil ini
+    dbnApplyLoadedConfig(cfg, statusEl);
+    _dbnOriginal = dbnSnapshot(dbnBanners);
+    dbnRenderList();
   } catch (e) {
-    dbnPageOptions = [];
-    dbnBanners = [];
-    if (statusEl) statusEl.textContent = 'Gagal memuat Setting Banner tersimpan.';
-    showToast('Gagal memuat Setting Banner: ' + e.message, 'error');
+    if (myToken !== _dbnLoadToken) return;
+    if (!_dbnCache) {
+      // Gagal DAN belum pernah punya data sama sekali (bukan sekadar gagal
+      // revalidate cache yang sudah tampil) — baru tampilkan state kosong +
+      // error, supaya data cache yang sudah terlanjur dirender tidak
+      // tiba-tiba hilang gara-gara satu request background gagal (mis.
+      // koneksi sempat putus).
+      dbnPageOptions = [];
+      dbnBanners = [];
+      _dbnOriginal = dbnSnapshot(dbnBanners);
+      dbnRenderList();
+      if (statusEl) statusEl.textContent = 'Gagal memuat Setting Banner tersimpan.';
+      showToast('Gagal memuat Setting Banner: ' + e.message, 'error');
+    } else {
+      // Sudah ada data cache yang tampil (mungkin sedikit basi) — jangan
+      // hapus/timpa apa yang sudah dirender, cukup beri tahu revalidate-nya
+      // gagal supaya admin tahu ini belum tentu data paling baru.
+      showToast('Gagal menyegarkan Setting Banner (masih menampilkan data sebelumnya): ' + e.message, 'error');
+    }
   }
-  _dbnOriginal = dbnSnapshot(dbnBanners);
-  dbnRenderList();
+}
+
+// Skeleton placeholder (pola SAMA PERSIS dengan class `.skeleton` yang
+// sudah dipakai halaman lain di Admin Web) selagi request pertama di sesi
+// ini masih berjalan — halaman langsung terasa "ada isinya" alih-alih blank
+// menunggu roundtrip network + jalan pertama Database.
+function dbnRenderSkeleton(count = 3) {
+  const list = document.getElementById('dbnBannerList');
+  const empty = document.getElementById('dbnEmptyState');
+  if (!list) return;
+  if (empty) empty.style.display = 'none';
+  list.innerHTML = Array.from({ length: count }).map(() => `
+    <div class="dbn-banner-card dbn-banner-card--skeleton">
+      <div class="dbn-card-header">
+        <span class="skeleton" style="width:90px;height:16px;"></span>
+        <span class="skeleton" style="width:60px;height:16px;margin-left:auto;"></span>
+      </div>
+      <div class="dbn-card-body">
+        <div class="dbn-card-grid">
+          <div class="dbn-card-fields">
+            <span class="skeleton" style="display:block;width:100%;height:150px;border-radius:12px;margin-bottom:14px;"></span>
+            <span class="skeleton" style="display:block;width:70%;height:14px;margin-bottom:10px;"></span>
+            <span class="skeleton" style="display:block;width:90%;height:14px;margin-bottom:10px;"></span>
+            <span class="skeleton" style="display:block;width:50%;height:14px;"></span>
+          </div>
+          <div class="dbn-card-preview-col">
+            <span class="skeleton" style="display:block;width:100%;height:180px;border-radius:12px;"></span>
+          </div>
+        </div>
+      </div>
+    </div>`).join('');
 }
 
 function dbnBindEvents() {
@@ -10227,6 +10353,7 @@ function dbnBindEvents() {
 
     if (e.target.closest('.dbn-remove-image-btn')) {
       banner.image.url = '';
+      banner._imageTouched = true; // PERF: hapus gambar = perubahan nyata pada image.url, harus ikut terkirim saat Save (lihat dbnCleanBanner()).
       dbnRenderList();
       return;
     }
@@ -10270,7 +10397,7 @@ function dbnBindEvents() {
       if (!DBN_IMAGE_MIME_WHITELIST.includes(file.type)) { showToast('Format gambar tidak didukung. Gunakan PNG, JPG/JPEG, atau WEBP.', 'error'); return; }
       if (file.size > 5 * 1024 * 1024) { showToast('Ukuran gambar maksimal 5 MB.', 'error'); return; }
       const reader = new FileReader();
-      reader.onload = () => { banner.image.source = 'upload'; banner.image.url = reader.result; dbnRenderList(); };
+      reader.onload = () => { banner.image.source = 'upload'; banner.image.url = reader.result; banner._imageTouched = true; dbnRenderList(); };
       reader.readAsDataURL(file);
       return;
     }
@@ -10310,7 +10437,7 @@ function dbnBindEvents() {
     if (!DBN_IMAGE_MIME_WHITELIST.includes(file.type)) { showToast('Format gambar tidak didukung. Gunakan PNG, JPG/JPEG, atau WEBP.', 'error'); return; }
     if (file.size > 5 * 1024 * 1024) { showToast('Ukuran gambar maksimal 5 MB.', 'error'); return; }
     const reader = new FileReader();
-    reader.onload = () => { banner.image.source = 'upload'; banner.image.url = reader.result; dbnRenderList(); };
+    reader.onload = () => { banner.image.source = 'upload'; banner.image.url = reader.result; banner._imageTouched = true; dbnRenderList(); };
     reader.readAsDataURL(file);
   });
 
@@ -10333,6 +10460,7 @@ function dbnBindEvents() {
       const v = e.target.value.trim();
       banner.image.source = 'url';
       banner.image.url = v;
+      banner._imageTouched = true; // PERF: sama seperti upload — dianggap "berubah" begitu admin mengetik/menghapus isi field URL ini.
       const statusEl = card.querySelector('.dbn-image-url-status');
       if (statusEl) {
         if (!v) statusEl.textContent = '';
@@ -10417,7 +10545,7 @@ function dbnCardTemplate(banner, idx, total) {
               <div class="dbn-image-url-status" style="margin-top:6px;font-size:12px;color:var(--text-faint);min-height:16px;"></div>
             </div>
             <div class="dbn-image-preview-wrap" style="margin-top:4px;position:relative;${img.url ? '' : 'display:none;'}">
-              <img class="dbn-image-preview-img" style="width:100%;max-height:160px;object-fit:cover;border-radius:12px;border:1px solid var(--line);" src="${escapeHtml(img.url || '')}">
+              <img class="dbn-image-preview-img" loading="lazy" decoding="async" style="width:100%;max-height:160px;object-fit:cover;border-radius:12px;border:1px solid var(--line);" src="${escapeHtml(img.url || '')}" ${IMG_ONERROR_ATTR}>
               <button type="button" class="btn btn-danger btn-sm dbn-remove-image-btn" style="position:absolute;top:8px;right:8px;"><svg class="icon icon-16"><use href="#ic-trash-2"></use></svg> Hapus</button>
             </div>
 
@@ -10462,7 +10590,7 @@ function dbnCardTemplate(banner, idx, total) {
           <div class="dbn-card-preview-col">
             <div class="dbn-card-preview-label">Live Preview</div>
             <div class="dbn-preview-frame dbn-card-preview-frame">
-              <img class="dbn-preview-img dbn-card-preview-img" alt="" style="${img.url ? '' : 'display:none;'}" src="${escapeHtml(img.url || '')}">
+              <img class="dbn-preview-img dbn-card-preview-img" alt="" loading="lazy" decoding="async" style="${img.url ? '' : 'display:none;'}" src="${escapeHtml(img.url || '')}" onerror="this.style.display='none';">
               <div class="dbn-preview-overlay">
                 <span class="dbn-preview-eyebrow dbn-card-preview-eyebrow">${escapeHtml(banner.eyebrow || 'Featured This Week')}</span>
                 <h2 class="dbn-preview-title dbn-card-preview-title">${escapeHtml(banner.title || 'Judul Banner')}</h2>
@@ -10561,12 +10689,13 @@ async function dbnSave() {
       method: 'PUT',
       body: JSON.stringify({ banners: dbnBanners.map(dbnCleanBanner) })
     });
-    dbnBanners = (res.config.banners || []).map(b => ({
-      _cid: dbnNewCid(), _collapsed: false,
-      id: b.id, image: { ...b.image }, eyebrow: b.eyebrow, title: b.title, description: b.description,
-      buttonText: b.buttonText, buttonTargetType: b.buttonTargetType,
-      buttonTargetPage: b.buttonTargetPage, buttonTargetUrl: b.buttonTargetUrl, active: b.active
-    }));
+    // res.config sudah lewat toAdminPayload() (lihat server.js) — image.url
+    // sekarang path thumbnail ringan, dbnMapServerBanners() reset
+    // _imageTouched ke false untuk SEMUA banner (baru saja tersimpan =
+    // sinkron lagi dengan server, sesi "belum ada perubahan gambar" mulai
+    // ulang, sama pola dengan _aczImageTouched/_aczLogoTouched).
+    dbnBanners = dbnMapServerBanners(res.config.banners);
+    _dbnCache = { pageOptions: dbnPageOptions, maxBanners: dbnMaxBanners, banners: res.config.banners, updatedAt: res.config.updatedAt, updatedBy: res.config.updatedBy };
     _dbnOriginal = dbnSnapshot(dbnBanners);
     dbnRenderList();
     showToast('Setting Banner disimpan & langsung diterapkan realtime ke semua App.', 'success');
