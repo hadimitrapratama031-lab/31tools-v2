@@ -984,8 +984,19 @@
     background:#000; border:1px solid var(--border-subtle);
   }
   .dash-banner-overlay{
-    position:absolute; inset:0; display:flex; flex-direction:column; justify-content:center;
-    padding:28px 34px; gap:8px;
+    position:absolute; inset:0; display:flex; flex-direction:column;
+    /* Konten digeser ke bawah (poin #4 audit) — SEBELUMNYA justify-content:
+       center membuat Eyebrow/Judul/Deskripsi/CTA menggantung di tengah
+       banner, kurang terasa seperti banner gaming/premium modern. Sekarang
+       flex-end mengumpulkan grup konten ke bawah, menyisakan "ruang visual"
+       kosong di atas untuk gambar/artwork tampil penuh. Padding pakai
+       clamp() (persentase + batas min/max), BUKAN angka pixel tetap, supaya
+       jarak aman ke tepi tetap proporsional di berbagai ukuran window
+       (lebar sempit -> padding mengecil wajar, tidak pernah 0 dan tidak
+       pernah bikin konten mepet/keluar banner). */
+    justify-content:flex-end;
+    padding:clamp(16px,4%,32px) clamp(20px,5%,42px) clamp(22px,6%,44px);
+    gap:8px;
   }
   .dash-banner-eyebrow{
     font-size:11px; font-weight:700; letter-spacing:.14em; text-transform:uppercase;
@@ -1043,22 +1054,31 @@
   .dash-banner-title{ max-width:100%; }
   .dash-banner-desc{ -webkit-line-clamp:3; }
 
-  /* Tombol CTA banner (poin #16/#18) — premium, konsisten dengan gaya tombol
-     lain di App (lihat .detail-btn-primary), BUKAN tombol browser default. */
+  /* Tombol CTA banner (poin #5 audit — "CTA jangan polos") — rounded modern,
+     gradient halus + border tipis + depth ringan + hover/press/transition
+     smooth, dibuat menyatu dengan tema accent App (BUKAN tombol browser
+     default, BUKAN neon/ramai). Ikon panah (ic-arrow-right, lihat
+     _dashBannerSlideHTML() di app.js) memakai gap flex di bawah supaya
+     jaraknya proporsional ke label, bukan margin manual. */
   .dash-banner-cta{
-    display:inline-flex; align-items:center; justify-content:center;
-    margin-top:6px; height:38px; padding:0 20px; border-radius:999px;
-    font-family:inherit; font-size:12.5px; font-weight:700; letter-spacing:.02em;
-    color:#04121c; background:linear-gradient(120deg, var(--accent), #2f8fd0);
-    border:1px solid #3FB6E855; cursor:pointer; white-space:nowrap;
-    box-shadow:0 10px 22px -8px rgba(0,0,0,.55);
+    display:inline-flex; align-items:center; justify-content:center; gap:7px;
+    margin-top:8px; height:40px; padding:0 22px; border-radius:999px;
+    font-family:inherit; font-size:13px; font-weight:600; letter-spacing:.01em;
+    color:#04121c; background:linear-gradient(120deg, #6BD4F5, var(--accent) 45%, #2f8fd0);
+    border:1px solid rgba(255,255,255,.28); cursor:pointer; white-space:nowrap;
+    box-shadow:0 10px 24px -8px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.35);
     transition:transform .18s cubic-bezier(.4,0,.2,1), box-shadow .18s ease, filter .18s ease;
   }
+  /* .icon global (lihat blok ICON SYSTEM di bawah) set color:var(--text-dim)
+     eksplisit (bukan cuma andalkan currentColor) — override di sini supaya
+     ikon panah ikut warna teks CTA (#04121c), bukan abu-abu generik. */
+  .dash-banner-cta svg{ width:15px; height:15px; color:inherit; transition:transform .18s ease; }
   .dash-banner-cta:hover{
-    transform:translateY(-2px) scale(1.015); filter:brightness(1.06);
-    box-shadow:0 14px 28px -8px rgba(0,0,0,.6), 0 0 18px -4px var(--accent);
+    transform:translateY(-2px) scale(1.015); filter:brightness(1.07);
+    box-shadow:0 16px 30px -8px rgba(0,0,0,.65), 0 0 18px -4px var(--accent), inset 0 1px 0 rgba(255,255,255,.4);
   }
-  .dash-banner-cta:active{ transform:translateY(0) scale(.98); }
+  .dash-banner-cta:hover svg{ transform:translateX(2px); }
+  .dash-banner-cta:active{ transform:translateY(0) scale(.97); filter:brightness(.98); }
 
   /* Dots carousel — hanya dirender kalau banner aktif > 1 (poin "premium
      sederhana": indikator kecil, tidak mencolok, di bawah-tengah banner). */

@@ -240,8 +240,22 @@ module.exports = function createBannerManager({ getDb, wsBroadcastAll }) {
   }
 
   // Payload untuk Admin Web (semua status, urutan sama seperti tersimpan).
+  //
+  // FIX 404 (audit "Save lambat + 404"): sebelumnya base URL di sini adalah
+  // '/api/admin/banners', jadi tiap banner ber-gambar menghasilkan URL
+  // `/api/admin/banners/:id/image?v=...` — endpoint itu TIDAK PERNAH ada di
+  // server.js (satu-satunya route gambar banner yang benar-benar terdaftar
+  // adalah GET /api/banners/:id/image, PUBLIK, lihat server.js). Akibatnya
+  // setiap kali Admin Web merender preview/thumbnail banner (termasuk tepat
+  // setelah Save, begitu daftar banner di-render ulang dengan URL versi
+  // baru), browser memuat gambar dari URL yang salah -> 404 di console,
+  // persis yang dilaporkan. Endpoint gambar memang SENGAJA publik (sama
+  // seperti /api/app-customization/background-image) supaya <img>/CSS
+  // background-image bisa langsung memuatnya tanpa header Authorization —
+  // jadi solusinya cukup pakai base URL publik yang sudah benar-benar ada
+  // ini, BUKAN membuat endpoint admin baru yang duplikat.
   function toAdminList(banners) {
-    return banners.map(b => toLightPayload(b, '/api/admin/banners'));
+    return banners.map(b => toLightPayload(b, '/api/banners'));
   }
 
   async function getRawImageBuffer(id) {
@@ -256,13 +270,31 @@ module.exports = function createBannerManager({ getDb, wsBroadcastAll }) {
     return { mime: m[1].toLowerCase(), buffer: Buffer.from(m[2], 'base64') };
   }
 
+  // ── PERF — dipakai createBanner()/deleteBanner()/reorderBanners() di bawah
+  // HANYA untuk urusan `order`/validasi id, TIDAK PERNAH untuk menampilkan
+  // apa pun ke client. SENGAJA memakai projection { image: 0 } supaya query
+  // ini tidak ikut menarik base64 gambar (bisa sampai 8 MB PER banner) dari
+  // MongoDB — sebelumnya ketiga fungsi ini semua memanggil listBannersRaw()
+  // (fetch SEMUA field termasuk gambar) padahal cuma butuh _id & order. Ini
+  // salah satu penyebab "Save/Tambah/Hapus Banner lambat": makin banyak &
+  // makin besar gambar banner yang tersimpan, makin berat operasi CRUD lain
+  // yang sebetulnya sama sekali tidak menyentuh gambar.
+  async function listOrderIndex() {
+    const db = getDb();
+    if (!db) return [];
+    return db.collection(COLLECTION)
+      .find({}, { projection: { image: 0 } })
+      .sort({ order: 1 })
+      .toArray();
+  }
+
   async function createBanner(input, updatedBy) {
     const db = getDb();
     if (input && input.image && typeof input.image.url === 'string') {
       validateImageUrl(input.image.url);
     }
-    const all = await listBannersRaw();
-    const nextOrder = all.length ? Math.max(...all.map(b => b.order)) + 1 : 0;
+    const all = await listOrderIndex();
+    const nextOrder = all.length ? Math.max(...all.map(b => (Number.isFinite(b.order) ? b.order : 0))) + 1 : 0;
     const now = new Date();
     const doc = mergeBanner({
       order: nextOrder,
@@ -282,31 +314,68 @@ module.exports = function createBannerManager({ getDb, wsBroadcastAll }) {
     return await getBannerById(result.insertedId);
   }
 
+  // ── PERF — AKAR MASALAH "Save Banner sangat lambat" ──────────────────────
+  // SEBELUM audit ini, fungsi ini (1) mengambil dokumen banner LENGKAP
+  // (termasuk gambar base64, sampai 8 MB) hanya untuk dibaca field
+  // teks/posisi/tombolnya, lalu (2) menulis ULANG SELURUH dokumen — termasuk
+  // field `image` yang TIDAK BERUBAH — kembali ke MongoDB lewat $set setiap
+  // kali admin Save, walau admin cuma mengetik ulang judul/deskripsi. Jadi
+  // tiap Save = 1x baca 8MB + 1x tulis 8MB ke database, padahal gambarnya
+  // sama sekali tidak disentuh — inilah yang bikin Save terasa seperti
+  // menunggu upload ulang walau tidak ada gambar baru.
+  //
+  // Perbaikan (TIDAK mengubah skema/struktur database sama sekali):
+  //  1. `current` diambil dengan projection { image: 0 } — field gambar
+  //     tidak pernah ikut terbaca kalau patch ini tidak menyertakan gambar
+  //     baru (dan kalau MENYERTAKAN gambar baru, kita toh tidak butuh
+  //     gambar LAMA-nya sama sekali, cukup pakai yang baru).
+  //  2. `$set` HANYA berisi field yang benar-benar dikirim di `patch` —
+  //     bukan lagi seluruh objek `merged`. Field yang tidak dikirim admin
+  //     (termasuk `image` kalau admin tidak upload/hapus gambar sesi ini)
+  //     TIDAK PERNAH ditulis ulang ke MongoDB.
+  // Hasil akhirnya (`getBannerById(id)` di akhir) tetap mengembalikan data
+  // lengkap yang benar, karena gambar lama tidak pernah tersentuh di DB.
   async function updateBanner(id, patch, updatedBy) {
     const db = getDb();
     const _id = oid(id);
     if (!db || !_id) throw new Error('Banner tidak ditemukan.');
-    const current = await getBannerById(id);
-    if (!current) throw new Error('Banner tidak ditemukan.');
+    const p = patch || {};
 
-    if (patch && patch.image && typeof patch.image.url === 'string') {
-      validateImageUrl(patch.image.url);
+    const currentDoc = await db.collection(COLLECTION).findOne({ _id }, { projection: { image: 0 } });
+    if (!currentDoc) throw new Error('Banner tidak ditemukan.');
+    const current = mergeBanner(currentDoc);
+
+    if (p.image && typeof p.image.url === 'string') {
+      validateImageUrl(p.image.url);
     }
 
+    // `merged` cuma dipakai untuk SANITASI nilai (whitelist font/posisi/
+    // limit panjang teks/dst, lihat mergeBanner/sanitizeButton) — bukan
+    // untuk ditulis mentah-mentah ke database (lihat pembentukan `set` di
+    // bawah, yang cuma mengambil sebagian field dari `merged` sesuai apa
+    // yang benar-benar ada di `patch`).
     const merged = mergeBanner({
       ...current,
-      image: (patch.image && typeof patch.image.url === 'string') ? { url: patch.image.url } : current.image,
-      eyebrow: patch.eyebrow ? { ...current.eyebrow, ...patch.eyebrow } : current.eyebrow,
-      title: patch.title ? { ...current.title, ...patch.title } : current.title,
-      description: patch.description ? { ...current.description, ...patch.description } : current.description,
-      position: patch.position !== undefined ? patch.position : current.position,
-      button: patch.button ? { ...current.button, ...patch.button } : current.button,
-      status: patch.status !== undefined ? patch.status : current.status
+      image: (p.image && typeof p.image.url === 'string') ? { url: p.image.url } : current.image,
+      eyebrow: p.eyebrow ? { ...current.eyebrow, ...p.eyebrow } : current.eyebrow,
+      title: p.title ? { ...current.title, ...p.title } : current.title,
+      description: p.description ? { ...current.description, ...p.description } : current.description,
+      position: p.position !== undefined ? p.position : current.position,
+      button: p.button ? { ...current.button, ...p.button } : current.button,
+      status: p.status !== undefined ? p.status : current.status
     });
-    delete merged._id;
-    merged.updatedAt = new Date();
 
-    await db.collection(COLLECTION).updateOne({ _id }, { $set: { ...merged, updatedBy } });
+    const now = new Date();
+    const set = { updatedAt: now, updatedBy };
+    if (p.image && typeof p.image.url === 'string') set.image = merged.image;
+    if (p.eyebrow) set.eyebrow = merged.eyebrow;
+    if (p.title) set.title = merged.title;
+    if (p.description) set.description = merged.description;
+    if (p.position !== undefined) set.position = merged.position;
+    if (p.button) set.button = merged.button;
+    if (p.status !== undefined) set.status = merged.status;
+
+    await db.collection(COLLECTION).updateOne({ _id }, { $set: set });
     return await getBannerById(id);
   }
 
@@ -319,7 +388,10 @@ module.exports = function createBannerManager({ getDb, wsBroadcastAll }) {
       // Rapikan `order` supaya tidak ada celah (0,1,3,4 -> 0,1,2,3) — filter
       // tab "Banner N" di Admin Web & urutan carousel App selalu berurutan
       // rapi setelah salah satu banner dihapus (poin #2 permintaan).
-      const remaining = await listBannersRaw();
+      // PERF: pakai listOrderIndex() (projection { image: 0 }), BUKAN
+      // listBannersRaw() — reindex urutan tidak butuh gambar sama sekali,
+      // jadi tidak perlu menarik base64 semua banner lain dari MongoDB.
+      const remaining = await listOrderIndex();
       await Promise.all(remaining.map((b, idx) =>
         b.order !== idx
           ? db.collection(COLLECTION).updateOne({ _id: b._id }, { $set: { order: idx } })
@@ -332,7 +404,10 @@ module.exports = function createBannerManager({ getDb, wsBroadcastAll }) {
   async function reorderBanners(orderedIds) {
     const db = getDb();
     if (!db || !Array.isArray(orderedIds) || !orderedIds.length) return await listBannersRaw();
-    const all = await listBannersRaw();
+    // PERF: validasi id lewat listOrderIndex() (projection { image: 0 }) —
+    // drag & drop reorder cuma butuh memastikan id valid, tidak pernah
+    // butuh gambar banner lain.
+    const all = await listOrderIndex();
     const validIds = new Set(all.map(b => String(b._id)));
     // Cuma proses id yang benar-benar ada — id asing/duplikat diabaikan
     // supaya request yang di-tempering tidak bisa merusak urutan.
@@ -346,13 +421,32 @@ module.exports = function createBannerManager({ getDb, wsBroadcastAll }) {
   // Dipanggil setelah create/update/delete/reorder berhasil — broadcast
   // SINYAL RINGAN saja (pola SAMA dengan app-customization:update/
   // marketplace:products:update), App fetch ulang lewat GET /api/banners.
-  async function broadcastUpdate() {
-    const all = await listBannersRaw();
+  //
+  // FIX (AKAR MASALAH UTAMA "Save Banner sangat lambat"): versi sebelumnya
+  // memanggil `listBannersRaw()` di sini — yaitu fetch SEMUA dokumen banner
+  // (LENGKAP dengan gambar base64 tiap banner, sampai 8 MB per banner) dari
+  // MongoDB — padahal hasilnya (`all.length`) TIDAK PERNAH dipakai oleh
+  // siapa pun: semua pemanggil broadcastUpdate() di server.js memanggilnya
+  // dengan `await bannerManager.broadcastUpdate();` saja, return value-nya
+  // dibuang. Jadi SETIAP kali admin Save/Tambah/Hapus/Reorder satu banner,
+  // server diam-diam menarik ULANG SEMUA banner + gambarnya dari database
+  // sebelum sempat mengirim sinyal WS — makin banyak/besar banner yang
+  // tersimpan, makin lambat SEMUA operasi Save terasa, walau yang diedit
+  // cuma 1 banner kecil tanpa gambar sama sekali.
+  //
+  // Perbaikan: ikuti PERSIS pola broadcastMarketplaceProductsUpdate() di
+  // server.js (Marketplace Admin Web yang sekarang sudah cepat, dipakai
+  // sebagai referensi) — kirim sinyal WS LANGSUNG tanpa membaca database
+  // sama sekali. App yang menerima sinyal ini tetap fetch ulang data
+  // lengkap lewat REST GET /api/banners (payload ringan, endpoint yang
+  // sudah ada), jadi tidak ada perilaku yang hilang — cuma bagian yang
+  // sia-sia (baca ulang semua gambar tiap broadcast) yang dihapus.
+  function broadcastUpdate() {
     const version = Date.now();
     if (typeof wsBroadcastAll === 'function') {
       wsBroadcastAll('banners:update', { changed: true, version });
     }
-    return { version, count: all.length };
+    return { version };
   }
 
   return {

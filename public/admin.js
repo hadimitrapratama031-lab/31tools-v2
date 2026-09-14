@@ -9824,11 +9824,15 @@ function bnrUpdateButtonFieldsVisibility() {
   document.getElementById('bnrButtonFields').style.pointerEvents = enabled ? '' : 'none';
 }
 
-// ── IMAGE — preview ringan (thumbnail via <img>/background-image lewat
-// endpoint /api/banners/:id/image atau /api/admin/banners/:id/image, BUKAN
-// base64 utuh dimuat di JS) supaya halaman tetap ringan (poin #4/#10:
-// preview jangan bikin halaman berat). Data URI base64 HANYA ada di memori
-// sesaat kalau admin baru upload gambar baru (belum disimpan). ──
+// ── IMAGE — preview ringan (thumbnail via background-image lewat endpoint
+// PUBLIK /api/banners/:id/image — lihat toAdminList()/toLightPayload() di
+// bannerManager.js — BUKAN base64 utuh dimuat di JS) supaya halaman tetap
+// ringan (poin #4/#10: preview jangan bikin halaman berat). FIX 404: URL ini
+// SEBELUMNYA sempat mengarah ke /api/admin/banners/:id/image yang tidak
+// pernah terdaftar di server.js; sekarang selalu memakai endpoint publik
+// yang benar-benar ada (image memang sengaja publik, sama seperti App
+// Customization). Data URI base64 HANYA ada di memori sesaat kalau admin
+// baru upload gambar baru (belum disimpan). ──
 function bnrRenderImagePreview() {
   const el = document.getElementById('bnrImagePreview');
   const b = bnrActiveBanner();
@@ -9918,9 +9922,13 @@ function bnrRenderPreview() {
   descEl.style.display = state.description.text ? '' : 'none';
 
   if (state.button.enabled && state.button.label) {
-    btnEl.textContent = state.button.label;
+    // Markup SAMA PERSIS dengan _dashBannerSlideHTML() di app/app.js (label +
+    // ikon panah #ic-arrow-right) — supaya preview Admin Web benar-benar
+    // merepresentasikan tampilan CTA di App, bukan cuma teks polos tanpa ikon.
+    btnEl.innerHTML = `${escapeHtml(state.button.label)} <svg class="icon"><use href="#ic-arrow-right"></use></svg>`;
     btnEl.classList.add('is-active');
   } else {
+    btnEl.textContent = '';
     btnEl.classList.remove('is-active');
   }
 }

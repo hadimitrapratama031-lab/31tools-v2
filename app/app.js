@@ -898,8 +898,11 @@ function _dashBannerSlideHTML(banner, index) {
   const descStyle = `font-family:${_appFontStack(desc.fontFamily)};font-size:${desc.fontSize || 13.5}px;font-weight:${desc.fontWeight || 500};letter-spacing:${desc.letterSpacing ?? 0}px;max-width:${desc.maxWidth || 560}px;`;
 
   const bgStyle = imgUrl ? ` style="background-image:url('${encodeURI(imgUrl)}')"` : '';
+  // Ikon panah pakai sprite SVG existing (#ic-arrow-right, lihat
+  // app/index.html) — BUKAN gambar/font-icon baru — supaya CTA terlihat
+  // seperti bagian dari desain Banner (poin #5), bukan tombol HTML polos.
   const ctaHTML = (btn.enabled && btn.label && btn.target)
-    ? `<button type="button" class="dash-banner-cta" data-banner-route="${escapeHtml(btn.target)}">${escapeHtml(btn.label)}</button>`
+    ? `<button type="button" class="dash-banner-cta" data-banner-route="${escapeHtml(btn.target)}">${escapeHtml(btn.label)} <svg class="icon"><use href="#ic-arrow-right"></use></svg></button>`
     : '';
 
   return `

@@ -2765,13 +2765,66 @@ button:hover .icon,
 
 .bnr-preview-col { position: sticky; top: 20px; }
 .bnr-preview-card .card-body { padding: 18px; }
+/* ── SINKRON DENGAN app/styles.css (.dash-banner-*) ──────────────────────
+   admin.html TIDAK memuat app/styles.css (cuma admin.css) — sebelumnya
+   perbaikan ini duplikat sendiri di sini dengan properti yang jauh lebih
+   sedikit (cuma posisi kotak overlay + toggle show/hide tombol lewat class
+   `dash-banner-btn` yang bahkan TIDAK ADA di App/tidak pernah dipakai
+   `dash-banner-cta` sebenarnya). Akibatnya: teks Eyebrow/Judul/Deskripsi di
+   preview TIDAK punya warna/text-shadow/line-clamp sama sekali (cuma
+   font-family/size/weight lewat inline style dari admin.js), dan CTA
+   preview tampil sebagai tombol HTML polos — jauh berbeda dari tampilan
+   asli di App (poin #6 audit: "preview & App tidak boleh beda jauh").
+   Blok di bawah ini SENGAJA disalin 1:1 dari app/styles.css (posisi
+   konten, warna, CTA premium, dst) supaya representasinya presisi sama.
+   Kalau desain banner di app/styles.css berubah lagi nanti, blok ini harus
+   disamakan lagi. `--bnr-accent` dipisah dari var(--violet) tema Admin Web
+   supaya warna aksen banner (biru App) tidak tertukar warna aksen Admin
+   Web (ungu). */
 .bnr-preview {
+  --bnr-accent: #3FB6E8;
   width: 100%; aspect-ratio: 16 / 8.4; border-radius: 16px; overflow: hidden;
   background: #0B1020 center/cover no-repeat; position: relative;
 }
-.bnr-preview .dash-banner-overlay { position: absolute; inset: 0; display: flex; flex-direction: column; justify-content: center; gap: 8px; padding: 22px 26px; }
-.bnr-preview .dash-banner-btn { display: none; }
-.bnr-preview .dash-banner-btn.is-active { display: inline-flex; }
+.bnr-preview .dash-banner-overlay {
+  position: absolute; inset: 0; display: flex; flex-direction: column;
+  /* Sama dengan .dash-banner-overlay App — konten digeser ke bawah (poin
+     #4), padding responsif (clamp), bukan pixel tetap. */
+  justify-content: flex-end;
+  padding: clamp(16px, 4%, 32px) clamp(20px, 5%, 42px) clamp(22px, 6%, 44px);
+  gap: 8px;
+}
+.bnr-preview .dash-banner-eyebrow {
+  font-size: 11px; font-weight: 700; letter-spacing: .14em; text-transform: uppercase;
+  color: var(--bnr-accent);
+}
+.bnr-preview .dash-banner-title {
+  font-family: 'Cinzel', 'Segoe UI', serif; font-weight: 800; font-size: clamp(20px, 2.4vw, 30px);
+  color: #fff; margin: 0; text-shadow: 0 2px 12px rgba(0,0,0,.5);
+}
+.bnr-preview .dash-banner-desc {
+  font-size: 13.5px; line-height: 1.6; color: rgba(255,255,255,.78); margin: 0;
+  max-width: 560px; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
+/* CTA — identik dengan .dash-banner-cta App (gradient + border halus +
+   depth + hover/press), disembunyikan kalau tombol tidak aktif (pola SAMA
+   seperti sebelumnya lewat class .is-active yang di-toggle admin.js). */
+.bnr-preview .dash-banner-cta {
+  display: none; align-items: center; justify-content: center; gap: 7px;
+  margin-top: 8px; height: 40px; padding: 0 22px; border-radius: 999px;
+  font-family: inherit; font-size: 13px; font-weight: 600; letter-spacing: .01em;
+  color: #04121c; background: linear-gradient(120deg, #6BD4F5, var(--bnr-accent) 45%, #2f8fd0);
+  border: 1px solid rgba(255,255,255,.28); cursor: pointer; white-space: nowrap;
+  box-shadow: 0 10px 24px -8px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.35);
+  transition: transform .18s cubic-bezier(.4,0,.2,1), box-shadow .18s ease, filter .18s ease;
+}
+.bnr-preview .dash-banner-cta.is-active { display: inline-flex; }
+.bnr-preview .dash-banner-cta svg { width: 15px; height: 15px; color: inherit; }
+.bnr-preview .dash-banner-cta:hover {
+  transform: translateY(-2px) scale(1.015); filter: brightness(1.07);
+  box-shadow: 0 16px 30px -8px rgba(0,0,0,.65), 0 0 18px -4px var(--bnr-accent), inset 0 1px 0 rgba(255,255,255,.4);
+}
+.bnr-preview .dash-banner-cta:active { transform: translateY(0) scale(.97); filter: brightness(.98); }
 
 /* ══════════════════════════════════════════════════════════════════════
    KIRIM NOTIFIKASI — Notification Composer + Live Preview
