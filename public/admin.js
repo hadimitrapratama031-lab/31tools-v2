@@ -10140,7 +10140,11 @@ let _dbnLoadToken = 0; // guard request in-flight yang basi (nav cepat pindah2 h
 
 function dbnMapServerBanners(list) {
   return (Array.isArray(list) ? list : []).map(b => ({
-    _cid: dbnNewCid(), _collapsed: false,
+    // Default RINGKAS (collapsed) untuk banner yang sudah tersimpan — halaman
+    // baru dibuka tidak langsung menampilkan semua form terbuka sekaligus.
+    // Banner BARU (dbnDefaultBanner(), lewat + Tambah Banner) tetap terbuka
+    // otomatis supaya admin langsung bisa isi.
+    _cid: dbnNewCid(), _collapsed: true,
     // _imageTouched: PERF — flag transient (TIDAK PERNAH dikirim ke
     // backend, lihat dbnCleanBanner()) yang menandai admin BENAR-BENAR
     // upload/ganti/hapus gambar banner ini di sesi edit sekarang. Baru
@@ -10295,30 +10299,22 @@ async function renderDashboardBannerPage() {
 // sudah dipakai halaman lain di Admin Web) selagi request pertama di sesi
 // ini masih berjalan — halaman langsung terasa "ada isinya" alih-alih blank
 // menunggu roundtrip network + jalan pertama Database.
-function dbnRenderSkeleton(count = 2) {
+// Skeleton = baris ringkas (bukan card penuh lagi) supaya cerminan visual
+// halaman skeleton konsisten sama status FINAL-nya (default collapsed).
+function dbnRenderSkeleton(count = 3) {
   const list = document.getElementById('dbnBannerList');
   const empty = document.getElementById('dbnEmptyState');
+  const statsBar = document.getElementById('dbnStatsBar');
   if (!list) return;
   if (empty) empty.style.display = 'none';
+  if (statsBar) statsBar.innerHTML = '';
   list.innerHTML = Array.from({ length: count }).map(() => `
     <div class="dbn-banner-card dbn-banner-card--skeleton">
       <div class="dbn-card-header">
-        <span class="skeleton" style="width:22px;height:22px;border-radius:7px;"></span>
-        <span class="skeleton" style="width:80px;height:14px;"></span>
-        <span class="skeleton" style="width:60px;height:14px;margin-left:auto;"></span>
-      </div>
-      <div class="dbn-card-body">
-        <div class="dbn-card-grid">
-          <div class="dbn-card-fields">
-            <span class="skeleton" style="display:block;width:60%;height:12px;margin-bottom:16px;"></span>
-            <span class="skeleton" style="display:block;width:100%;height:14px;margin-bottom:10px;"></span>
-            <span class="skeleton" style="display:block;width:100%;height:14px;margin-bottom:10px;"></span>
-            <span class="skeleton" style="display:block;width:70%;height:14px;"></span>
-          </div>
-          <div class="dbn-card-preview-col">
-            <span class="skeleton" style="display:block;width:100%;height:150px;border-radius:12px;"></span>
-          </div>
-        </div>
+        <span class="skeleton" style="width:24px;height:24px;border-radius:7px;flex-shrink:0;"></span>
+        <span class="skeleton" style="width:42px;height:42px;border-radius:10px;flex-shrink:0;"></span>
+        <span class="skeleton" style="width:120px;height:13px;"></span>
+        <span class="skeleton" style="width:54px;height:18px;border-radius:999px;margin-left:auto;"></span>
       </div>
     </div>`).join('');
 }
@@ -10497,6 +10493,17 @@ function dbnPageOptionsHtml(selected) {
   return dbnPageOptions.map(p => `<option value="${escapeHtml(p.id)}" ${p.id === selected ? 'selected' : ''}>${escapeHtml(p.label)}</option>`).join('');
 }
 
+// PERF — kalau banner sudah punya gambar (dari server = path thumbnail
+// ringan, lihat toAdminPayload() di dashboardBannerManager.js), thumbnail
+// baris pakai loading="lazy" — thumbnail baru benar-benar di-fetch begitu
+// baris masuk/dekat viewport, bukan semua sekaligus begitu list dirender.
+function dbnRowThumbHtml(img) {
+  if (!img.url) {
+    return `<div class="sbn-row-thumb-empty"><svg class="icon icon-16"><use href="#ic-image"></use></svg></div>`;
+  }
+  return `<img class="sbn-row-thumb dbn-image-preview-img" loading="lazy" decoding="async" src="${escapeHtml(img.url)}" alt="" ${IMG_ONERROR_ATTR}>`;
+}
+
 function dbnCardTemplate(banner, idx, total) {
   const img = banner.image;
   const label = dbnBannerLabel(banner, idx);
@@ -10504,12 +10511,15 @@ function dbnCardTemplate(banner, idx, total) {
   return `
     <div class="dbn-banner-card" data-idx="${idx}">
       <div class="dbn-card-header">
-        <button type="button" class="dbn-card-collapse-btn" data-action="toggle-collapse" title="${collapsed ? 'Perluas' : 'Tutup'}">
-          <svg class="icon icon-16"><use href="#ic-chevron-${collapsed ? 'down' : 'up'}"></use></svg>
-        </button>
-        <div class="dbn-card-header-info">
-          <span class="dbn-card-index">Banner ${idx + 1}</span>
-          <span class="dbn-card-name">${escapeHtml(label)}</span>
+        <div class="dbn-card-header-click" data-action="toggle-collapse" title="${collapsed ? 'Klik untuk buka' : 'Klik untuk tutup'}">
+          <button type="button" class="dbn-card-collapse-btn" tabindex="-1">
+            <svg class="icon icon-16"><use href="#ic-chevron-${collapsed ? 'down' : 'up'}"></use></svg>
+          </button>
+          <div class="sbn-row-thumb-wrap">${dbnRowThumbHtml(img)}</div>
+          <div class="dbn-card-header-info">
+            <span class="dbn-card-index">Banner ${idx + 1}</span>
+            <span class="dbn-card-name">${escapeHtml(label)}</span>
+          </div>
         </div>
         <span class="dbn-card-badge ${banner.active ? 'dbn-card-badge--active' : 'dbn-card-badge--inactive'}">${banner.active ? 'Aktif' : 'Nonaktif'}</span>
         <label class="switch" title="Aktif/Nonaktif banner ini">
@@ -10523,82 +10533,88 @@ function dbnCardTemplate(banner, idx, total) {
       </div>
 
       <div class="dbn-card-body" ${collapsed ? 'style="display:none;"' : ''}>
-        <div class="dbn-card-grid">
-          <div class="dbn-card-fields">
-            <div class="form-group">
-              <label class="form-label">Gambar</label>
-              <div class="acz-pill-group dbn-imgsource-group">
-                <button type="button" class="acz-pill ${img.source === 'upload' ? 'active' : ''}" data-imgsource="upload">Upload File</button>
-                <button type="button" class="acz-pill ${img.source === 'url' ? 'active' : ''}" data-imgsource="url">Link URL</button>
-              </div>
-            </div>
-            <div class="form-group dbn-image-upload-wrap" style="${img.source === 'upload' ? '' : 'display:none;'}margin-top:-8px;">
-              <div class="dbn-dropzone">
-                <svg class="icon icon-24"><use href="#ic-image"></use></svg>
-                <span>Drag & drop, atau <u>Pilih File</u> <span style="color:var(--text-faint);">— PNG/JPG/WEBP, maks 5MB</span></span>
-                <input class="form-input dbn-image-file" type="file" accept="image/png,image/jpeg,image/webp" style="display:none;">
-              </div>
-            </div>
-            <div class="form-group dbn-image-url-wrap" style="${img.source === 'url' ? '' : 'display:none;'}margin-top:-8px;">
-              <input class="form-input dbn-image-url-input" type="text" placeholder="https://example.com/banner.jpg" value="${img.source === 'url' ? escapeHtml(img.url || '') : ''}">
-              <div class="dbn-image-url-status" style="margin-top:6px;font-size:12px;color:var(--text-faint);min-height:16px;"></div>
-            </div>
-            <div class="dbn-image-preview-wrap" style="margin:-6px 0 18px;position:relative;${img.url ? '' : 'display:none;'}">
-              <img class="dbn-image-preview-img" loading="lazy" decoding="async" style="width:100%;max-height:140px;object-fit:cover;border-radius:10px;border:1px solid var(--line);" src="${escapeHtml(img.url || '')}" ${IMG_ONERROR_ATTR}>
-              <button type="button" class="btn-icon-sm dbn-remove-image-btn" style="position:absolute;top:6px;right:6px;background:rgba(4,6,10,.55);color:#fff;"><svg class="icon icon-16"><use href="#ic-trash-2"></use></svg></button>
-            </div>
-
-            <div class="form-group">
-              <label class="form-label">Teks Atas (Eyebrow)</label>
-              <input class="form-input dbn-eyebrow-input" type="text" maxlength="60" placeholder="Featured This Week" value="${escapeHtml(banner.eyebrow || '')}">
-            </div>
-            <div class="form-group">
-              <label class="form-label">Judul</label>
-              <input class="form-input dbn-title-input" type="text" maxlength="100" placeholder="Elden Ring" value="${escapeHtml(banner.title || '')}">
-            </div>
-            <div class="form-group">
-              <label class="form-label">Deskripsi</label>
-              <textarea class="form-input dbn-desc-input" maxlength="240" rows="2" placeholder="Deskripsi singkat game/promo yang ditonjolkan...">${escapeHtml(banner.description || '')}</textarea>
-              <div class="dbn-char-counter dbn-desc-counter">${(banner.description || '').length} / 240</div>
-            </div>
-
-            <div class="form-group" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;margin-bottom:8px;">
-              <div>
-                <label class="form-label">Teks Tombol</label>
-                <input class="form-input dbn-buttontext-input" type="text" maxlength="40" placeholder="Lihat Detail" value="${escapeHtml(banner.buttonText || '')}">
-              </div>
-              <div>
-                <label class="form-label">Tujuan Tombol</label>
-                <div class="acz-pill-group dbn-targettype-group">
-                  <button type="button" class="acz-pill ${banner.buttonTargetType === 'page' ? 'active' : ''}" data-targettype="page">Halaman APP</button>
-                  <button type="button" class="acz-pill ${banner.buttonTargetType === 'url' ? 'active' : ''}" data-targettype="url">Link Luar</button>
-                </div>
-              </div>
-            </div>
-            <div class="form-group dbn-targetpage-wrap" style="${banner.buttonTargetType === 'page' ? '' : 'display:none;'}">
-              <select class="form-input dbn-targetpage-select">${dbnPageOptionsHtml(banner.buttonTargetPage)}</select>
-            </div>
-            <div class="form-group dbn-targeturl-wrap" style="${banner.buttonTargetType === 'url' ? '' : 'display:none;'}">
-              <input class="form-input dbn-targeturl-input" type="text" placeholder="https://example.com" value="${escapeHtml(banner.buttonTargetUrl || '')}">
-              <div class="dbn-targeturl-status" style="margin-top:6px;font-size:12px;color:var(--text-faint);min-height:16px;"></div>
+        <div class="dbn-card-preview-label">Live Preview — tampilan di App</div>
+        <div class="sbn-phone">
+          <div class="sbn-phone-topbar">
+            <span class="sbn-phone-dot"></span><span class="sbn-phone-dot"></span><span class="sbn-phone-dot"></span>
+            <span class="sbn-phone-label">Dashboard</span>
+          </div>
+          <div class="dbn-preview-frame dbn-card-preview-frame">
+            <img class="dbn-preview-img dbn-card-preview-img" alt="" loading="lazy" decoding="async" style="${img.url ? '' : 'display:none;'}" src="${escapeHtml(img.url || '')}" onerror="this.style.display='none';">
+            <div class="dbn-preview-overlay">
+              <span class="dbn-preview-eyebrow dbn-card-preview-eyebrow">${escapeHtml(banner.eyebrow || 'Featured This Week')}</span>
+              <h2 class="dbn-preview-title dbn-card-preview-title">${escapeHtml(banner.title || 'Judul Banner')}</h2>
+              <p class="dbn-preview-desc dbn-card-preview-desc">${escapeHtml(banner.description || '')}</p>
+              <button type="button" class="dbn-preview-btn" disabled>
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
+                <span class="dbn-card-preview-btntext">${escapeHtml(banner.buttonText || 'Lihat Detail')}</span>
+              </button>
             </div>
           </div>
+          <div class="sbn-phone-navdots">
+            <span class="sbn-phone-navdot sbn-phone-navdot--active"></span>
+            <span class="sbn-phone-navdot"></span><span class="sbn-phone-navdot"></span><span class="sbn-phone-navdot"></span>
+          </div>
+        </div>
 
-          <div class="dbn-card-preview-col">
-            <div class="dbn-card-preview-label">Live Preview</div>
-            <div class="dbn-preview-frame dbn-card-preview-frame">
-              <img class="dbn-preview-img dbn-card-preview-img" alt="" loading="lazy" decoding="async" style="${img.url ? '' : 'display:none;'}" src="${escapeHtml(img.url || '')}" onerror="this.style.display='none';">
-              <div class="dbn-preview-overlay">
-                <span class="dbn-preview-eyebrow dbn-card-preview-eyebrow">${escapeHtml(banner.eyebrow || 'Featured This Week')}</span>
-                <h2 class="dbn-preview-title dbn-card-preview-title">${escapeHtml(banner.title || 'Judul Banner')}</h2>
-                <p class="dbn-preview-desc dbn-card-preview-desc">${escapeHtml(banner.description || '')}</p>
-                <button type="button" class="dbn-preview-btn" disabled>
-                  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                  <span class="dbn-card-preview-btntext">${escapeHtml(banner.buttonText || 'Lihat Detail')}</span>
-                </button>
-              </div>
+        <div class="sbn-section-label">Gambar</div>
+        <div class="form-group">
+          <div class="acz-pill-group dbn-imgsource-group">
+            <button type="button" class="acz-pill ${img.source === 'upload' ? 'active' : ''}" data-imgsource="upload">Upload File</button>
+            <button type="button" class="acz-pill ${img.source === 'url' ? 'active' : ''}" data-imgsource="url">Link URL</button>
+          </div>
+        </div>
+        <div class="form-group dbn-image-upload-wrap" style="${img.source === 'upload' ? '' : 'display:none;'}">
+          <div class="dbn-dropzone">
+            <svg class="icon icon-24"><use href="#ic-image"></use></svg>
+            <span>Drag & drop, atau <u>Pilih File</u> <span style="color:var(--text-faint);">— PNG/JPG/WEBP, maks 5MB</span></span>
+            <input class="form-input dbn-image-file" type="file" accept="image/png,image/jpeg,image/webp" style="display:none;">
+          </div>
+        </div>
+        <div class="form-group dbn-image-url-wrap" style="${img.source === 'url' ? '' : 'display:none;'}">
+          <input class="form-input dbn-image-url-input" type="text" placeholder="https://example.com/banner.jpg" value="${img.source === 'url' ? escapeHtml(img.url || '') : ''}">
+          <div class="dbn-image-url-status" style="margin-top:6px;font-size:12px;color:var(--text-faint);min-height:16px;"></div>
+        </div>
+        <div class="dbn-image-preview-wrap" style="margin:2px 0 4px;position:relative;${img.url ? '' : 'display:none;'}">
+          <img class="dbn-image-preview-img" loading="lazy" decoding="async" style="width:100%;max-height:120px;object-fit:cover;border-radius:10px;border:1px solid var(--line);" src="${escapeHtml(img.url || '')}" ${IMG_ONERROR_ATTR}>
+          <button type="button" class="btn-icon-sm dbn-remove-image-btn" style="position:absolute;top:6px;right:6px;background:rgba(4,6,10,.55);color:#fff;"><svg class="icon icon-16"><use href="#ic-trash-2"></use></svg></button>
+        </div>
+
+        <div class="sbn-section-label">Konten</div>
+        <div class="form-group">
+          <label class="form-label">Teks Atas (Eyebrow)</label>
+          <input class="form-input dbn-eyebrow-input" type="text" maxlength="60" placeholder="Featured This Week" value="${escapeHtml(banner.eyebrow || '')}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Judul</label>
+          <input class="form-input dbn-title-input" type="text" maxlength="100" placeholder="Elden Ring" value="${escapeHtml(banner.title || '')}">
+        </div>
+        <div class="form-group">
+          <label class="form-label">Deskripsi</label>
+          <textarea class="form-input dbn-desc-input" maxlength="240" rows="2" placeholder="Deskripsi singkat game/promo yang ditonjolkan...">${escapeHtml(banner.description || '')}</textarea>
+          <div class="dbn-char-counter dbn-desc-counter">${(banner.description || '').length} / 240</div>
+        </div>
+
+        <div class="sbn-section-label">Tombol</div>
+        <div class="form-group" style="display:grid;grid-template-columns:1fr 1fr;gap:12px;">
+          <div>
+            <label class="form-label">Teks Tombol</label>
+            <input class="form-input dbn-buttontext-input" type="text" maxlength="40" placeholder="Lihat Detail" value="${escapeHtml(banner.buttonText || '')}">
+          </div>
+          <div>
+            <label class="form-label">Tujuan Tombol</label>
+            <div class="acz-pill-group dbn-targettype-group">
+              <button type="button" class="acz-pill ${banner.buttonTargetType === 'page' ? 'active' : ''}" data-targettype="page">Halaman APP</button>
+              <button type="button" class="acz-pill ${banner.buttonTargetType === 'url' ? 'active' : ''}" data-targettype="url">Link Luar</button>
             </div>
           </div>
+        </div>
+        <div class="form-group dbn-targetpage-wrap" style="${banner.buttonTargetType === 'page' ? '' : 'display:none;'}">
+          <select class="form-input dbn-targetpage-select">${dbnPageOptionsHtml(banner.buttonTargetPage)}</select>
+        </div>
+        <div class="form-group dbn-targeturl-wrap" style="${banner.buttonTargetType === 'url' ? '' : 'display:none;'}">
+          <input class="form-input dbn-targeturl-input" type="text" placeholder="https://example.com" value="${escapeHtml(banner.buttonTargetUrl || '')}">
+          <div class="dbn-targeturl-status" style="margin-top:6px;font-size:12px;color:var(--text-faint);min-height:16px;"></div>
         </div>
       </div>
     </div>`;
@@ -10617,6 +10633,21 @@ function dbnRenderList(opts = {}) {
 
   const countEl = document.getElementById('dbnCountStatus');
   if (countEl) countEl.textContent = `${dbnBanners.length} / ${dbnMaxBanners} banner`;
+
+  const statsBar = document.getElementById('dbnStatsBar');
+  if (statsBar) {
+    if (!dbnBanners.length) {
+      statsBar.innerHTML = '';
+    } else {
+      const activeCount = dbnBanners.filter(b => b.active).length;
+      statsBar.innerHTML = `
+        <span class="sbn-stat"><span class="sbn-stat-dot" style="background:#3FB6E8;"></span>Total <b>${dbnBanners.length}</b></span>
+        <span class="sbn-stat"><span class="sbn-stat-dot" style="background:var(--green);"></span>Aktif <b>${activeCount}</b></span>
+        <span class="sbn-stat"><span class="sbn-stat-dot" style="background:var(--text-faint);"></span>Nonaktif <b>${dbnBanners.length - activeCount}</b></span>
+        ${dbnBanners.length > 1 ? `<span class="sbn-stat">${activeCount >= 2 ? 'Carousel aktif' : 'Carousel butuh 2+ banner aktif'}</span>` : ''}
+      `;
+    }
+  }
 
   dbnUpdateSaveState();
 

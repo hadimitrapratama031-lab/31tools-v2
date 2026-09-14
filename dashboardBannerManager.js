@@ -88,6 +88,37 @@ try {
 
 const SETTINGS_ID = 'dashboardBanner';
 
+// ══════════════════════════════════════════════════════════════════════════
+// PERF FIX (root cause "Setting Banner lambat dibuka", diaudit ulang) —
+// SEBELUM fix ini, base64 tiap banner (bisa 5-10MB/banner) disimpan LANGSUNG
+// di dalam field `image.url` pada SATU dokumen `settings` (_id: 'dashboardBanner').
+// toAdminPayload()/toPublicBanner() memang sudah tidak mengirim base64 itu ke
+// browser (diganti path endpoint gambar) — TAPI getBannerImageAsset() (dipanggil
+// endpoint gambar) tetap memanggil getConfig(), yang membaca ULANG SELURUH
+// dokumen `settings` (termasuk base64 SEMUA banner lain) dari MongoDB, method
+// SATU KALI PER GAMBAR. Kartu list Admin Web memuat gambar tiap banner lewat
+// <img> terpisah secara paralel — jadi buka halaman dengan N banner = N kali
+// baca dokumen raksasa itu utuh dari database (bisa >100MB bolak-balik ke
+// MongoDB walau browser sendiri cuma terima thumbnail kecil), plus resiko
+// dokumen kena batas 16MB per-dokumen MongoDB begitu banner ber-gambar makin
+// banyak.
+//
+// FIX — pindahkan BYTES gambar (bukan metadata) ke koleksi terpisah
+// `dashboardBannerImages` (satu dokumen kecil per banner, _id = banner id,
+// otomatis terindeks lewat _id bawaan MongoDB). Dokumen `settings` sekarang
+// HANYA berisi metadata ringan per banner (teks + penanda LOCAL_IMAGE_MARKER
+// kalau banner itu punya gambar upload) — jadi getConfig() (dipanggil di
+// hampir semua fungsi termasuk getBannerImageAsset) selalu ringan & cepat,
+// TIDAK PERNAH lagi ikut membawa base64. Endpoint gambar baru query LANGSUNG
+// ke `dashboardBannerImages` by _id (satu dokumen kecil, bukan seluruh
+// koleksi banner) hanya untuk banner yang memang diminta. Tidak mengubah
+// endpoint/response shape yang dipakai Admin Web maupun App sama sekali —
+// murni perubahan lapisan penyimpanan.
+// ══════════════════════════════════════════════════════════════════════════
+const IMAGES_COLLECTION = 'dashboardBannerImages';
+const LOCAL_IMAGE_MARKER = 'local-upload'; // pengganti data URI di dalam dokumen `settings` — penanda "gambarnya ada di IMAGES_COLLECTION", BUKAN data URI sungguhan jadi tidak pernah "berat"
+function isLocalMarker(v) { return v === LOCAL_IMAGE_MARKER; }
+
 // ── Thumbnail preview khusus Admin Web (list card + live preview) — lebar
 // cukup untuk kartu banner kecil di Admin Web, jauh dari ukuran carousel
 // App sebenarnya. Kualitas/ukuran original 5-10MB TIDAK PERNAH disentuh/
@@ -172,7 +203,8 @@ function sanitizeImageUrl(v) {
   if (typeof v !== 'string') return '';
   const s = v.trim();
   if (!s) return '';
-  if (s.startsWith('data:image/')) return s;
+  if (isLocalMarker(s)) return s; // sudah tersimpan di IMAGES_COLLECTION, bukan data URI mentah
+  if (s.startsWith('data:image/')) return s; // upload BARU/BELUM diproses updateConfig() — dipindah ke IMAGES_COLLECTION lalu diganti marker sebelum disimpan (lihat updateConfig())
   if (/^https?:\/\//i.test(s)) return s;
   return '';
 }
@@ -207,14 +239,11 @@ function decodeDataUri(dataUri) {
     return null;
   }
 }
-function isHeavyDataUri(v) {
-  return typeof v === 'string' && v.startsWith('data:');
-}
-
 function validateBannerImageUrl(v, label) {
   if (typeof v !== 'string') return;
   const s = v.trim();
   if (!s) return; // kosong = hapus gambar, valid (APP fallback ke gradient default, lihat toPublicBanner)
+  if (isLocalMarker(s)) return; // sudah tervalidasi & tersimpan sebelumnya di IMAGES_COLLECTION
 
   if (s.startsWith('data:')) {
     const mime = dataUriMime(s);
@@ -324,10 +353,10 @@ module.exports = function createDashboardBannerManager({ getDb, wsBroadcastAll }
   // data: URI). Gambarnya SAMA PERSIS, cuma jalur pengirimannya dipisah dari
   // JSON config supaya GET ini ringan & cepat di-parse walau banner banyak.
   function toPublicBanner(b) {
-    const heavy = isHeavyDataUri(b.image.url);
+    const local = isLocalMarker(b.image.url);
     return {
       id: b.id,
-      imageUrl: heavy ? `/api/dashboard-banner/image/${encodeURIComponent(b.id)}` : b.image.url,
+      imageUrl: local ? `/api/dashboard-banner/image/${encodeURIComponent(b.id)}` : b.image.url,
       eyebrow: b.eyebrow,
       title: b.title,
       description: b.description,
@@ -361,12 +390,12 @@ module.exports = function createDashboardBannerManager({ getDb, wsBroadcastAll }
   function toAdminPayload(cfg) {
     const version = cfg.updatedAt ? new Date(cfg.updatedAt).getTime() : 0;
     const banners = cfg.banners.map((b) => {
-      const heavy = isHeavyDataUri(b.image.url);
+      const local = isLocalMarker(b.image.url);
       return {
         ...b,
         image: {
           source: b.image.source,
-          url: heavy ? `/api/admin/dashboard-banner/image/${encodeURIComponent(b.id)}?thumb=1&v=${version}` : b.image.url
+          url: local ? `/api/admin/dashboard-banner/image/${encodeURIComponent(b.id)}?thumb=1&v=${version}` : b.image.url
         }
       };
     });
@@ -388,34 +417,69 @@ module.exports = function createDashboardBannerManager({ getDb, wsBroadcastAll }
   // Return: { status: 'ok', mime, buffer } | { status: 'redirect', url } |
   //         { status: 'notfound' }
   async function getBannerImageAsset(id, { thumb } = {}) {
+    // getConfig() sekarang SELALU ringan (dokumen `settings` tidak lagi
+    // menyimpan base64 — lihat catatan PERF FIX di atas file), jadi baca ini
+    // aman dipanggil per-request tanpa jadi bottleneck.
     const cfg = await getConfig();
     const banner = cfg.banners.find(b => b.id === id);
     const url = banner && banner.image && banner.image.url;
     if (!url) return { status: 'notfound' };
 
     if (/^https?:\/\//i.test(url)) return { status: 'redirect', url };
+    if (!isLocalMarker(url)) return { status: 'notfound' };
 
-    const decoded = decodeDataUri(url);
-    if (!decoded) return { status: 'notfound' };
+    const database = db();
+    if (!database) return { status: 'notfound' };
 
-    if (!thumb || !sharp) return { status: 'ok', mime: decoded.mime, buffer: decoded.buffer };
+    // Query LANGSUNG ke dokumen kecil banner ini saja (by _id, terindeks
+    // bawaan MongoDB) — BUKAN dokumen `settings` gabungan, ini inti fix-nya:
+    // N banner di halaman = N query kecil independen, bukan N kali baca
+    // dokumen besar yang sama berulang-ulang.
+    const imgDoc = await database.collection(IMAGES_COLLECTION).findOne({ _id: id });
+    if (!imgDoc || !imgDoc.data) return { status: 'notfound' };
+    const buffer = Buffer.isBuffer(imgDoc.data) ? imgDoc.data : Buffer.from(imgDoc.data.buffer || imgDoc.data);
+    const mime = imgDoc.mime || 'image/jpeg';
+    const updatedMs = imgDoc.updatedAt ? new Date(imgDoc.updatedAt).getTime() : 0;
 
-    const cacheKey = `${id}:${cfg.updatedAt ? new Date(cfg.updatedAt).getTime() : 0}`;
+    if (!thumb || !sharp) return { status: 'ok', mime, buffer };
+
+    const cacheKey = `${id}:${updatedMs}`;
     const cached = thumbCache.get(cacheKey);
     if (cached) return { status: 'ok', mime: cached.mime, buffer: cached.buffer };
 
     try {
-      const buffer = await sharp(decoded.buffer)
+      const resized = await sharp(buffer)
         .resize({ width: THUMB_MAX_WIDTH, withoutEnlargement: true })
         .webp({ quality: THUMB_WEBP_QUALITY })
         .toBuffer();
-      const result = { mime: 'image/webp', buffer };
+      const result = { mime: 'image/webp', buffer: resized };
       thumbCacheSet(cacheKey, result);
       return { status: 'ok', mime: result.mime, buffer: result.buffer };
     } catch (e) {
       console.warn('[DashboardBanner] Gagal membuat thumbnail, fallback ke gambar original:', e.message);
-      return { status: 'ok', mime: decoded.mime, buffer: decoded.buffer };
+      return { status: 'ok', mime, buffer };
     }
+  }
+
+  // Simpan bytes gambar SATU banner ke IMAGES_COLLECTION (dipanggil dari
+  // updateConfig() untuk banner yang gambarnya BENAR-BENAR baru/diganti di
+  // sesi edit ini — dataUri adalah data: URI mentah dari Admin Web).
+  async function persistBannerImage(id, dataUri) {
+    const decoded = decodeDataUri(dataUri);
+    if (!decoded) return false;
+    const database = db();
+    if (!database) return false;
+    await database.collection(IMAGES_COLLECTION).updateOne(
+      { _id: id },
+      { $set: { mime: decoded.mime, data: decoded.buffer, updatedAt: new Date() } },
+      { upsert: true }
+    );
+    return true;
+  }
+  async function deleteBannerImage(id) {
+    const database = db();
+    if (!database) return;
+    await database.collection(IMAGES_COLLECTION).deleteOne({ _id: id }).catch(() => {});
   }
 
   async function updateConfig(patch, updatedBy) {
@@ -469,6 +533,39 @@ module.exports = function createDashboardBannerManager({ getDb, wsBroadcastAll }
     // untuk banner yang memang belum punya id (banner baru dari tombol
     // "+ Tambah Banner" di Admin Web).
     const banners = incoming.map((raw, i) => mergeBanner(raw, i));
+
+    // ── PERF FIX — pindahkan bytes gambar BARU/DIGANTI ke IMAGES_COLLECTION,
+    // dokumen `settings` (next.banners di bawah) TIDAK PERNAH menyimpan data
+    // URI mentah lagi, hanya LOCAL_IMAGE_MARKER. Jalan SETELAH mergeBanner()
+    // supaya setiap banner (termasuk yang baru) sudah punya `id` final untuk
+    // dipakai sebagai key IMAGES_COLLECTION. Best-effort/sequential (jumlah
+    // banner yang benar-benar diedit gambarnya dalam satu Save biasanya
+    // sedikit, tidak perlu paralel agresif ke DB yang sama).
+    for (const b of banners) {
+      const rawUrl = b.image.url;
+      if (typeof rawUrl === 'string' && rawUrl.startsWith('data:')) {
+        await persistBannerImage(b.id, rawUrl);
+        b.image.url = LOCAL_IMAGE_MARKER;
+      } else if (!rawUrl) {
+        // Kosong = admin menghapus gambar ATAU pindah ke mode Link URL —
+        // hapus file lama di IMAGES_COLLECTION supaya tidak jadi sampah
+        // (best-effort, tidak menggagalkan save kalau gagal).
+        await deleteBannerImage(b.id);
+      }
+      // rawUrl berupa http(s):// atau sudah LOCAL_IMAGE_MARKER (tidak
+      // disentuh admin di sesi ini) -> dibiarkan apa adanya.
+    }
+
+    // Banner yang DIHAPUS admin di sesi edit ini (ada di `current`, tidak ada
+    // lagi di `banners` hasil akhir) — bersihkan juga file gambarnya kalau
+    // ada, supaya IMAGES_COLLECTION tidak menumpuk entry banner yang sudah
+    // tidak ada.
+    const nextIds = new Set(banners.map(b => b.id));
+    for (const oldBanner of current.banners) {
+      if (!nextIds.has(oldBanner.id) && isLocalMarker(oldBanner.image.url)) {
+        await deleteBannerImage(oldBanner.id);
+      }
+    }
 
     const next = {
       _id: SETTINGS_ID,
