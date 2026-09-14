@@ -799,6 +799,165 @@ function applyAppBranding(branding) {
   }
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   DASHBOARD BANNER — Setting Banner Admin Web -> Banner Dashboard APP
+   (#dashBannerRoot, lihat app/index.html & .dash-banner/-slide/-overlay di
+   styles.css). Pola SAMA PERSIS dengan APP CUSTOMIZATION di atas: cache
+   localStorage untuk tampilan offline, GET /api/banners publik untuk data
+   penuh, realtime lewat WS 'banners:update' (SINYAL RINGAN saja — lihat
+   broadcastUpdate() di bannerManager.js — App selalu fetch ulang REST-nya,
+   TIDAK ada payload besar/gambar lewat WS). Desain/struktur banner (Eyebrow
+   -> Judul -> Deskripsi -> [Tombol]) TIDAK dibuat baru, cuma disambungkan ke
+   data — lihat komentar bannerManager.js.
+   ══════════════════════════════════════════════════════════════════════════ */
+const DASH_BANNER_CACHE_KEY = 'dashBannerCache';
+const DASH_BANNER_CAROUSEL_MS = 6000;
+let _dashBannerTimer = null;
+let _dashBannerIndex = 0;
+let _dashBannerClickBound = false;
+
+// Fallback kalau database belum punya banner sama sekali (admin belum pernah
+// buka Setting Banner) — isi & tampilannya persis banner statis APP LAMA,
+// supaya Dashboard tidak pernah tampil kotak hitam kosong sebelum admin
+// sempat menambah banner pertama.
+const DASH_BANNER_FALLBACK = [{
+  id: '__fallback__',
+  image: { url: '' },
+  eyebrow: { text: 'SPECIAL OFFER', fontFamily: 'Inter', fontSize: 11, fontWeight: 700, letterSpacing: 1.5 },
+  title: { text: 'Upgrade ke Platinum', fontFamily: 'Inter', fontSize: 30, fontWeight: 800, letterSpacing: 0 },
+  description: { text: 'Nikmati akses lebih lengkap ke 31 Tools dengan penawaran spesial Platinum.', fontFamily: 'Inter', fontSize: 13.5, fontWeight: 500, letterSpacing: 0, maxWidth: 560 },
+  position: 'left',
+  button: { enabled: false, label: '', target: '' }
+}];
+
+function _readDashBannerCache() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(DASH_BANNER_CACHE_KEY) || 'null');
+    return Array.isArray(cached) ? cached : null;
+  } catch (e) { return null; }
+}
+function _writeDashBannerCache(items) {
+  try { localStorage.setItem(DASH_BANNER_CACHE_KEY, JSON.stringify(items || [])); } catch (e) {}
+}
+
+async function loadBanners() {
+  // Tampilkan dulu data terakhir (cache) kalau ada, supaya tidak ada jeda
+  // balik ke fallback statis sebelum fetch selesai (terutama saat offline) —
+  // pola sama persis dengan loadAppCustomization().
+  const cached = _readDashBannerCache();
+  if (cached) applyBanners(cached);
+  try {
+    const res = await api('/api/banners');
+    const items = Array.isArray(res?.items) ? res.items : [];
+    _writeDashBannerCache(items);
+    applyBanners(items);
+  } catch (e) {
+    console.warn('[Dashboard Banner] GET /api/banners gagal, tetap pakai cache/fallback:', e);
+    if (!cached) applyBanners([]);
+  }
+}
+
+function _stopDashBannerCarousel() {
+  if (_dashBannerTimer) { clearInterval(_dashBannerTimer); _dashBannerTimer = null; }
+}
+
+function _goToDashBannerSlide(root, index) {
+  const slides = root.querySelectorAll('.dash-banner-slide');
+  const dots = root.querySelectorAll('.dash-banner-dot');
+  if (!slides.length) return;
+  _dashBannerIndex = ((index % slides.length) + slides.length) % slides.length;
+  slides.forEach((el, i) => el.classList.toggle('is-active', i === _dashBannerIndex));
+  dots.forEach((el, i) => el.classList.toggle('is-active', i === _dashBannerIndex));
+}
+
+function _startDashBannerCarousel(root, count) {
+  _stopDashBannerCarousel();
+  if (count <= 1) return;
+  // interval baru, TIDAK numpuk dengan yang lama (_stopDashBannerCarousel()
+  // di atas selalu dipanggil dulu) — mencegah duplicate timer/memory leak
+  // tiap kali applyBanners() dipanggil ulang (realtime update/reconnect).
+  _dashBannerTimer = setInterval(() => {
+    _goToDashBannerSlide(root, _dashBannerIndex + 1);
+  }, DASH_BANNER_CAROUSEL_MS);
+}
+
+function _dashBannerSlideHTML(banner, index) {
+  const eyebrow = banner.eyebrow || {};
+  const title = banner.title || {};
+  const desc = banner.description || {};
+  const btn = banner.button || {};
+  const position = ['left', 'center', 'right'].includes(banner.position) ? banner.position : 'left';
+  const imgUrl = (banner.image && banner.image.url) || '';
+
+  const eyebrowText = escapeHtml(eyebrow.text || '');
+  const titleText = escapeHtml(title.text || '');
+  const descText = escapeHtml(desc.text || '');
+
+  const eyebrowStyle = `font-family:${_appFontStack(eyebrow.fontFamily)};font-size:${eyebrow.fontSize || 11}px;font-weight:${eyebrow.fontWeight || 700};letter-spacing:${eyebrow.letterSpacing ?? 1.5}px;`;
+  const titleStyle = `font-family:${_appFontStack(title.fontFamily)};font-size:${title.fontSize || 30}px;font-weight:${title.fontWeight || 800};letter-spacing:${title.letterSpacing ?? 0}px;`;
+  const descStyle = `font-family:${_appFontStack(desc.fontFamily)};font-size:${desc.fontSize || 13.5}px;font-weight:${desc.fontWeight || 500};letter-spacing:${desc.letterSpacing ?? 0}px;max-width:${desc.maxWidth || 560}px;`;
+
+  const bgStyle = imgUrl ? ` style="background-image:url('${encodeURI(imgUrl)}')"` : '';
+  const ctaHTML = (btn.enabled && btn.label && btn.target)
+    ? `<button type="button" class="dash-banner-cta" data-banner-route="${escapeHtml(btn.target)}">${escapeHtml(btn.label)}</button>`
+    : '';
+
+  return `
+    <div class="dash-banner-slide" data-position="${position}" data-index="${index}">
+      <div class="dash-banner-bg"${bgStyle}></div>
+      <div class="dash-banner-scrim"></div>
+      <div class="dash-banner-overlay" data-position="${position}">
+        ${eyebrowText ? `<span class="dash-banner-eyebrow" style="${eyebrowStyle}">${eyebrowText}</span>` : ''}
+        ${titleText ? `<h2 class="dash-banner-title" style="${titleStyle}">${titleText}</h2>` : ''}
+        ${descText ? `<p class="dash-banner-desc" style="${descStyle}">${descText}</p>` : ''}
+        ${ctaHTML}
+      </div>
+    </div>`;
+}
+
+function applyBanners(items) {
+  const root = document.getElementById('dashBannerRoot');
+  if (!root) return;
+  _stopDashBannerCarousel();
+
+  const list = (Array.isArray(items) && items.length) ? items : DASH_BANNER_FALLBACK;
+  root.innerHTML = list.map((b, i) => _dashBannerSlideHTML(b, i)).join('');
+  _dashBannerIndex = 0;
+  _goToDashBannerSlide(root, 0);
+
+  if (list.length > 1) {
+    root.insertAdjacentHTML('beforeend',
+      `<div class="dash-banner-dots">${list.map((_, i) => `<button type="button" class="dash-banner-dot${i === 0 ? ' is-active' : ''}" data-banner-dot="${i}" aria-label="Banner ${i + 1}"></button>`).join('')}</div>`);
+  }
+  _startDashBannerCarousel(root, list.length);
+
+  // Klik tombol CTA / dot — event delegation dipasang SEKALI saja di root
+  // (bukan per-slide, root.innerHTML diganti total tiap render di atas jadi
+  // listener langsung akan hilang) supaya tidak ada duplicate listener
+  // menumpuk tiap kali applyBanners() dipanggil ulang (realtime/reconnect).
+  if (!_dashBannerClickBound) {
+    root.addEventListener('click', (ev) => {
+      const cta = ev.target.closest('.dash-banner-cta');
+      if (cta) {
+        const route = cta.dataset.bannerRoute;
+        // Navigasi pakai setNav() yang SUDAH ADA (routing internal App asli,
+        // BUKAN URL/route baru) — target sudah divalidasi whitelist route di
+        // backend (lihat bannerManager.js APP_ROUTE_IDS), jadi selalu berupa
+        // halaman App yang benar-benar ada.
+        if (route && typeof setNav === 'function') setNav(route);
+        return;
+      }
+      const dot = ev.target.closest('.dash-banner-dot');
+      if (dot) {
+        _stopDashBannerCarousel();
+        _goToDashBannerSlide(root, Number(dot.dataset.bannerDot) || 0);
+        _startDashBannerCarousel(root, root.querySelectorAll('.dash-banner-slide').length);
+      }
+    });
+    _dashBannerClickBound = true;
+  }
+}
+
 function enterApp(user) {
   currentUser = user;
   _saveUser(user);
@@ -822,6 +981,11 @@ function enterApp(user) {
   // masuk App (GET /api/app-customization, tidak perlu tunggu WS konek dulu),
   // realtime selanjutnya lewat event WS 'app-customization:update' di atas.
   loadAppCustomization();
+
+  // DASHBOARD BANNER (Setting Banner Admin Web) — sama pola dengan App
+  // Customization di atas: ambil begitu masuk App, realtime selanjutnya
+  // lewat event WS 'banners:update' (lihat connectRealtime()).
+  loadBanners();
 
   // MAINTENANCE MODE — cek ulang begitu login berhasil, dengan token akun
   // yang baru login (checkMaintenanceStatus() paling awal di titik masuk App
@@ -1355,6 +1519,12 @@ function connectRealtime() {
       // pola dengan loadPackages()/loadTutorials() (aman dipanggil walau
       // halaman Marketplace sedang tidak dibuka).
       if (typeof loadMarketplaceProducts === 'function') loadMarketplaceProducts();
+      // DASHBOARD BANNER — 'banners:update' juga fire-and-forget seperti event
+      // lain di atas: kalau koneksi WS sempat putus SELAGI Admin Web
+      // menambah/mengedit/menghapus/reorder banner, sinyalnya hilang begitu
+      // saja. Resync sekali di sini, sama pola dengan resync lain (aman
+      // dipanggil walau lagi tidak di halaman Dashboard).
+      if (typeof loadBanners === 'function') loadBanners();
       // GOLD TRIAL (requirement #13 "RESTART/LOGIN/RECONNECT") — sinkronkan
       // ulang status Gold Trial dari backend tiap Socket.IO reconnect, sama
       // alasannya dengan resync lain di atas (event realtime fire-and-forget
@@ -1454,6 +1624,15 @@ function connectRealtime() {
       // -> GET /api/app-customization), jadi payload besar tidak pernah
       // lewat WS sama sekali.
       loadAppCustomization();
+    } else if (msg.event === 'banners:update') {
+      // Admin tambah/edit/hapus/reorder Banner (Setting Banner Admin Web) ->
+      // semua App yang online langsung berubah TANPA restart/refresh. Sama
+      // pola dengan 'app-customization:update' di atas: WS cuma kirim sinyal
+      // ringan {changed, version} (lihat bannerManager.broadcastUpdate()),
+      // data penuh (termasuk gambar) di-fetch ulang lewat REST GET /api/banners
+      // supaya payload besar tidak pernah lewat WS.
+      console.log('[Dashboard Banner] Received update signal via WS:', msg.data);
+      loadBanners();
     } else if (msg.event === 'welcome-popup:update') {
       // Admin ubah/simpan Welcome Popup ATAU klik "Paksa Tampil Kembali"
       // (Admin Web) -> semua App yang online langsung sync ulang lewat REST

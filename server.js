@@ -1152,6 +1152,10 @@ const LOG_CATALOG = {
   admin_edit_category:     { label: 'Edit Kategori',                       icon: '✏️', category: 'catalog', status: 'success' },
   admin_delete_category:   { label: 'Hapus Kategori',                      icon: '🗑️', category: 'catalog', status: 'warning' },
   admin_reorder_category:  { label: 'Ubah Urutan Kategori',                icon: '↕️', category: 'catalog', status: 'success' },
+  admin_add_banner:        { label: 'Tambah Banner',                       icon: '➕', category: 'catalog', status: 'success' },
+  admin_edit_banner:       { label: 'Edit Banner',                         icon: '✏️', category: 'catalog', status: 'success' },
+  admin_delete_banner:     { label: 'Hapus Banner',                        icon: '🗑️', category: 'catalog', status: 'warning' },
+  admin_reorder_banner:    { label: 'Ubah Urutan Banner',                  icon: '↕️', category: 'catalog', status: 'success' },
   admin_add_bypass:        { label: 'Tambah Bypass',                       icon: '➕', category: 'catalog', status: 'success' },
   admin_edit_bypass:       { label: 'Edit Bypass',                         icon: '✏️', category: 'catalog', status: 'success' },
   admin_delete_bypass:     { label: 'Hapus Bypass',                        icon: '🗑️', category: 'catalog', status: 'warning' },
@@ -1601,6 +1605,9 @@ const appUpdateManager = require('./appUpdateManager')({ getDb: () => db, wsBroa
 // APP CUSTOMIZATION MANAGER — Background & Branding App Desktop, realtime lewat
 // wsBroadcastAll yang SUDAH ADA (lihat appCustomizationManager.js)
 const appCustomizationManager = require('./appCustomizationManager')({ getDb: () => db, wsBroadcastAll });
+// BANNER MANAGER — Setting Banner Admin Web <-> Banner Dashboard APP, realtime
+// lewat wsBroadcastAll yang SUDAH ADA (lihat bannerManager.js, event 'banners:update').
+const bannerManager = require('./bannerManager')({ getDb: () => db, wsBroadcastAll });
 // CATALOG EMBED ACCENT COLOR — ekstraksi warna dominan/accent dari banner
 // Game/Bypass (Cloudflare Steam CDN header.jpg dengan fallback Ryuu, lewat
 // pickCatalogBanner() di bawah) untuk embed Add Game/Add Bypass/Game
@@ -3087,6 +3094,9 @@ async function connectDB() {
     // Live Chat Support — index TTL 24 jam + index lookup per percakapan (lihat
     // liveChatManager.js).
     await liveChatManager.ensureIndexes();
+
+    // Setting Banner (Admin Web) <-> Banner Dashboard App — lihat bannerManager.js.
+    await bannerManager.ensureIndexes();
 
     // Cron ringan: cek tiap 5 menit apakah minggu leaderboard sudah berganti,
     // kalau ya snapshot leaderboard minggu sebelumnya ke `leaderboardHistory`.
@@ -8065,6 +8075,145 @@ app.get('/api/app-customization/logo', async (req, res) => {
   } catch (e) {
     console.warn('[AppCustomization] Gagal menyajikan logo publik:', e.message);
     res.status(500).end();
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// BANNER — Setting Banner Admin Web <-> Banner Dashboard APP (lihat
+// bannerManager.js). Endpoint publik (GET /api/banners, GET .../image) TIDAK
+// butuh login — App menampilkannya di Dashboard begitu masuk, sama seperti
+// App Customization. Endpoint admin (CRUD + reorder) butuh requireAdmin.
+// Realtime ke App yang online dikirim lewat wsBroadcastAll (event
+// 'banners:update') — TIDAK ada WebSocket/Socket.IO baru sama sekali.
+// ══════════════════════════════════════════════════════════════════════════
+
+// PUBLIK — dipanggil App tiap masuk Dashboard & tiap reconnect WS (lihat
+// applyBannersUpdate()/loadBanners() di app/app.js). Hanya banner
+// status 'active', urut sesuai `order`. Payload RINGAN — image berupa data
+// URI diganti path endpoint /api/banners/:id/image (lihat toLightPayload di
+// bannerManager.js), supaya body JSON ini tidak pernah membawa base64 berat.
+app.get('/api/banners', async (req, res) => {
+  try {
+    const banners = await bannerManager.listBannersRaw();
+    res.set('Cache-Control', 'no-cache'); // sama alasan dengan /api/app-customization — validasi ulang tiap request, browser tetap boleh pakai ETag/304
+    res.json({ items: bannerManager.toPublicList(banners) });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Gambar banner — publik (App & <img> Admin Web sama-sama akses endpoint
+// ini), pola SAMA PERSIS dengan /api/app-customization/background-image:
+// cuma men-decode data URI base64 yang SUDAH tersimpan di dokumen banner,
+// BUKAN sistem storage baru.
+app.get('/api/banners/:id/image', async (req, res) => {
+  try {
+    const result = await bannerManager.getRawImageBuffer(req.params.id);
+    if (!result) return res.status(404).end();
+    if (result.redirect) return res.redirect(302, result.redirect);
+    res.set('Content-Type', result.mime);
+    res.set('Cache-Control', 'public, max-age=300');
+    res.send(result.buffer);
+  } catch (e) {
+    res.status(500).end();
+  }
+});
+
+// ── ADMIN — Setting Banner ──────────────────────────────────────────────
+// GET list lengkap (semua status) + meta (fonts & routes) supaya Admin Web
+// TIDAK perlu duplikat whitelist-nya sendiri (pola sama dengan `fonts` di
+// GET /api/admin/app-customization).
+app.get('/api/admin/banners', requireAdmin, async (req, res) => {
+  try {
+    const banners = await bannerManager.listBannersRaw();
+    res.set('Cache-Control', 'no-cache');
+    res.json({
+      items: bannerManager.toAdminList(banners),
+      fonts: bannerManager.FONT_WHITELIST,
+      routes: bannerManager.APP_ROUTES
+    });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/api/admin/banners', requireAdmin, async (req, res) => {
+  try {
+    const created = await bannerManager.createBanner(req.body || {}, req.admin?.username || 'Admin');
+
+    logActivity({
+      type: 'admin_add_banner', username: req.admin?.username || 'Admin', admin: req.admin?.username || 'Admin',
+      status: 'success', ip: getReqIp(req),
+      description: `Admin menambah Banner baru ("${created.title?.text || '-'}").`,
+      meta: { bannerId: String(created._id) }
+    }).catch(() => {});
+
+    await bannerManager.broadcastUpdate();
+    res.json({ item: bannerManager.toAdminList([created])[0] });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.put('/api/admin/banners/reorder', requireAdmin, async (req, res) => {
+  // ── /reorder HARUS didaftar SEBELUM /:id di bawah (pola bug sama seperti
+  // steam-accounts/reorder & categories/reorder — kalau tidak, Express akan
+  // mencocokkan "reorder" sebagai :id lebih dulu).
+  try {
+    const orderedIds = Array.isArray(req.body?.orderedIds) ? req.body.orderedIds : [];
+    await bannerManager.reorderBanners(orderedIds);
+
+    logActivity({
+      type: 'admin_reorder_banner', username: req.admin?.username || 'Admin', admin: req.admin?.username || 'Admin',
+      status: 'success', ip: getReqIp(req),
+      description: 'Admin mengubah urutan Banner.',
+      meta: { orderedIds }
+    }).catch(() => {});
+
+    await bannerManager.broadcastUpdate();
+    const banners = await bannerManager.listBannersRaw();
+    res.json({ items: bannerManager.toAdminList(banners) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.put('/api/admin/banners/:id', requireAdmin, async (req, res) => {
+  try {
+    const updated = await bannerManager.updateBanner(req.params.id, req.body || {}, req.admin?.username || 'Admin');
+
+    logActivity({
+      type: 'admin_edit_banner', username: req.admin?.username || 'Admin', admin: req.admin?.username || 'Admin',
+      status: 'success', ip: getReqIp(req),
+      description: `Admin mengubah Banner ("${updated.title?.text || '-'}").`,
+      meta: { bannerId: req.params.id }
+    }).catch(() => {});
+
+    await bannerManager.broadcastUpdate();
+    res.json({ item: bannerManager.toAdminList([updated])[0] });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
+  }
+});
+
+app.delete('/api/admin/banners/:id', requireAdmin, async (req, res) => {
+  try {
+    const existing = await bannerManager.getBannerById(req.params.id);
+    const ok = await bannerManager.deleteBanner(req.params.id);
+    if (!ok) return res.status(404).json({ error: 'Banner tidak ditemukan.' });
+
+    logActivity({
+      type: 'admin_delete_banner', username: req.admin?.username || 'Admin', admin: req.admin?.username || 'Admin',
+      status: 'warning', ip: getReqIp(req),
+      description: `Admin menghapus Banner ("${existing?.title?.text || '-'}").`,
+      meta: { bannerId: req.params.id }
+    }).catch(() => {});
+
+    await bannerManager.broadcastUpdate();
+    const banners = await bannerManager.listBannersRaw();
+    res.json({ items: bannerManager.toAdminList(banners) });
+  } catch (e) {
+    res.status(400).json({ error: e.message });
   }
 });
 

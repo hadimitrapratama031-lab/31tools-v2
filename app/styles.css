@@ -1000,6 +1000,79 @@
     max-width:560px; display:-webkit-box; -webkit-line-clamp:2; -webkit-box-orient:vertical; overflow:hidden;
   }
 
+  /* ── Setting Banner (Admin Web) -> Banner Dashboard APP — dynamic slides ──
+     Ditambahkan di atas fondasi .dash-banner/.dash-banner-overlay/-eyebrow/
+     -title/-desc existing di atas (TIDAK diubah/dihapus): tiap banner dari
+     database dirender sebagai satu .dash-banner-slide yang mengisi penuh
+     .dash-banner (position:absolute inset:0, stack sesuai urutan), lalu
+     di-crossfade kalau lebih dari satu (lihat startBannerCarousel() di
+     app.js). Struktur teks di dalam slide (.dash-banner-overlay > eyebrow/
+     title/desc) memakai class yang SAMA PERSIS dengan sebelumnya supaya
+     typography dasarnya tidak berubah — font/ukuran/weight/spacing per
+     banner di-override lewat inline style dari data (lihat applyBanners()). */
+  .dash-banner-slide{
+    position:absolute; inset:0; opacity:0; pointer-events:none;
+    transition:opacity .5s ease;
+  }
+  .dash-banner-slide.is-active{ opacity:1; pointer-events:auto; z-index:1; }
+  .dash-banner-bg{
+    position:absolute; inset:0; background:#000 no-repeat center/cover;
+  }
+  /* Scrim gradasi supaya teks tetap terbaca di atas gambar apa pun, arahnya
+     mengikuti posisi konten (left/center/right) supaya tidak menggelapkan
+     sisi yang justru jadi fokus gambar. */
+  .dash-banner-scrim{ position:absolute; inset:0; }
+  .dash-banner-slide[data-position="left"] .dash-banner-scrim{
+    background:linear-gradient(90deg, rgba(4,8,14,.82) 0%, rgba(4,8,14,.45) 52%, rgba(4,8,14,.08) 100%);
+  }
+  .dash-banner-slide[data-position="right"] .dash-banner-scrim{
+    background:linear-gradient(270deg, rgba(4,8,14,.82) 0%, rgba(4,8,14,.45) 52%, rgba(4,8,14,.08) 100%);
+  }
+  .dash-banner-slide[data-position="center"] .dash-banner-scrim{
+    background:linear-gradient(0deg, rgba(4,8,14,.72) 0%, rgba(4,8,14,.4) 45%, rgba(4,8,14,.25) 100%);
+  }
+  /* Posisi/alignment konten (Left/Center/Right, poin #15) — .dash-banner-overlay
+     dasarnya (position/padding/flex column) TETAP dari definisi di atas,
+     cuma alignment cross-axis & text-align yang berubah per posisi. */
+  .dash-banner-overlay[data-position="center"]{ align-items:center; text-align:center; }
+  .dash-banner-overlay[data-position="right"]{ align-items:flex-end; text-align:right; }
+  .dash-banner-overlay[data-position="left"]{ align-items:flex-start; text-align:left; }
+  /* Judul & deskripsi memakai max-width dari data (inline style) supaya
+     teks tidak melebar penuh — batas fallback di sini kalau data lama tidak
+     mengirim maxWidth. */
+  .dash-banner-title{ max-width:100%; }
+  .dash-banner-desc{ -webkit-line-clamp:3; }
+
+  /* Tombol CTA banner (poin #16/#18) — premium, konsisten dengan gaya tombol
+     lain di App (lihat .detail-btn-primary), BUKAN tombol browser default. */
+  .dash-banner-cta{
+    display:inline-flex; align-items:center; justify-content:center;
+    margin-top:6px; height:38px; padding:0 20px; border-radius:999px;
+    font-family:inherit; font-size:12.5px; font-weight:700; letter-spacing:.02em;
+    color:#04121c; background:linear-gradient(120deg, var(--accent), #2f8fd0);
+    border:1px solid #3FB6E855; cursor:pointer; white-space:nowrap;
+    box-shadow:0 10px 22px -8px rgba(0,0,0,.55);
+    transition:transform .18s cubic-bezier(.4,0,.2,1), box-shadow .18s ease, filter .18s ease;
+  }
+  .dash-banner-cta:hover{
+    transform:translateY(-2px) scale(1.015); filter:brightness(1.06);
+    box-shadow:0 14px 28px -8px rgba(0,0,0,.6), 0 0 18px -4px var(--accent);
+  }
+  .dash-banner-cta:active{ transform:translateY(0) scale(.98); }
+
+  /* Dots carousel — hanya dirender kalau banner aktif > 1 (poin "premium
+     sederhana": indikator kecil, tidak mencolok, di bawah-tengah banner). */
+  .dash-banner-dots{
+    position:absolute; left:0; right:0; bottom:12px; z-index:2;
+    display:flex; align-items:center; justify-content:center; gap:6px;
+  }
+  .dash-banner-dot{
+    width:6px; height:6px; border-radius:50%; padding:0; border:none;
+    background:rgba(255,255,255,.35); cursor:pointer;
+    transition:background .2s ease, width .2s ease;
+  }
+  .dash-banner-dot.is-active{ width:18px; border-radius:99px; background:var(--accent); }
+
   .dash-top-installer{
     display:flex; flex-direction:column; min-height:0;
     background:var(--surface); backdrop-filter:blur(8px);

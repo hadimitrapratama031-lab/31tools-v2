@@ -503,6 +503,10 @@
           <span class="nav-icon"><svg fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" d="M3.6 9h16.8M3.6 15h16.8M11.5 3a17 17 0 000 18M12.5 3a17 17 0 010 18M12 21a9 9 0 100-18 9 9 0 000 18z"/></svg></span>
           Website Settings
         </button>
+        <button class="nav-item" data-page="settingbanner">
+          <span class="nav-icon"><svg class="icon icon-18"><use href="#ic-megaphone"></use></svg></span>
+          Setting Banner
+        </button>
         <button class="nav-item" data-page="appcustomization">
           <span class="nav-icon"><svg class="icon icon-18"><use href="#ic-brush"></use></svg></span>
           App Customization
@@ -2810,6 +2814,159 @@
       <div style="margin-top:20px;display:flex;align-items:center;gap:14px;flex-wrap:wrap;">
         <button class="btn btn-primary" id="btnSaveWebsiteSettings"><svg class="icon icon-18"><use href="#ic-save"></use></svg> Simpan Website Settings</button>
         <div id="wsStatus" style="font-size:12px;color:var(--text-3);"></div>
+      </div>
+    </section>
+
+    <!-- SETTING BANNER PAGE — CRUD Banner Dashboard APP (lihat bannerManager.js
+         & app/index.html #dashBannerRoot). Struktur/desain banner APP TIDAK
+         diubah — halaman ini cuma menyambungkan Admin Web ke banner yang
+         sudah ada. Realtime lewat WebSocket existing (wsBroadcastAll, event
+         'banners:update') — tidak ada sistem realtime baru. -->
+    <section class="page" id="pageSettingbanner">
+      <div class="page-header">
+        <div class="page-header-left">
+          <div class="page-header-icon" style="background:rgba(255,153,51,.16);"><svg class="icon icon-18" style="color:#ff9933;"><use href="#ic-megaphone"></use></svg></div>
+          <div>
+            <div class="page-header-title">Setting Banner</div>
+            <div class="page-header-desc">Atur banner Dashboard App Desktop — gambar, teks, tipografi, dan tombol CTA. Semua perubahan realtime ke App yang sedang online, tanpa refresh/restart.</div>
+          </div>
+        </div>
+        <div class="page-header-right">
+          <button class="btn btn-primary" id="btnBnrAdd"><svg class="icon icon-18"><use href="#ic-plus"></use></svg> Tambah Banner</button>
+        </div>
+      </div>
+
+      <div id="bnrLoading" style="padding:40px 0;text-align:center;color:var(--text-3);font-size:13px;">Memuat banner…</div>
+
+      <div id="bnrEmpty" style="display:none;padding:48px 24px;text-align:center;color:var(--text-3);">
+        <svg class="icon icon-18" style="width:36px;height:36px;opacity:.4;margin-bottom:10px;"><use href="#ic-megaphone"></use></svg>
+        <div style="font-size:14px;font-weight:600;color:var(--text-2);margin-bottom:4px;">Belum ada Banner</div>
+        <div style="font-size:12.5px;">Klik "Tambah Banner" untuk membuat banner pertama.</div>
+      </div>
+
+      <div id="bnrBody" style="display:none;">
+        <div class="bnr-tabs" id="bnrTabs"></div>
+
+        <div class="bnr-layout">
+          <!-- EDITOR -->
+          <div class="bnr-editor">
+
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title"><svg class="icon icon-18"><use href="#ic-image"></use></svg> Image</div>
+                <div class="card-sub">Gambar background banner. Format PNG/JPG/WEBP, maksimal 8MB.</div>
+              </div>
+              <div class="card-body">
+                <div class="bnr-image-row">
+                  <div class="bnr-image-preview" id="bnrImagePreview"></div>
+                  <div class="bnr-image-actions">
+                    <input type="file" id="bnrImageFile" accept="image/png,image/jpeg,image/webp" style="display:none;">
+                    <button class="btn btn-secondary" id="bnrImageUploadBtn" type="button"><svg class="icon icon-16"><use href="#ic-image"></use></svg> Upload / Replace</button>
+                    <button class="btn btn-ghost" id="bnrImageRemoveBtn" type="button" style="color:var(--red);"><svg class="icon icon-16"><use href="#ic-trash-2"></use></svg> Hapus Gambar</button>
+                    <div class="bnr-hint">Disarankan rasio landscape (mis. 1200×500) supaya tidak terpotong di App.</div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title"><svg class="icon icon-18"><use href="#ic-tag"></use></svg> Teks Atas (Eyebrow)</div>
+              </div>
+              <div class="card-body bnr-text-grid">
+                <div class="form-group" style="grid-column:1/-1;"><label class="form-label">Teks</label><input class="form-input" id="bnrEyebrowText" maxlength="40" placeholder="SPECIAL OFFER"></div>
+                <div class="form-group"><label class="form-label">Font</label><select class="form-input" id="bnrEyebrowFont"></select></div>
+                <div class="form-group"><label class="form-label">Ukuran (px)</label><input class="form-input" type="number" id="bnrEyebrowSize" min="10" max="22"></div>
+                <div class="form-group"><label class="form-label">Weight</label><select class="form-input" id="bnrEyebrowWeight"></select></div>
+                <div class="form-group"><label class="form-label">Spacing (px)</label><input class="form-input" type="number" step="0.5" id="bnrEyebrowSpacing" min="-2" max="10"></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title"><svg class="icon icon-18"><use href="#ic-file-pen-line"></use></svg> Judul</div>
+              </div>
+              <div class="card-body bnr-text-grid">
+                <div class="form-group" style="grid-column:1/-1;"><label class="form-label">Teks</label><input class="form-input" id="bnrTitleText" maxlength="80" placeholder="Upgrade ke Platinum"></div>
+                <div class="form-group"><label class="form-label">Font</label><select class="form-input" id="bnrTitleFont"></select></div>
+                <div class="form-group"><label class="form-label">Ukuran (px)</label><input class="form-input" type="number" id="bnrTitleSize" min="18" max="48"></div>
+                <div class="form-group"><label class="form-label">Weight</label><select class="form-input" id="bnrTitleWeight"></select></div>
+                <div class="form-group"><label class="form-label">Spacing (px)</label><input class="form-input" type="number" step="0.5" id="bnrTitleSpacing" min="-2" max="10"></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title"><svg class="icon icon-18"><use href="#ic-scroll-text"></use></svg> Deskripsi</div>
+              </div>
+              <div class="card-body bnr-text-grid">
+                <div class="form-group" style="grid-column:1/-1;"><label class="form-label">Teks</label><textarea class="form-input" id="bnrDescText" maxlength="240" rows="3" placeholder="Nikmati akses lebih lengkap..."></textarea></div>
+                <div class="form-group"><label class="form-label">Font</label><select class="form-input" id="bnrDescFont"></select></div>
+                <div class="form-group"><label class="form-label">Ukuran (px)</label><input class="form-input" type="number" id="bnrDescSize" min="12" max="20"></div>
+                <div class="form-group"><label class="form-label">Weight</label><select class="form-input" id="bnrDescWeight"></select></div>
+                <div class="form-group"><label class="form-label">Spacing (px)</label><input class="form-input" type="number" step="0.5" id="bnrDescSpacing" min="-2" max="10"></div>
+                <div class="form-group"><label class="form-label">Max Width (px)</label><input class="form-input" type="number" id="bnrDescMaxWidth" min="240" max="900" step="10"></div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title"><svg class="icon icon-18"><use href="#ic-layout-grid"></use></svg> Posisi Konten</div>
+                <div class="card-sub">Posisi Eyebrow, Judul, Deskripsi, dan Tombol di dalam banner.</div>
+              </div>
+              <div class="card-body">
+                <div class="acz-pill-group" id="bnrPositionGroup">
+                  <button type="button" class="acz-pill" data-position="left">Left</button>
+                  <button type="button" class="acz-pill" data-position="center">Center</button>
+                  <button type="button" class="acz-pill" data-position="right">Right</button>
+                </div>
+              </div>
+            </div>
+
+            <div class="card">
+              <div class="card-header">
+                <div class="card-title"><svg class="icon icon-18"><use href="#ic-hand"></use></svg> Tombol Banner (CTA)</div>
+                <div class="card-sub">Opsional — kosongkan/nonaktifkan kalau banner ini tidak butuh tombol.</div>
+              </div>
+              <div class="card-body">
+                <label class="bnr-toggle-row">
+                  <input type="checkbox" id="bnrButtonEnabled">
+                  <span>Aktifkan Tombol</span>
+                </label>
+                <div class="bnr-text-grid" id="bnrButtonFields" style="margin-top:12px;">
+                  <div class="form-group"><label class="form-label">Nama Tombol</label><input class="form-input" id="bnrButtonLabel" maxlength="30" placeholder="Beli Paket"></div>
+                  <div class="form-group"><label class="form-label">Arahkan ke</label><select class="form-input" id="bnrButtonTarget"></select></div>
+                </div>
+              </div>
+            </div>
+
+            <div class="bnr-editor-footer">
+              <button class="btn btn-primary" id="btnBnrSave"><svg class="icon icon-18"><use href="#ic-save"></use></svg> Simpan Banner</button>
+              <button class="btn btn-ghost" id="btnBnrDelete" style="color:var(--red);"><svg class="icon icon-16"><use href="#ic-trash-2"></use></svg> Hapus Banner Ini</button>
+              <div id="bnrSaveStatus" style="font-size:12px;color:var(--text-3);"></div>
+            </div>
+          </div>
+
+          <!-- PREVIEW -->
+          <div class="bnr-preview-col">
+            <div class="card bnr-preview-card">
+              <div class="card-header">
+                <div class="card-title"><svg class="icon icon-18"><use href="#ic-app-window"></use></svg> Preview Banner</div>
+                <div class="card-sub">Merepresentasikan tampilan banner di Dashboard App.</div>
+              </div>
+              <div class="card-body">
+                <div class="dash-banner bnr-preview" id="bnrPreviewRoot">
+                  <div class="dash-banner-overlay" id="bnrPreviewOverlay">
+                    <span class="dash-banner-eyebrow" id="bnrPvEyebrow"></span>
+                    <h2 class="dash-banner-title" id="bnrPvTitle"></h2>
+                    <p class="dash-banner-desc" id="bnrPvDesc"></p>
+                    <button class="dash-banner-btn" id="bnrPvButton" type="button"></button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
       </div>
     </section>
 

@@ -247,6 +247,7 @@ const PAGE_META = {
   packageembeds: { title: 'Package Embed Builder', breadcrumb: 'Pages / Notification Package / Embed Builder' },
   marketplace:  { title: 'Marketplace', breadcrumb: 'Pages / Marketplace' },
   appcustomization: { title: 'App Customization', breadcrumb: 'Pages / App Customization' },
+  settingbanner: { title: 'Setting Banner', breadcrumb: 'Pages / Setting Banner' },
 };
 let currentPage = 'games';
 
@@ -316,6 +317,7 @@ function loadPage(page) {
   else if (page === 'websitesettings') renderWebsiteSettingsPage();
   else if (page === 'marketplace') renderMarketplaceAdmin();
   else if (page === 'appcustomization') renderAppCustomizationPage();
+  else if (page === 'settingbanner') renderSettingBannerPage();
 }
 
 document.getElementById('btnAddItem').addEventListener('click', () => openItemModal(currentPage, null));
@@ -9629,3 +9631,463 @@ async function aczSave() {
   }
 }
 
+/* ══════════════════════════════════════════════════════════════════════════
+   SETTING BANNER — CRUD Banner Dashboard App Desktop (lihat bannerManager.js
+   & app/index.html #dashBannerRoot). Struktur/desain banner APP TIDAK
+   diubah — halaman ini menyambungkan Admin Web ke banner yang sudah ada di
+   App. Realtime lewat WebSocket existing (wsBroadcastAll, event
+   'banners:update' — server.js) — TIDAK ada sistem realtime baru.
+
+   State satu halaman ini SENGAJA disimpan di memori (bukan re-fetch tiap
+   ganti tab), supaya pindah antar "Banner 1 | Banner 2 | ..." instan tanpa
+   round-trip network — sesuai target performa halaman (poin #10: 1-3
+   detik usable, ganti tab harus terasa instan).
+   ══════════════════════════════════════════════════════════════════════════ */
+let _bnrListenersBound = false;
+let _bnrBanners = [];       // daftar banner (payload ringan dari /api/admin/banners)
+let _bnrFonts = [];
+let _bnrRoutes = [];
+let _bnrActiveId = null;    // _id banner yang sedang dipilih di tab
+let _bnrImageTouched = false;   // true kalau admin upload/hapus gambar BARU di sesi ini
+let _bnrPendingImageDataUrl = null; // data URI baru (belum disimpan) — '' berarti "hapus gambar"
+let _bnrDragFromId = null;
+
+const BNR_FONT_WEIGHT_LABELS = { 400: 'Regular (400)', 500: 'Medium (500)', 600: 'Semibold (600)', 700: 'Bold (700)', 800: 'Extrabold (800)' };
+
+function bnrActiveBanner() {
+  return _bnrBanners.find(b => b.id === _bnrActiveId) || null;
+}
+
+async function renderSettingBannerPage() {
+  if (!_bnrListenersBound) {
+    bnrBindEvents();
+    _bnrListenersBound = true;
+  }
+  const loadingEl = document.getElementById('bnrLoading');
+  const emptyEl = document.getElementById('bnrEmpty');
+  const bodyEl = document.getElementById('bnrBody');
+  loadingEl.style.display = '';
+  emptyEl.style.display = 'none';
+  bodyEl.style.display = 'none';
+
+  try {
+    // Metadata (fonts/routes) + list banner dalam SATU request (pola sama
+    // dengan `fonts` di GET /api/admin/app-customization) — halaman ini
+    // tidak perlu request terpisah untuk whitelist font/route.
+    const res = await api('/api/admin/banners');
+    _bnrBanners = Array.isArray(res.items) ? res.items : [];
+    _bnrFonts = Array.isArray(res.fonts) ? res.fonts : [];
+    _bnrRoutes = Array.isArray(res.routes) ? res.routes : [];
+  } catch (e) {
+    loadingEl.style.display = 'none';
+    showToast('Gagal memuat Banner: ' + e.message, 'error');
+    return;
+  }
+
+  loadingEl.style.display = 'none';
+
+  if (!_bnrBanners.length) {
+    emptyEl.style.display = '';
+    _bnrActiveId = null;
+    return;
+  }
+
+  bodyEl.style.display = '';
+  // Pertahankan tab yang sedang aktif kalau masih ada (mis. setelah Save),
+  // kalau tidak (pertama kali buka / banner aktif barusan dihapus), pilih
+  // banner PERTAMA sesuai urutan (`order`).
+  if (!_bnrActiveId || !_bnrBanners.some(b => b.id === _bnrActiveId)) {
+    _bnrActiveId = _bnrBanners[0].id;
+  }
+  bnrRenderTabs();
+  bnrRenderFontDropdowns();
+  bnrRenderRouteDropdown();
+  bnrSelectBanner(_bnrActiveId);
+}
+
+function bnrRenderFontDropdowns() {
+  const opts = _bnrFonts.map(f => `<option value="${escapeHtml(f.id)}">${escapeHtml(f.label)}</option>`).join('');
+  ['bnrEyebrowFont', 'bnrTitleFont', 'bnrDescFont'].forEach(id => {
+    document.getElementById(id).innerHTML = opts;
+  });
+  const weightOpts = Object.entries(BNR_FONT_WEIGHT_LABELS).map(([w, label]) => `<option value="${w}">${label}</option>`).join('');
+  ['bnrEyebrowWeight', 'bnrTitleWeight', 'bnrDescWeight'].forEach(id => {
+    document.getElementById(id).innerHTML = weightOpts;
+  });
+}
+
+function bnrRenderRouteDropdown() {
+  const opts = ['<option value="">— Pilih halaman —</option>']
+    .concat(_bnrRoutes.map(r => `<option value="${escapeHtml(r.id)}">${escapeHtml(r.label)}</option>`))
+    .join('');
+  document.getElementById('bnrButtonTarget').innerHTML = opts;
+}
+
+// ── TABS "Banner 1 | Banner 2 | ..." — jumlah & urutan mengikuti data
+// SEBENARNYA di database (bukan angka statis), drag & drop untuk ubah
+// urutan (pola sama dengan drag-reorder Kelola Kategori). ──
+function bnrRenderTabs() {
+  const wrap = document.getElementById('bnrTabs');
+  wrap.innerHTML = _bnrBanners.map((b, idx) => `
+    <div class="bnr-tab ${b.id === _bnrActiveId ? 'active' : ''} ${b.status === 'inactive' ? 'is-inactive' : ''}" draggable="true" data-id="${b.id}" title="Geser untuk ubah urutan">
+      <span class="bnr-tab-drag">⠿</span>
+      <span class="bnr-tab-status-dot"></span>
+      <span>Banner ${idx + 1}</span>
+    </div>
+  `).join('');
+
+  wrap.querySelectorAll('.bnr-tab').forEach(el => {
+    el.addEventListener('click', (e) => {
+      // Klik biasa (bukan hasil drag) -> pindah tab. bnrMaybeSaveDirty()
+      // TIDAK dipanggil di sini secara otomatis (sengaja) — admin harus
+      // klik "Simpan Banner" eksplisit, supaya tidak ada perubahan yang
+      // "ke-save diam-diam" cuma karena pindah tab tanpa sadar.
+      bnrSelectBanner(el.dataset.id);
+    });
+    el.addEventListener('dragstart', () => { _bnrDragFromId = el.dataset.id; el.classList.add('dragging'); });
+    el.addEventListener('dragend', () => { el.classList.remove('dragging'); });
+    el.addEventListener('dragover', (e) => e.preventDefault());
+    el.addEventListener('drop', async (e) => {
+      e.preventDefault();
+      const toId = el.dataset.id;
+      if (!_bnrDragFromId || _bnrDragFromId === toId) return;
+      const ids = _bnrBanners.map(b => b.id);
+      const fromIdx = ids.indexOf(_bnrDragFromId);
+      const toIdx = ids.indexOf(toId);
+      if (fromIdx === -1 || toIdx === -1) return;
+      ids.splice(toIdx, 0, ids.splice(fromIdx, 1)[0]);
+      // Optimistic reorder di UI dulu supaya terasa instan, lalu commit ke
+      // server (database jadi source of truth, sama seperti reorder
+      // Kategori) — kalau gagal, muat ulang dari server.
+      _bnrBanners.sort((a, b) => ids.indexOf(a.id) - ids.indexOf(b.id));
+      bnrRenderTabs();
+      try {
+        const res = await api('/api/admin/banners/reorder', { method: 'PUT', body: JSON.stringify({ orderedIds: ids }) });
+        _bnrBanners = res.items;
+        bnrRenderTabs();
+      } catch (err) {
+        showToast('Gagal menyimpan urutan: ' + err.message, 'error');
+        renderSettingBannerPage();
+      }
+    });
+  });
+}
+
+// ── Pilih 1 banner -> isi seluruh form + preview dengan data banner itu.
+// TIDAK PERNAH mencampur data antar banner (poin #3) — form selalu di-
+// render ULANG PENUH dari objek banner yang dipilih, bukan menyisakan
+// value lama di input. ──
+function bnrSelectBanner(id) {
+  _bnrActiveId = id;
+  _bnrImageTouched = false;
+  _bnrPendingImageDataUrl = null;
+  bnrRenderTabs();
+
+  const b = bnrActiveBanner();
+  if (!b) return;
+
+  document.getElementById('bnrEyebrowText').value = b.eyebrow.text;
+  document.getElementById('bnrEyebrowFont').value = b.eyebrow.fontFamily;
+  document.getElementById('bnrEyebrowSize').value = b.eyebrow.fontSize;
+  document.getElementById('bnrEyebrowWeight').value = b.eyebrow.fontWeight;
+  document.getElementById('bnrEyebrowSpacing').value = b.eyebrow.letterSpacing;
+
+  document.getElementById('bnrTitleText').value = b.title.text;
+  document.getElementById('bnrTitleFont').value = b.title.fontFamily;
+  document.getElementById('bnrTitleSize').value = b.title.fontSize;
+  document.getElementById('bnrTitleWeight').value = b.title.fontWeight;
+  document.getElementById('bnrTitleSpacing').value = b.title.letterSpacing;
+
+  document.getElementById('bnrDescText').value = b.description.text;
+  document.getElementById('bnrDescFont').value = b.description.fontFamily;
+  document.getElementById('bnrDescSize').value = b.description.fontSize;
+  document.getElementById('bnrDescWeight').value = b.description.fontWeight;
+  document.getElementById('bnrDescSpacing').value = b.description.letterSpacing;
+  document.getElementById('bnrDescMaxWidth').value = b.description.maxWidth;
+
+  document.querySelectorAll('#bnrPositionGroup .acz-pill').forEach(pill => {
+    pill.classList.toggle('active', pill.dataset.position === b.position);
+  });
+
+  document.getElementById('bnrButtonEnabled').checked = !!b.button.enabled;
+  document.getElementById('bnrButtonLabel').value = b.button.label || '';
+  document.getElementById('bnrButtonTarget').value = b.button.target || '';
+  bnrUpdateButtonFieldsVisibility();
+
+  bnrRenderImagePreview();
+  bnrRenderPreview();
+}
+
+function bnrUpdateButtonFieldsVisibility() {
+  const enabled = document.getElementById('bnrButtonEnabled').checked;
+  document.getElementById('bnrButtonFields').style.opacity = enabled ? '1' : '.45';
+  document.getElementById('bnrButtonFields').style.pointerEvents = enabled ? '' : 'none';
+}
+
+// ── IMAGE — preview ringan (thumbnail via <img>/background-image lewat
+// endpoint /api/banners/:id/image atau /api/admin/banners/:id/image, BUKAN
+// base64 utuh dimuat di JS) supaya halaman tetap ringan (poin #4/#10:
+// preview jangan bikin halaman berat). Data URI base64 HANYA ada di memori
+// sesaat kalau admin baru upload gambar baru (belum disimpan). ──
+function bnrRenderImagePreview() {
+  const el = document.getElementById('bnrImagePreview');
+  const b = bnrActiveBanner();
+  const url = _bnrImageTouched ? _bnrPendingImageDataUrl : (b ? b.image.url : '');
+  if (url) {
+    el.style.backgroundImage = `url("${url}")`;
+    el.textContent = '';
+  } else {
+    el.style.backgroundImage = '';
+    el.textContent = 'Belum ada gambar';
+  }
+}
+
+function bnrCurrentFormState() {
+  return {
+    eyebrow: {
+      text: document.getElementById('bnrEyebrowText').value.trim(),
+      fontFamily: document.getElementById('bnrEyebrowFont').value,
+      fontSize: Number(document.getElementById('bnrEyebrowSize').value) || 13,
+      fontWeight: Number(document.getElementById('bnrEyebrowWeight').value) || 700,
+      letterSpacing: Number(document.getElementById('bnrEyebrowSpacing').value) || 0
+    },
+    title: {
+      text: document.getElementById('bnrTitleText').value.trim(),
+      fontFamily: document.getElementById('bnrTitleFont').value,
+      fontSize: Number(document.getElementById('bnrTitleSize').value) || 30,
+      fontWeight: Number(document.getElementById('bnrTitleWeight').value) || 800,
+      letterSpacing: Number(document.getElementById('bnrTitleSpacing').value) || 0
+    },
+    description: {
+      text: document.getElementById('bnrDescText').value.trim(),
+      fontFamily: document.getElementById('bnrDescFont').value,
+      fontSize: Number(document.getElementById('bnrDescSize').value) || 14,
+      fontWeight: Number(document.getElementById('bnrDescWeight').value) || 500,
+      letterSpacing: Number(document.getElementById('bnrDescSpacing').value) || 0,
+      maxWidth: Number(document.getElementById('bnrDescMaxWidth').value) || 520
+    },
+    position: document.querySelector('#bnrPositionGroup .acz-pill.active')?.dataset.position || 'left',
+    button: {
+      enabled: document.getElementById('bnrButtonEnabled').checked,
+      label: document.getElementById('bnrButtonLabel').value.trim(),
+      target: document.getElementById('bnrButtonTarget').value
+    }
+  };
+}
+
+// ── PREVIEW — pakai class CSS BANNER APP APA ADANYA (.dash-banner/
+// .dash-banner-eyebrow/dst, lihat app/styles.css) supaya representasi di
+// Admin Web benar-benar sama dengan tampilan di App (poin #21), bukan
+// styling terpisah yang gampang "ngaco" beda dari App. ──
+function bnrRenderPreview() {
+  const state = bnrCurrentFormState();
+  const root = document.getElementById('bnrPreviewRoot');
+  const overlay = document.getElementById('bnrPreviewOverlay');
+  const eyebrowEl = document.getElementById('bnrPvEyebrow');
+  const titleEl = document.getElementById('bnrPvTitle');
+  const descEl = document.getElementById('bnrPvDesc');
+  const btnEl = document.getElementById('bnrPvButton');
+
+  const b = bnrActiveBanner();
+  const imgUrl = _bnrImageTouched ? _bnrPendingImageDataUrl : (b ? b.image.url : '');
+  root.style.backgroundImage = imgUrl ? `url("${imgUrl}")` : '';
+
+  const alignMap = { left: 'flex-start', center: 'center', right: 'flex-end' };
+  const textAlignMap = { left: 'left', center: 'center', right: 'right' };
+  overlay.style.alignItems = alignMap[state.position] || 'flex-start';
+  overlay.style.textAlign = textAlignMap[state.position] || 'left';
+
+  eyebrowEl.textContent = state.eyebrow.text;
+  eyebrowEl.style.fontFamily = bnrFontStack(state.eyebrow.fontFamily);
+  eyebrowEl.style.fontSize = state.eyebrow.fontSize + 'px';
+  eyebrowEl.style.fontWeight = state.eyebrow.fontWeight;
+  eyebrowEl.style.letterSpacing = state.eyebrow.letterSpacing + 'px';
+
+  titleEl.textContent = state.title.text;
+  titleEl.style.fontFamily = bnrFontStack(state.title.fontFamily);
+  titleEl.style.fontSize = state.title.fontSize + 'px';
+  titleEl.style.fontWeight = state.title.fontWeight;
+  titleEl.style.letterSpacing = state.title.letterSpacing + 'px';
+
+  descEl.textContent = state.description.text;
+  descEl.style.fontFamily = bnrFontStack(state.description.fontFamily);
+  descEl.style.fontSize = state.description.fontSize + 'px';
+  descEl.style.fontWeight = state.description.fontWeight;
+  descEl.style.letterSpacing = state.description.letterSpacing + 'px';
+  descEl.style.maxWidth = state.description.maxWidth + 'px';
+  descEl.style.display = state.description.text ? '' : 'none';
+
+  if (state.button.enabled && state.button.label) {
+    btnEl.textContent = state.button.label;
+    btnEl.classList.add('is-active');
+  } else {
+    btnEl.classList.remove('is-active');
+  }
+}
+
+function bnrFontStack(id) {
+  const found = _bnrFonts.find(f => f.id === id);
+  return found ? found.stack : "'Inter', 'Segoe UI', sans-serif";
+}
+
+// ── Semua listener statis (dipasang SEKALI, guard _bnrListenersBound di
+// atas). Preview diperbarui LANGSUNG tiap ketikan/ganti opsi (poin #4 —
+// preview harus update saat image/eyebrow/judul/deskripsi berubah), tanpa
+// nunggu Save. ──
+function bnrBindEvents() {
+  document.getElementById('btnBnrAdd').addEventListener('click', bnrCreateBanner);
+  document.getElementById('btnBnrSave').addEventListener('click', bnrSaveActiveBanner);
+  document.getElementById('btnBnrDelete').addEventListener('click', bnrDeleteActiveBanner);
+
+  // Semua field teks/tipografi -> live preview (input/change dua-duanya
+  // supaya dropdown & angka juga langsung ke-refresh, bukan cuma teks).
+  [
+    'bnrEyebrowText', 'bnrEyebrowFont', 'bnrEyebrowSize', 'bnrEyebrowWeight', 'bnrEyebrowSpacing',
+    'bnrTitleText', 'bnrTitleFont', 'bnrTitleSize', 'bnrTitleWeight', 'bnrTitleSpacing',
+    'bnrDescText', 'bnrDescFont', 'bnrDescSize', 'bnrDescWeight', 'bnrDescSpacing', 'bnrDescMaxWidth',
+    'bnrButtonLabel', 'bnrButtonTarget'
+  ].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener('input', bnrRenderPreview);
+    el.addEventListener('change', bnrRenderPreview);
+  });
+
+  document.getElementById('bnrButtonEnabled').addEventListener('change', () => {
+    bnrUpdateButtonFieldsVisibility();
+    bnrRenderPreview();
+  });
+
+  document.getElementById('bnrPositionGroup').addEventListener('click', (e) => {
+    const pill = e.target.closest('.acz-pill[data-position]');
+    if (!pill) return;
+    document.querySelectorAll('#bnrPositionGroup .acz-pill').forEach(p => p.classList.remove('active'));
+    pill.classList.add('active');
+    bnrRenderPreview();
+  });
+
+  document.getElementById('bnrImageUploadBtn').addEventListener('click', () => document.getElementById('bnrImageFile').click());
+  document.getElementById('bnrImageFile').addEventListener('change', bnrHandleImageFile);
+  document.getElementById('bnrImageRemoveBtn').addEventListener('click', () => {
+    _bnrImageTouched = true;
+    _bnrPendingImageDataUrl = '';
+    bnrRenderImagePreview();
+    bnrRenderPreview();
+  });
+}
+
+const BNR_IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+const BNR_IMAGE_MIME_WHITELIST = ['image/png', 'image/jpeg', 'image/webp'];
+
+function bnrHandleImageFile(e) {
+  const file = e.target.files && e.target.files[0];
+  e.target.value = ''; // reset supaya file yang sama bisa dipilih ulang kalau perlu
+  if (!file) return;
+  if (!BNR_IMAGE_MIME_WHITELIST.includes(file.type)) {
+    showToast('Format gambar harus PNG, JPG/JPEG, atau WEBP.', 'error');
+    return;
+  }
+  if (file.size > BNR_IMAGE_MAX_BYTES) {
+    showToast('Ukuran gambar maksimal 8 MB.', 'error');
+    return;
+  }
+  const reader = new FileReader();
+  reader.onload = () => {
+    _bnrImageTouched = true;
+    _bnrPendingImageDataUrl = reader.result;
+    bnrRenderImagePreview();
+    bnrRenderPreview();
+  };
+  reader.onerror = () => showToast('Gagal membaca file gambar.', 'error');
+  reader.readAsDataURL(file);
+}
+
+// ── TAMBAH BANNER — benar-benar create lewat API (poin #5), BUKAN cuma
+// push ke state React/JS lokal. Tab & setting banner baru langsung
+// tersedia begitu response sukses, dan APP menerima realtime lewat
+// broadcastUpdate() di server (dipanggil backend, bukan di sini). ──
+async function bnrCreateBanner() {
+  const btn = document.getElementById('btnBnrAdd');
+  const originalHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = '<svg class="icon icon-18"><use href="#ic-loader-circle"></use></svg> Menambah…';
+  try {
+    const res = await api('/api/admin/banners', { method: 'POST', body: JSON.stringify({}) });
+    _bnrBanners.push(res.item);
+    _bnrActiveId = res.item.id;
+    bnrRenderTabs();
+    bnrSelectBanner(_bnrActiveId);
+    document.getElementById('bnrEmpty').style.display = 'none';
+    document.getElementById('bnrBody').style.display = '';
+    showToast('Banner baru ditambahkan.', 'success');
+  } catch (e) {
+    showToast('Gagal menambah Banner: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+  }
+}
+
+// ── SIMPAN — PATCH parsial (gambar HANYA dikirim kalau benar-benar
+// diganti/dihapus di sesi ini, pola sama dengan App Customization di atas)
+// supaya request Save tetap kecil & cepat kalau admin cuma ganti teks
+// (poin #11: Save cepat, jangan reload seluruh halaman). ──
+async function bnrSaveActiveBanner() {
+  const b = bnrActiveBanner();
+  if (!b) return;
+  const btn = document.getElementById('btnBnrSave');
+  const originalHtml = btn.innerHTML;
+  const statusEl = document.getElementById('bnrSaveStatus');
+  btn.disabled = true;
+  btn.innerHTML = '<svg class="icon icon-18"><use href="#ic-loader-circle"></use></svg> Menyimpan…';
+  try {
+    const patch = bnrCurrentFormState();
+    if (_bnrImageTouched) patch.image = { url: _bnrPendingImageDataUrl };
+
+    const res = await api(`/api/admin/banners/${b.id}`, { method: 'PUT', body: JSON.stringify(patch) });
+    const idx = _bnrBanners.findIndex(x => x.id === b.id);
+    if (idx !== -1) _bnrBanners[idx] = res.item;
+    _bnrImageTouched = false;
+    _bnrPendingImageDataUrl = null;
+    bnrRenderTabs();
+    bnrSelectBanner(b.id);
+    showToast('Banner disimpan & langsung diterapkan realtime ke App.', 'success');
+    if (statusEl) statusEl.textContent = `Terakhir disimpan: ${new Date(res.item.updatedAt).toLocaleString('id-ID')}`;
+  } catch (e) {
+    showToast('Gagal menyimpan Banner: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+  }
+}
+
+// ── HAPUS — benar-benar delete dari database (poin #6), tab langsung
+// hilang & urutan dirapikan otomatis (lihat deleteBanner() di
+// bannerManager.js), APP menerima realtime lewat broadcastUpdate(). ──
+async function bnrDeleteActiveBanner() {
+  const b = bnrActiveBanner();
+  if (!b) return;
+  if (!confirm(`Hapus "Banner ${_bnrBanners.findIndex(x => x.id === b.id) + 1}" ini? Tindakan ini tidak bisa dibatalkan.`)) return;
+
+  const btn = document.getElementById('btnBnrDelete');
+  const originalHtml = btn.innerHTML;
+  btn.disabled = true;
+  try {
+    const res = await api(`/api/admin/banners/${b.id}`, { method: 'DELETE' });
+    _bnrBanners = res.items;
+    _bnrActiveId = null;
+    showToast('Banner dihapus.', 'success');
+    if (!_bnrBanners.length) {
+      document.getElementById('bnrBody').style.display = 'none';
+      document.getElementById('bnrEmpty').style.display = '';
+    } else {
+      _bnrActiveId = _bnrBanners[0].id;
+      bnrRenderTabs();
+      bnrSelectBanner(_bnrActiveId);
+    }
+  } catch (e) {
+    showToast('Gagal menghapus Banner: ' + e.message, 'error');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+  }
+}

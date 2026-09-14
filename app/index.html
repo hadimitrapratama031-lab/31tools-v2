@@ -415,20 +415,15 @@
 
       <!-- ROW 1: Banner (kiri) + Top Installer Mingguan (kanan) — sejajar, tinggi sama -->
       <div class="dash-top-row">
-        <!-- DASHBOARD BANNER — SATU banner STATIC polos hitam (bukan
-             dinamis/carousel lagi). Tidak ada fetch API, tidak ada
-             Socket.IO, tidak ada upload/database untuk banner ini —
-             murni markup diam dengan 3 teks tetap (eyebrow/judul/deskripsi).
-             Layout & typography tetap mengikuti desain Dashboard existing,
-             termasuk hubungan ukuran dengan Top Installer di sebelahnya
-             (lihat .dash-top-row / .dash-banner di styles.css). -->
-        <div class="dash-banner" id="dashBannerRoot">
-          <div class="dash-banner-overlay">
-            <span class="dash-banner-eyebrow">SPECIAL OFFER</span>
-            <h2 class="dash-banner-title">Upgrade ke Platinum</h2>
-            <p class="dash-banner-desc">Nikmati akses lebih lengkap ke 31 Tools dengan penawaran spesial Platinum.</p>
-          </div>
-        </div>
+        <!-- DASHBOARD BANNER — sekarang dinamis (1..N banner dari Setting
+             Banner Admin Web), realtime lewat WS 'banners:update' + REST
+             GET /api/banners (lihat loadBanners()/applyBanners() di app.js).
+             Container ini SENGAJA dibiarkan kosong di markup — isinya (slide
+             per banner + dots kalau >1) di-generate oleh applyBanners(),
+             supaya App tidak pernah menampilkan data banner yang basi/hardcode.
+             Class root .dash-banner & layout/tinggi (lihat .dash-top-row /
+             .dash-banner di styles.css) TIDAK diubah sama sekali. -->
+        <div class="dash-banner" id="dashBannerRoot"></div>
 
         <div class="dash-top-installer">
           <div class="dash-ti-header">
