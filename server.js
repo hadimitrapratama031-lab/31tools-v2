@@ -7,6 +7,11 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const axios = require('axios');
+// Dipakai HANYA untuk cache Hero Background Game/Bypass Detail (lihat blok
+// "HERO BACKGROUND" dekat endpoint /api/games/:id/steam-details) — modul
+// yang SAMA PERSIS sudah dipakai appCustomizationManager.js/bannerManager.js,
+// TIDAK membuat client R2/credential baru.
+const r2Storage = require('./r2Storage');
 const jwt = require('jsonwebtoken');
 const { nanoid } = require('nanoid');
 const { MongoClient, ObjectId } = require('mongodb');
@@ -4006,6 +4011,11 @@ async function fetchSteamDetailsForAppId(appId) {
     name: d.name || null,
     headerImage: d.header_image || null,
     shortDescription: d.short_description || '',
+    // Deskripsi lengkap (bukan cuma ringkasan pendek) — dipakai halaman Game
+    // Detail/Bypass Detail APP supaya description tidak cepat kepotong "..."
+    // (lihat buildGameDetailModel/buildBypassDetailModel di app.js, yang
+    // sekarang prioritas pakai field ini dulu sebelum shortDescription).
+    fullDescription: d.about_the_game ? d.about_the_game.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim() : null,
     genres: (d.genres || []).map(g => g.description).filter(Boolean),
     categories: (d.categories || []).map(c => c.description).filter(Boolean),
     releaseDate: d.release_date?.date || null,
@@ -4053,6 +4063,125 @@ app.get('/api/bypasses/:id/steam-details', requireUser, async (req, res) => {
     res.json(details);
   } catch (e) {
     res.status(500).json({ error: 'Gagal mengambil detail dari Steam: ' + e.message });
+  }
+});
+
+// ══════════════════════════════════════════════════════════════════════════
+// HERO BACKGROUND — Game Detail & Bypass Detail (background artwork
+// cinematic di APP). TERPISAH TOTAL dari pickCatalogBanner() (notifikasi
+// Discord) di atas — TIDAK menyentuh/mengubah sumber banner notifikasi sama
+// sekali (ATURAN MUTLAK notifikasi tetap header.jpg Steam CDN + Ryu saja).
+//
+// Sumber: Steam Library Hero, Cloudflare CDN resmi, dari App ID:
+//   https://cdn.cloudflare.steamstatic.com/steam/apps/{APP_ID}/library_hero.jpg
+//
+// Cache: 1x PER APP ID (bukan per game/bypass — game & bypass dengan App ID
+// yang sama otomatis reuse hasil yang sama, tidak upload dobel ke R2) di
+// koleksi `heroBackgrounds`:
+//   - berhasil   -> { _id: appId, url, key, mimeType, size, cachedAt }
+//   - tidak ada  -> { _id: appId, unavailable:true, checkedAt } (supaya
+//     tidak terus-menerus nge-hit Steam CDN tiap kali detail dibuka utk App
+//     ID yang memang tidak punya asset ini; dicoba lagi otomatis setelah
+//     HERO_BG_UNAVAILABLE_RECHECK_MS).
+//
+// R2 dipakai HANYA sebagai cache/storage lewat r2Storage.js yang SUDAH ADA
+// (satu-satunya tempat credential R2 dipakai) — MongoDB TIDAK PERNAH
+// menyimpan binary/base64 gambar ini, cuma url/key/metadata (sesuai
+// instruksi). Kalau R2 belum dikonfigurasi, fallback: kembalikan URL Steam
+// CDN apa adanya (APP tetap jalan, TIDAK membuat sistem storage kedua).
+// ══════════════════════════════════════════════════════════════════════════
+const HERO_BG_UNAVAILABLE_RECHECK_MS = 24 * 60 * 60 * 1000; // 24 jam
+
+function buildLibraryHeroCloudflareUrl(appId) {
+  const id = appId != null ? String(appId).trim() : '';
+  if (!id) return null;
+  return `https://cdn.cloudflare.steamstatic.com/steam/apps/${id}/library_hero.jpg`;
+}
+
+async function resolveHeroBackgroundForAppId(appId) {
+  const id = appId != null ? String(appId).trim() : '';
+  if (!id) return null;
+
+  const existing = await db.collection('heroBackgrounds').findOne({ _id: id });
+  if (existing) {
+    if (existing.url) return { url: existing.url, appId: id };
+    if (existing.unavailable && existing.checkedAt && (Date.now() - new Date(existing.checkedAt).getTime()) < HERO_BG_UNAVAILABLE_RECHECK_MS) {
+      return null; // sudah dicek baru-baru ini, memang tidak ada — jangan spam Steam CDN
+    }
+  }
+
+  const heroUrl = buildLibraryHeroCloudflareUrl(id);
+  try {
+    const head = await axios.head(heroUrl, { timeout: 8000, validateStatus: () => true });
+    if (head.status !== 200) {
+      await db.collection('heroBackgrounds').updateOne(
+        { _id: id },
+        { $set: { unavailable: true, checkedAt: new Date() }, $unset: { url: '', key: '' } },
+        { upsert: true }
+      );
+      return null;
+    }
+  } catch (e) {
+    return null; // gangguan jaringan sesaat — jangan ditandai unavailable permanen, coba lagi request berikutnya
+  }
+
+  if (!r2Storage.isConfigured()) {
+    // R2 belum siap di server ini — tetap kembalikan URL Steam CDN langsung
+    // supaya background tetap tampil (tidak ada yang di-cache dulu).
+    return { url: heroUrl, appId: id };
+  }
+
+  try {
+    const imgRes = await axios.get(heroUrl, { responseType: 'arraybuffer', timeout: 15000 });
+    const mime = imgRes.headers['content-type'] || 'image/jpeg';
+    const dataUri = `data:${mime};base64,${Buffer.from(imgRes.data).toString('base64')}`;
+    const uploaded = await r2Storage.uploadDataUri(dataUri, 'hero-backgrounds');
+    await db.collection('heroBackgrounds').updateOne(
+      { _id: id },
+      { $set: { url: uploaded.url, key: uploaded.key, mimeType: uploaded.mimeType, size: uploaded.size, cachedAt: new Date() }, $unset: { unavailable: '', checkedAt: '' } },
+      { upsert: true }
+    );
+    return { url: uploaded.url, appId: id };
+  } catch (e) {
+    // Upload ke R2 gagal (best-effort) — tetap kembalikan URL Steam CDN
+    // langsung, jangan sampai background gagal total cuma karena R2 error.
+    return { url: heroUrl, appId: id };
+  }
+}
+
+app.get('/api/games/:id/hero-background', requireUser, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+    const game = await db.collection('games').findOne({ _id: new ObjectId(req.params.id) });
+    if (!game) return res.status(404).json({ error: 'Game tidak ditemukan.' });
+    if (!game.appId) return res.status(404).json({ error: 'App ID belum diisi untuk game ini.' });
+    const hero = await resolveHeroBackgroundForAppId(game.appId);
+    if (!hero) return res.status(404).json({ error: 'Hero background tidak tersedia untuk game ini.' });
+    res.json(hero);
+  } catch (e) {
+    res.status(500).json({ error: 'Gagal mengambil hero background: ' + e.message });
+  }
+});
+
+app.get('/api/bypasses/:id/hero-background', requireUser, async (req, res) => {
+  try {
+    if (!ObjectId.isValid(req.params.id)) return res.status(400).json({ error: 'ID tidak valid.' });
+    const bypass = await db.collection('bypasses').findOne({ _id: new ObjectId(req.params.id) });
+    if (!bypass) return res.status(404).json({ error: 'Bypass tidak ditemukan.' });
+    // Mapping App ID: prioritas field App ID di data bypass itu sendiri,
+    // fallback ke App ID game yang terhubung (gameId) — SAMA seperti
+    // findLinkedGame()/findLinkedBypass() di app.js, tidak ada nama hardcode.
+    let appId = bypass.appId || bypass.steamAppId || null;
+    if (!appId && bypass.gameId && ObjectId.isValid(bypass.gameId)) {
+      const linkedGame = await db.collection('games').findOne({ _id: new ObjectId(bypass.gameId) });
+      appId = linkedGame?.appId || null;
+    }
+    if (!appId) return res.status(404).json({ error: 'App ID belum diisi/terhubung untuk bypass ini.' });
+    const hero = await resolveHeroBackgroundForAppId(appId);
+    if (!hero) return res.status(404).json({ error: 'Hero background tidak tersedia untuk bypass ini.' });
+    res.json(hero);
+  } catch (e) {
+    res.status(500).json({ error: 'Gagal mengambil hero background: ' + e.message });
   }
 });
 

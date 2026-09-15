@@ -1,6 +1,6 @@
 {
   "name": "31-tools",
-  "version": "3.2.4",
+  "version": "3.2.5",
   "description": "31 Tools - desktop app + backend + admin web (project baru dari 0)",
   "main": "main.js",
   "engines": {

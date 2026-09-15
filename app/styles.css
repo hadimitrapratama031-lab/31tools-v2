@@ -606,7 +606,15 @@
     /* top disesuaikan mengikuti tinggi tombol bell yang sekarang 32px di
        dalam .titlebar (34px) — tetap menggantung rapat tepat di bawahnya. */
     position:absolute; top:38px; right:0;
-    width:380px; max-width:calc(100vw - 32px);
+    /* Lebar dinaikkan sedikit (380px -> 404px, requirement "boleh sedikit
+       diperbesar, jangan terlalu besar") supaya description dapat lebih
+       banyak ruang per baris sebelum wrap — mengurangi jumlah baris yang
+       dibutuhkan buat pesan panjang tanpa bikin popup terasa besar. Posisi
+       absolute top-right di dalam titlebar (z-index:30) tetap aman di
+       1280x720 s/d 1920x1080 — tidak pernah menutupi navbar/profile/tombol
+       download-install/Live Chat (widget lain ada di kiri/bawah, popup ini
+       cuma menggantung di kanan-atas). */
+    width:404px; max-width:calc(100vw - 32px);
     display:none; flex-direction:column;
     background:
       radial-gradient(180px 120px at 100% 0%, #9B87E81a 0%, transparent 70%),
@@ -693,11 +701,27 @@
     -webkit-line-clamp:1; -webkit-box-orient:vertical;
   }
   .notif-item.read .notif-item-title{ color:var(--text-secondary); font-weight:500; }
+  /* ROOT CAUSE (requirement #2 — "text terlalu cepat jadi ..."): SEBELUMNYA
+     `-webkit-line-clamp:2` di sini memotong description jadi ellipsis
+     begitu lewat 2 baris, padahal banyak notifikasi (mis. pesan Admin,
+     detail paket/voucher) isinya jauh lebih panjang dari itu. Diganti jadi
+     wrap alami TANPA clamp/ellipsis (white-space:normal + word-wrap), lebar
+     dibaca penuh sampai ~6 baris (max-height dari line-height x 6) — pesan
+     pendek TETAP compact apa adanya (tidak ada min-height dipaksakan, tinggi
+     murni mengikuti isi), pesan panjang bikin popup bertambah tinggi secara
+     natural sampai 6 baris itu. HANYA kalau pesannya benar-benar sangat
+     panjang (lebih dari ~6 baris) baru scroll internal HALUS ini yang
+     jadi fallback-nya (overflow-y:auto di elemen INI SAJA, bukan seluruh
+     popup) — bukan dipotong jadi "...". */
   .notif-item-desc{
-    font-size:12px; color:var(--text-secondary); line-height:1.45;
-    overflow:hidden; text-overflow:ellipsis; display:-webkit-box;
-    -webkit-line-clamp:2; -webkit-box-orient:vertical;
+    font-size:12px; color:var(--text-secondary); line-height:1.5;
+    white-space:normal; word-wrap:break-word; overflow-wrap:break-word;
+    max-height:9em; /* ~6 baris pada line-height:1.5 */
+    overflow-y:auto; overflow-x:hidden;
+    scrollbar-width:thin; scrollbar-color:#3A455C transparent;
   }
+  .notif-item-desc::-webkit-scrollbar{ width:5px; }
+  .notif-item-desc::-webkit-scrollbar-thumb{ background:#3A455C; border-radius:99px; }
   .notif-item.read .notif-item-desc{ color:var(--text-disabled); }
   .notif-item-meta-row{ display:flex; align-items:center; gap:6px; margin-top:2px; }
   .notif-item-time{ font-size:11px; color:var(--text-disabled); }
@@ -744,7 +768,12 @@
   .notif-center-state .notif-state-retry:hover{ background:#9B87E836; }
 
   @media (max-width:1366px){
-    .notif-center-popup{ width:340px; }
+    /* Window sempit (mis. 1280x720) — tetap sedikit lebih ramping dari lebar
+       default popup (404px) supaya tidak makan terlalu banyak ruang, tapi
+       ikut dinaikkan proporsional (340px -> 356px) untuk alasan yang sama
+       dengan default width di atas: kasih description sedikit lebih banyak
+       ruang per baris sebelum wrap. */
+    .notif-center-popup{ width:356px; }
   }
 
   /* ---------- Page content ---------- */
@@ -754,6 +783,28 @@
   .page-header{ padding:14px 40px 0; flex:none; }
   .page-title{ font-size:24px; font-weight:700; margin:0; letter-spacing:-.01em; color:#fff; }
   .page-sub{ color:var(--text-secondary); font-size:14px; margin-top:6px; }
+
+  /* ---------- Games/Bypass — Total Tersedia (compact, sejajar baris Mode
+     filter, ujung kanan) ----------
+     HANYA dipakai di #page-mygames & #page-explore lewat class tambahan
+     "gb-mode-row" di toolbar-row yang berisi filter Semua Mode/Online
+     Mode/Offline Mode (.toolbar-row dasar TIDAK diubah — dipakai juga oleh
+     baris Search+Package di atasnya & halaman lain seperti Histori/Beli
+     Paket, yang tidak butuh space-between). Pola SAMA PERSIS dengan
+     .rg-limit-inline (Request Game) — 1 baris compact, BUKAN card besar,
+     sesuai requirement desain. Angkanya sendiri diisi/diupdate oleh
+     updateGamesBypassTotal() di app.js, TIDAK pernah dihardcode di sini.
+     align-items:center sudah diwarisi dari .toolbar-row dasar, jadi badge
+     otomatis sejajar vertikal dengan tab Semua Mode/Online Mode/Offline
+     Mode di kiri, cuma didorong ke ujung kanan lewat justify-content. */
+  .gb-mode-row{ justify-content:space-between; }
+  .gb-total-inline{
+    flex:none; display:flex; align-items:center;
+    font-size:13px; font-weight:600; color:var(--text-secondary);
+    white-space:nowrap;
+  }
+  .gb-total-inline .gb-total-label::after{ content:"·"; margin:0 8px; color:var(--text-disabled); font-weight:700; }
+  .gb-total-inline .gb-total-num{ color:#fff; font-weight:700; }
 
   .placeholder-page{
     flex:1;display:flex;flex-direction:column;align-items:center;justify-content:center;
@@ -2723,8 +2774,43 @@
   .detail-back-btn:hover{ color:#e8ebf1; }
   .detail-back-btn:hover svg{ transform:translateX(-3px); }
 
-  .detail-body{ flex:1 1 auto;overflow-y:auto;padding:22px 40px 150px;min-height:0; } /* padding-bottom diperbesar (dulu 32px) supaya konten paling bawah tidak ketutup floating action button */
+  .detail-body{ position:relative;flex:1 1 auto;overflow-y:auto;padding:22px 40px 150px;min-height:0; } /* padding-bottom diperbesar (dulu 32px) supaya konten paling bawah tidak ketutup floating action button; position:relative = containing block utk .detail-hero-bg di bawah */
+
+  /* ---- Cinematic hero background (artwork Steam Library Hero) ----
+     Absolute di dalam .detail-body (position:relative di atas) — top/left/
+     right:0 dihitung dari PADDING BOX .detail-body, jadi otomatis full-bleed
+     edge-to-edge walau .detail-body sendiri punya padding 40px kiri/kanan.
+     Ikut ter-scroll bareng konten (bukan position:fixed) supaya terasa
+     seperti hero banner halaman toko/launcher premium, bukan wallpaper statis.
+     Opacity/filter di-toggle via class .is-fallback/.is-loaded oleh JS
+     (applyDetailHeroFallback()/loadDetailHeroBackground()) — elemen ini
+     sendiri TIDAK PERNAH menghalangi/menunda render .detail-skeleton atau
+     .detail-content (keduanya dinaikkan ke atas lewat z-index di bawah). */
+  .detail-hero-bg{
+    position:absolute;top:0;left:0;right:0;height:460px;z-index:0;
+    pointer-events:none;background-size:cover;background-position:center 28%;
+    opacity:0;filter:blur(30px) brightness(.85);transform:scale(1.1);
+    transition:opacity .6s ease,filter .6s ease,transform .6s ease;
+  }
+  .detail-hero-bg.is-fallback,.detail-hero-bg.is-loaded{ opacity:1; }
+  .detail-hero-bg.is-loaded{ filter:brightness(.92);transform:scale(1.02); }
+  /* Readability scrim — gelap makin ke kanan (area title/description/tags di
+     .detail-right) & memudar jadi warna solid halaman (--bg-main) di bagian
+     bawah band hero, supaya transisi ke konten di bawahnya mulus (tidak ada
+     garis potong tegas). Tidak pernah memberi opacity ke seluruh content/UI
+     (lihat instruksi) — ini murni layer visual di BELAKANG konten. */
+  .detail-hero-bg::after{
+    content:'';position:absolute;inset:0;
+    background:
+      linear-gradient(100deg, rgba(8,11,18,.32) 0%, rgba(8,11,18,.6) 45%, rgba(8,11,18,.87) 74%, var(--bg-main) 100%),
+      linear-gradient(180deg, rgba(8,11,18,.1) 0%, rgba(8,11,18,.3) 58%, var(--bg-main) 100%);
+  }
+  @media (max-width:1149px){
+    .detail-hero-bg{ height:340px; }
+  }
+
   .detail-content{
+    position:relative;z-index:1;
     display:grid;grid-template-columns:minmax(0,1fr) minmax(0,1.2fr);gap:32px;
   }
   .detail-left{ display:flex;flex-direction:column;gap:14px;min-width:0; }
@@ -2919,7 +3005,7 @@
   .install-progress-cancel:hover{ background:#ffffff10;color:#fff; }
 
   /* ---- skeleton loading ---- */
-  .detail-skeleton{ display:flex;gap:32px; }
+  .detail-skeleton{ position:relative;z-index:1;display:flex;gap:32px; }
   .skeleton-left{ flex:1 1 0;display:flex;flex-direction:column;gap:14px;min-width:0; }
   .skeleton-right{ flex:1.2 1 0;display:flex;flex-direction:column;gap:14px;min-width:0; }
   .sk-block{ background:#ffffff0d;border-radius:14px;animation:skPulse 1.4s ease-in-out infinite; }

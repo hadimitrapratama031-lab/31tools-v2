@@ -3163,6 +3163,16 @@ function renderGamesGrid() {
   // dipanggil ulang di sini supaya search/filter/tab yang lagi aktif tetap
   // konsisten begitu grid-nya diganti isinya (fetch ulang / realtime update).
   if (typeof page._applyFilters === 'function') page._applyFilters();
+  // Total Games Tersedia (header) — dari allGames.length, ARRAY YANG SAMA
+  // yang baru saja dipakai buat render grid di atas (bukan hitungan/API
+  // terpisah). Dipanggil di sini (bukan listener WS baru) supaya otomatis
+  // update di SETIAP jalur yang sudah memanggil renderGamesGrid(): load
+  // pertama kali (loadGames() dari enterApp()), realtime 'games:update'
+  // (applyGamesUpdate()), maupun resync saat Socket reconnect (loadGames()
+  // dipanggil ulang di _ws.onopen) — total tetap seluruh item dari backend,
+  // TIDAK ikut berubah oleh search/filter (applyFilters() di atas cuma
+  // toggle display:none per-card, tidak pernah mengubah allGames).
+  updateGamesBypassTotal('games', allGames.length);
 }
 
 // ── Ubah data ASLI dari server + Steam Store API jadi bentuk `d` yang
@@ -3200,7 +3210,10 @@ function buildGameDetailModel(item, steamData) {
     appId: item.appId || null,
     developer: steamData ? (steamData.developers?.length ? steamData.developers.join(', ') : 'Tidak diketahui') : '—',
     publisher: steamData ? (steamData.publishers?.length ? steamData.publishers.join(', ') : 'Tidak diketahui') : '—',
-    description: steamData?.shortDescription || item.description || 'Memuat deskripsi dari Steam...',
+    // Prioritas fullDescription (about_the_game, lebih panjang & lengkap) —
+    // shortDescription cuma dipakai kalau fullDescription tidak ada, supaya
+    // description di halaman detail tidak cepat kepotong pendek.
+    description: steamData?.fullDescription || steamData?.shortDescription || item.description || 'Memuat deskripsi dari Steam...',
     releaseDate: steamData ? (steamData.releaseDate || (steamData.comingSoon ? 'Coming Soon' : 'Tidak diketahui')) : '—',
     metacritic: steamData ? steamData.metacritic : null,
     isOnline: item.isOnline !== false,
@@ -3246,6 +3259,13 @@ function openRealGameDetailById(id) {
   renderDetailPage(currentDetailData);
   hideDetailSkeleton();
 
+  // Hero background: fallback instan dulu (pakai gambar yang sudah ada di
+  // tangan), background asli (Steam Library Hero) menyusul async di bawah —
+  // TIDAK menahan render detail UI di atas sama sekali.
+  resetDetailHeroBackground();
+  applyDetailHeroFallback(currentDetailData.image);
+  if (item.appId) loadDetailHeroBackground('game', item._id);
+
   if (item.appId) {
     api(`/api/games/${item._id}/steam-details`)
       .then(d => {
@@ -3253,6 +3273,7 @@ function openRealGameDetailById(id) {
         _lastSteamDetailsForCurrent = d;
         currentDetailData = buildGameDetailModel(item, d);
         renderDetailPage(currentDetailData);
+        applyDetailHeroFallback(currentDetailData.image); // upgrade fallback kalau steamData baru kasih header image & hero asli belum selesai dimuat
       })
       .catch(() => { /* biarin data cepat di atas yang tetap tampil — best-effort seperti APP LAMA */ });
   }
@@ -3350,6 +3371,23 @@ function renderBypassesGrid() {
   if (typeof renderPackageBadges === 'function') renderPackageBadges();
   if (typeof renderStatusBadges === 'function') renderStatusBadges();
   if (typeof page._applyFilters === 'function') page._applyFilters();
+  // Total Bypass Tersedia (header) — sama alasannya dengan Games di atas:
+  // dari allBypasses.length (array yang sama dipakai render grid), jadi
+  // otomatis ikut update di load pertama/realtime 'bypasses:update'/resync
+  // reconnect tanpa listener/API baru, dan tidak ikut berubah oleh search/filter.
+  updateGamesBypassTotal('bypass', allBypasses.length);
+}
+
+// Isi/update angka "Games Tersedia · N" / "Bypass Tersedia · N" di header
+// (lihat .gb-total-inline di styles.css + #gamesTotalNum/#bypassTotalNum di
+// index.html). Fungsi murni tampilan — TIDAK fetch apa pun sendiri, angkanya
+// selalu dikirim oleh pemanggil (renderGamesGrid()/renderBypassesGrid()) dari
+// data yang sudah ada (allGames/allBypasses), jadi selalu sinkron 1:1 dengan
+// Game/Bypass Grid yang sedang tampil.
+function updateGamesBypassTotal(type, count) {
+  const el = document.getElementById(type === 'games' ? 'gamesTotalNum' : 'bypassTotalNum');
+  if (!el) return;
+  el.textContent = String(count);
 }
 
 function buildBypassDetailModel(item, steamData) {
@@ -3375,7 +3413,7 @@ function buildBypassDetailModel(item, steamData) {
     status: 'Active',
     version: '—',
     updatedAt: item.createdAt ? new Date(item.createdAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) : '—',
-    description: steamData?.shortDescription || item.description || 'Memuat deskripsi dari Steam...',
+    description: steamData?.fullDescription || steamData?.shortDescription || item.description || 'Memuat deskripsi dari Steam...',
     isOnline: item.isOnline !== false,
     tags: tagsSource.slice(0, 8),
     reqProfile: steamData ? {
@@ -3387,6 +3425,75 @@ function buildBypassDetailModel(item, steamData) {
     },
   };
 }
+
+/* ══════════════════════════════════════════════════════════════════════════
+   HERO BACKGROUND — Game Detail & Bypass Detail (background artwork Steam
+   Library Hero, lihat resolveHeroBackgroundForAppId() di server.js).
+   Non-blocking by design:
+     Detail UI tampil (renderDetailPage, sudah ada) -> background mulai
+     loading (loadDetailHeroBackground) -> background tampil (preload lalu
+     di-swap) -> overlay/gradient di CSS otomatis menyesuaikan.
+   Fallback instan (applyDetailHeroFallback, TANPA network) dipasang duluan
+   pakai gambar yang sudah ada di tangan (header/capsule image yang sama
+   dipakai .detail-artwork) supaya background tidak pernah kosong/blank
+   walau hero asli belum/tidak berhasil dimuat.
+   ══════════════════════════════════════════════════════════════════════════ */
+let _detailHeroToken = 0;
+
+function detailHeroEl() {
+  return document.getElementById('detailHeroBg');
+}
+
+function applyDetailHeroFallback(image) {
+  const el = detailHeroEl();
+  if (!el) return;
+  // Jangan timpa hero asli yang sudah berhasil dimuat (mis. dipanggil ulang
+  // dari callback steam-details yang resolve belakangan) dengan fallback
+  // yang kualitasnya lebih rendah.
+  if (el.classList.contains('is-loaded')) return;
+  if (image) {
+    el.style.backgroundImage = `url("${image}")`;
+    el.classList.add('is-fallback');
+  } else {
+    el.style.backgroundImage = 'none';
+    el.classList.remove('is-fallback');
+  }
+}
+
+function resetDetailHeroBackground() {
+  ++_detailHeroToken;
+  const el = detailHeroEl();
+  if (!el) return;
+  el.classList.remove('is-fallback', 'is-loaded');
+  el.style.backgroundImage = 'none';
+}
+
+function loadDetailHeroBackground(kind, id) {
+  const myToken = ++_detailHeroToken;
+  const endpoint = kind === 'bypass' ? `/api/bypasses/${id}/hero-background` : `/api/games/${id}/hero-background`;
+  api(endpoint)
+    .then(res => {
+      if (myToken !== _detailHeroToken || !res || !res.url) return;
+      // Preload dulu sebelum dipasang sebagai background — background baru
+      // "tampil" setelah benar-benar siap, tidak ada frame gambar setengah
+      // termuat/rusak.
+      const preload = new Image();
+      preload.onload = () => {
+        if (myToken !== _detailHeroToken) return;
+        const el = detailHeroEl();
+        if (!el) return;
+        el.style.backgroundImage = `url("${res.url}")`;
+        el.classList.remove('is-fallback');
+        el.classList.add('is-loaded');
+      };
+      preload.onerror = () => { /* best-effort — fallback yang sudah tampil dipertahankan apa adanya */ };
+      preload.src = res.url;
+    })
+    .catch(() => { /* App ID tidak ada hero / gagal fetch — fallback yang sudah tampil dipertahankan, halaman tidak pernah blank */ });
+}
+/* ══════════════════════════════════════════════════════════════════════════
+   AKHIR HERO BACKGROUND
+   ══════════════════════════════════════════════════════════════════════════ */
 
 function openRealBypassDetailById(id) {
   const item = allBypasses.find(b => String(b._id) === String(id));
@@ -3408,6 +3515,13 @@ function openRealBypassDetailById(id) {
   renderDetailPage(currentDetailData);
   hideDetailSkeleton();
 
+  // Hero background — sama seperti Game Detail: fallback instan dulu,
+  // background asli (App ID Bypass -> Game terkait, lihat mapping di
+  // GET /api/bypasses/:id/hero-background) menyusul async.
+  resetDetailHeroBackground();
+  applyDetailHeroFallback(currentDetailData.image);
+  loadDetailHeroBackground('bypass', item._id);
+
   const appId = item.appId || item.steamAppId;
   if (appId) {
     api(`/api/bypasses/${item._id}/steam-details`)
@@ -3416,6 +3530,7 @@ function openRealBypassDetailById(id) {
         _lastSteamDetailsForCurrent = d;
         currentDetailData = buildBypassDetailModel(item, d);
         renderDetailPage(currentDetailData);
+        applyDetailHeroFallback(currentDetailData.image);
       })
       .catch(() => { /* biarin data cepat di atas yang tetap tampil */ });
   }
@@ -4186,6 +4301,32 @@ function openRealBypassDetailById(id) {
        WS 'notification' / 'notification:unread-count' (realtime)
      TIDAK ada sistem notifikasi baru/duplikat dibuat di sini — murni
      menyambungkan UI Notification Center ke API & WS existing.
+
+     AUDIT delete-persistence (ulang, requirement "delete harus permanen
+     setelah restart APP") — ditelusuri ujung ke ujung, SEMUA titik berikut
+     sudah benar & backend adalah source of truth:
+       1) DELETE /api/notifications/:id (server.js) — deleteOne() ASLI ke
+          MongoDB, di-scope `{ _id, discordId: req.user.discordId }` (bukan
+          soft-delete/flag, dan discordId di klausa filter memastikan tidak
+          mungkin menghapus notifikasi user lain).
+       2) deleteNotification() di sini memanggil DELETE itu (bukan cuma
+          splice state lokal) — optimistic UI dulu, tapi kalau request-nya
+          GAGAL (network/sesi/server error) item DIKEMBALIKAN ke _notifItems
+          (lihat blok rollback di bawah) supaya tampilan tidak pernah
+          "bohong" soal status di server.
+       3) TIDAK ada cache lokal (localStorage/dll) untuk daftar notifikasi —
+          _notifItems murni in-memory, sengaja dibuang begitu App ditutup.
+       4) loadNotifications() (GET /api/notifications) dipanggil ulang dari
+          NOL setiap: (a) enterApp() saat App dibuka/login, (b) tiap
+          Socket reconnect (lihat connectRealtime() -> _ws.onopen). Karena
+          notifikasi yang sudah dihapus BENAR-BENAR hilang dari koleksi
+          Mongo (poin 1), fetch ulang ini tidak akan pernah
+          memunculkannya lagi.
+     Kalau requirement ini masih pernah kelihatan gagal di build LAMA,
+     kemungkinan besar itu sebelum poin (2)/rollback di atas ada — audit
+     di atas mengonfirmasi jalurnya sekarang utuh, tidak diubah lagi di
+     sini selain hardening kecil pagination-skip (lihat deleteNotification()
+     di bawah).
      ══════════════════════════════════════════════════════════════════════ */
   let _notifItems = [];       // array notifikasi ter-load, terbaru duluan
   let _notifUnread = 0;
@@ -4453,6 +4594,17 @@ function openRealBypassDetailById(id) {
     api(`/api/notifications/${id}`, { method: 'DELETE' }).then(res => {
       _notifDeleting.delete(id);
       if (typeof res?.unread === 'number') applyNotifUnreadCount(res.unread);
+      // Item yang barusan dihapus ini sudah termasuk dalam "halaman" yang
+      // sudah di-load (ada di _notifItems, makanya findIndex() di atas
+      // berhasil) — total di backend sekarang beneran berkurang 1, jadi
+      // offset pagination (_notifSkip, dipakai loadMoreNotifications() buat
+      // parameter ?skip=) ikut dikoreksi turun 1 supaya "Load More"
+      // berikutnya tetap sejajar dengan posisi asli di backend (kalau
+      // TIDAK dikoreksi, fetch berikutnya bisa melompati 1 notifikasi yang
+      // sebenarnya belum pernah ditampilkan). TIDAK menyentuh _notifSkip di
+      // path gagal/rollback di bawah karena di server memang tidak ada
+      // apa-apa yang berubah kalau DELETE gagal.
+      _notifSkip = Math.max(0, _notifSkip - 1);
     }).catch(() => {
       // ROLLBACK — SEBELUMNYA kalau request DELETE ini gagal (network putus,
       // sesi expired, error server, dst), notifikasi TETAP dihapus dari
