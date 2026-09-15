@@ -3210,10 +3210,7 @@ function buildGameDetailModel(item, steamData) {
     appId: item.appId || null,
     developer: steamData ? (steamData.developers?.length ? steamData.developers.join(', ') : 'Tidak diketahui') : '—',
     publisher: steamData ? (steamData.publishers?.length ? steamData.publishers.join(', ') : 'Tidak diketahui') : '—',
-    // Prioritas fullDescription (about_the_game, lebih panjang & lengkap) —
-    // shortDescription cuma dipakai kalau fullDescription tidak ada, supaya
-    // description di halaman detail tidak cepat kepotong pendek.
-    description: steamData?.fullDescription || steamData?.shortDescription || item.description || 'Memuat deskripsi dari Steam...',
+    description: steamData?.shortDescription || item.description || 'Memuat deskripsi dari Steam...',
     releaseDate: steamData ? (steamData.releaseDate || (steamData.comingSoon ? 'Coming Soon' : 'Tidak diketahui')) : '—',
     metacritic: steamData ? steamData.metacritic : null,
     isOnline: item.isOnline !== false,
@@ -3259,13 +3256,6 @@ function openRealGameDetailById(id) {
   renderDetailPage(currentDetailData);
   hideDetailSkeleton();
 
-  // Hero background: fallback instan dulu (pakai gambar yang sudah ada di
-  // tangan), background asli (Steam Library Hero) menyusul async di bawah —
-  // TIDAK menahan render detail UI di atas sama sekali.
-  resetDetailHeroBackground();
-  applyDetailHeroFallback(currentDetailData.image);
-  if (item.appId) loadDetailHeroBackground('game', item._id);
-
   if (item.appId) {
     api(`/api/games/${item._id}/steam-details`)
       .then(d => {
@@ -3273,7 +3263,6 @@ function openRealGameDetailById(id) {
         _lastSteamDetailsForCurrent = d;
         currentDetailData = buildGameDetailModel(item, d);
         renderDetailPage(currentDetailData);
-        applyDetailHeroFallback(currentDetailData.image); // upgrade fallback kalau steamData baru kasih header image & hero asli belum selesai dimuat
       })
       .catch(() => { /* biarin data cepat di atas yang tetap tampil — best-effort seperti APP LAMA */ });
   }
@@ -3413,7 +3402,7 @@ function buildBypassDetailModel(item, steamData) {
     status: 'Active',
     version: '—',
     updatedAt: item.createdAt ? new Date(item.createdAt).toLocaleDateString('id-ID', { day: 'numeric', month: 'long', year: 'numeric' }) : '—',
-    description: steamData?.fullDescription || steamData?.shortDescription || item.description || 'Memuat deskripsi dari Steam...',
+    description: steamData?.shortDescription || item.description || 'Memuat deskripsi dari Steam...',
     isOnline: item.isOnline !== false,
     tags: tagsSource.slice(0, 8),
     reqProfile: steamData ? {
@@ -3425,75 +3414,6 @@ function buildBypassDetailModel(item, steamData) {
     },
   };
 }
-
-/* ══════════════════════════════════════════════════════════════════════════
-   HERO BACKGROUND — Game Detail & Bypass Detail (background artwork Steam
-   Library Hero, lihat resolveHeroBackgroundForAppId() di server.js).
-   Non-blocking by design:
-     Detail UI tampil (renderDetailPage, sudah ada) -> background mulai
-     loading (loadDetailHeroBackground) -> background tampil (preload lalu
-     di-swap) -> overlay/gradient di CSS otomatis menyesuaikan.
-   Fallback instan (applyDetailHeroFallback, TANPA network) dipasang duluan
-   pakai gambar yang sudah ada di tangan (header/capsule image yang sama
-   dipakai .detail-artwork) supaya background tidak pernah kosong/blank
-   walau hero asli belum/tidak berhasil dimuat.
-   ══════════════════════════════════════════════════════════════════════════ */
-let _detailHeroToken = 0;
-
-function detailHeroEl() {
-  return document.getElementById('detailHeroBg');
-}
-
-function applyDetailHeroFallback(image) {
-  const el = detailHeroEl();
-  if (!el) return;
-  // Jangan timpa hero asli yang sudah berhasil dimuat (mis. dipanggil ulang
-  // dari callback steam-details yang resolve belakangan) dengan fallback
-  // yang kualitasnya lebih rendah.
-  if (el.classList.contains('is-loaded')) return;
-  if (image) {
-    el.style.backgroundImage = `url("${image}")`;
-    el.classList.add('is-fallback');
-  } else {
-    el.style.backgroundImage = 'none';
-    el.classList.remove('is-fallback');
-  }
-}
-
-function resetDetailHeroBackground() {
-  ++_detailHeroToken;
-  const el = detailHeroEl();
-  if (!el) return;
-  el.classList.remove('is-fallback', 'is-loaded');
-  el.style.backgroundImage = 'none';
-}
-
-function loadDetailHeroBackground(kind, id) {
-  const myToken = ++_detailHeroToken;
-  const endpoint = kind === 'bypass' ? `/api/bypasses/${id}/hero-background` : `/api/games/${id}/hero-background`;
-  api(endpoint)
-    .then(res => {
-      if (myToken !== _detailHeroToken || !res || !res.url) return;
-      // Preload dulu sebelum dipasang sebagai background — background baru
-      // "tampil" setelah benar-benar siap, tidak ada frame gambar setengah
-      // termuat/rusak.
-      const preload = new Image();
-      preload.onload = () => {
-        if (myToken !== _detailHeroToken) return;
-        const el = detailHeroEl();
-        if (!el) return;
-        el.style.backgroundImage = `url("${res.url}")`;
-        el.classList.remove('is-fallback');
-        el.classList.add('is-loaded');
-      };
-      preload.onerror = () => { /* best-effort — fallback yang sudah tampil dipertahankan apa adanya */ };
-      preload.src = res.url;
-    })
-    .catch(() => { /* App ID tidak ada hero / gagal fetch — fallback yang sudah tampil dipertahankan, halaman tidak pernah blank */ });
-}
-/* ══════════════════════════════════════════════════════════════════════════
-   AKHIR HERO BACKGROUND
-   ══════════════════════════════════════════════════════════════════════════ */
 
 function openRealBypassDetailById(id) {
   const item = allBypasses.find(b => String(b._id) === String(id));
@@ -3515,13 +3435,6 @@ function openRealBypassDetailById(id) {
   renderDetailPage(currentDetailData);
   hideDetailSkeleton();
 
-  // Hero background — sama seperti Game Detail: fallback instan dulu,
-  // background asli (App ID Bypass -> Game terkait, lihat mapping di
-  // GET /api/bypasses/:id/hero-background) menyusul async.
-  resetDetailHeroBackground();
-  applyDetailHeroFallback(currentDetailData.image);
-  loadDetailHeroBackground('bypass', item._id);
-
   const appId = item.appId || item.steamAppId;
   if (appId) {
     api(`/api/bypasses/${item._id}/steam-details`)
@@ -3530,7 +3443,6 @@ function openRealBypassDetailById(id) {
         _lastSteamDetailsForCurrent = d;
         currentDetailData = buildBypassDetailModel(item, d);
         renderDetailPage(currentDetailData);
-        applyDetailHeroFallback(currentDetailData.image);
       })
       .catch(() => { /* biarin data cepat di atas yang tetap tampil */ });
   }
