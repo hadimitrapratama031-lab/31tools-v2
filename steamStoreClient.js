@@ -92,6 +92,18 @@ async function requestVariant(appId, variantParams) {
   }
 }
 
+// DIAGNOSTIK — dicetak tiap kali Search App ID dipanggil (bukan hot path,
+// ini aksi manual admin, jadi aman selalu nyala tanpa perlu env flag).
+// Tunjukkan PERSIS variant mana yang dicoba, status HTTP/`success` yang
+// dibalas Steam per variant, dan alasan akhir kalau semuanya gagal — supaya
+// kalau App ID tertentu masih gagal walau sudah lolos age-gate, langsung
+// kelihatan dari Railway logs apakah ini soal IP server diblokir Steam
+// (network error/timeout di SEMUA variant) atau App ID memang tidak listed
+// (SEMUA variant balas success:false secara eksplisit).
+function logSteamAttempt(appId, variant, outcome) {
+  try { console.log(`[SteamStoreClient] appId=${appId} variant=${JSON.stringify(variant)} ->`, outcome); } catch (e) { /* noop */ }
+}
+
 // fetchSteamAppDetails(appId) -> Promise<{ status, data, errorReason }>
 // TIDAK melakukan caching sama sekali — caching (in-memory/DB, TTL beda
 // untuk hasil sukses vs gagal) tetap jadi tanggung jawab masing-masing
@@ -114,23 +126,28 @@ async function fetchSteamAppDetails(appId) {
 
     if (err) {
       sawNetworkError = true;
+      logSteamAttempt(appId, variant, { networkError: true, httpStatus: err.response?.status ?? null, message: err.message });
       continue; // timeout/network/5xx -> coba variant berikutnya, BUKAN not_found
     }
 
     const candidate = res.data?.[String(appId)];
     if (candidate?.success && candidate.data) {
+      logSteamAttempt(appId, variant, { httpStatus: res.status, steamSuccess: true });
       return { status: STEAM_STATUS.OK, data: candidate.data, errorReason: null };
     }
+    logSteamAttempt(appId, variant, { httpStatus: res.status, steamSuccess: candidate?.success ?? null, rawKeys: candidate ? Object.keys(candidate) : (res.data ? Object.keys(res.data) : null) });
     // `success:false` eksplisit dari Steam -> tetap lanjut coba variant lain
     // (cc/age-gate berikutnya) sebelum benar-benar menyerah.
   }
 
   if (sawNetworkError) {
+    logSteamAttempt(appId, 'FINAL', { result: 'error', reason: 'network error di semua variant — kemungkinan besar IP server diblokir/dibatasi Steam, BUKAN soal App ID' });
     return {
       status: STEAM_STATUS.ERROR, data: null,
       errorReason: 'Steam Store API sedang tidak bisa dihubungi (timeout/rate-limit) — coba lagi sebentar lagi.'
     };
   }
+  logSteamAttempt(appId, 'FINAL', { result: 'not_found', reason: 'semua variant balas success:false secara eksplisit' });
   return {
     status: STEAM_STATUS.NOT_FOUND, data: null,
     errorReason: 'App ID ini tidak memiliki Store page publik di Steam (delisted, bukan game utama, atau App ID salah).'
