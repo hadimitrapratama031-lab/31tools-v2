@@ -12709,12 +12709,52 @@ async function lookupAppIdInfo(appId, provider, opts = {}) {
   // kategori/genre/developer/publisher/tanggal rilis/gambar untuk KEDUA provider
   // (HubCap/Ryu sama sekali tidak dipakai untuk data-data ini, cuma dipakai buat
   // cek ketersediaan file manifest kalau opts.verify eksplisit di-set — lihat bawah).
+  // BUG FIX (App ID selalu dianggap "tidak ditemukan" walau valid — termasuk
+  // App ID yang SEBELUMNYA berhasil ditambahkan): axios call di bawah ini
+  // SEBELUMNYA cuma 1x percobaan (`l: 'english'` saja, TANPA parameter `cc`
+  // / country-code, TANPA header User-Agent browser-like, TANPA retry saat
+  // kena rate-limit 429) — persis bug yang sama yang sudah diperbaiki di
+  // fetchSteamDetailsForAppId() (dipakai halaman Detail Request Game, lihat
+  // komentar lengkap di fungsi itu). Steam appdetails TERBUKTI kadang
+  // membalas `success:false` untuk App ID yang SAH kalau dipanggil tanpa
+  // `cc` atau kalau User-Agent-nya kelihatan seperti bot/script (default
+  // axios) — dan begitu kena rate-limit, Steam bisa membalas `success:false`
+  // untuk SEMUA App ID (bukan cuma satu) sampai limit-nya reset. Diterapkan
+  // pola yang sama di sini: 2 percobaan (varian cc `us`/`id`) + User-Agent
+  // browser-like + retry sekali kalau 429 — TIDAK ada logika lain (manifest/
+  // HubCap/Ryu verify di bawah) yang diubah.
+  const STEAM_REQUEST_HEADERS = {
+    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+    'Accept-Language': 'en-US,en;q=0.9',
+    'Accept': 'application/json'
+  };
+  const STEAM_PARAM_VARIANTS = [
+    { appids: appId, cc: 'us', l: 'english' },
+    { appids: appId, cc: 'id', l: 'indonesian' }
+  ];
   try {
-    const steamRes = await axios.get('https://store.steampowered.com/api/appdetails', {
-      params: { appids: appId, l: 'english' },
-      timeout: 10000
-    });
-    const entry = steamRes.data?.[appId];
+    let entry = null;
+    for (const params of STEAM_PARAM_VARIANTS) {
+      let steamRes;
+      try {
+        steamRes = await axios.get('https://store.steampowered.com/api/appdetails', {
+          params, headers: STEAM_REQUEST_HEADERS, timeout: 10000
+        });
+      } catch (reqErr) {
+        if (reqErr.response?.status === 429) {
+          await new Promise(r => setTimeout(r, 600));
+          try {
+            steamRes = await axios.get('https://store.steampowered.com/api/appdetails', {
+              params, headers: STEAM_REQUEST_HEADERS, timeout: 10000
+            });
+          } catch (e2) { continue; }
+        } else {
+          continue;
+        }
+      }
+      const candidate = steamRes.data?.[String(appId)];
+      if (candidate?.success && candidate.data) { entry = candidate; break; }
+    }
     if (entry?.success && entry.data) {
       const d = entry.data;
       result.name = d.name || null;
