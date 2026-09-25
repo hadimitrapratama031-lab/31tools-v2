@@ -12696,6 +12696,18 @@ async function lookupAppIdInfo(appId, provider, opts = {}) {
     sizeLabel: null,
     hasManifest: null,
     hubcapConfigured: false, // diisi ulang di bawah setelah cek key aktif
+    // Sumber AKHIR yang benar-benar mengisi name/imageUrl di atas — dipakai
+    // frontend buat pesan status yang akurat (poin permintaan: "Steam Store
+    // tidak punya halaman" != "metadata tidak bisa diambil sama sekali").
+    //   'steam'  — dari Steam Store appdetails (paling lengkap: deskripsi,
+    //              developer, publisher, release date, genre, dst ikut ada).
+    //   'hubcap' — Steam gagal/'not_found', fallback ke HubCap Library API
+    //              (SUDAH DIPAKAI project ini, bukan sumber baru) — HANYA
+    //              name & gambar yang HubCap punya, field lain (deskripsi/
+    //              developer/dst) TETAP kosong karena HubCap memang bukan
+    //              database metadata store, cuma katalog manifest.
+    //   null     — kedua sumber sama-sama tidak berhasil, admin isi manual.
+    metadataSource: null,
     // Deteksi otomatis tipe game (Online/Offline) dari kategori Steam-nya, biar toggle
     // di form admin bisa langsung ke-set default sesuai game aslinya — admin tetap bisa
     // ubah manual kalau deteksinya kurang pas.
@@ -12799,6 +12811,58 @@ async function lookupAppIdInfo(appId, provider, opts = {}) {
   } catch (e) {
     result.steamStatus = STEAM_STATUS.ERROR;
     result.warnings.push('Gagal mengambil data dari Steam Store: ' + e.message);
+  }
+
+  if (result.steamStatus === STEAM_STATUS.OK) {
+    result.metadataSource = 'steam';
+  } else {
+    // ROOT CAUSE "Add Game auto-fill berhenti bekerja" (App ID yang sudah
+    // dikonfirmasi ADA oleh HubCap, tapi Steam Store 'not_found'/'error'):
+    // SEBELUM blok ini, tidak ada fallback metadata sama sekali kalau Steam
+    // gagal — result.name/imageUrl dkk dibiarkan null total, form Add Game
+    // jadi kosong walau HubCap sudah membuktikan App ID ini valid. Sesuai
+    // permintaan ("Steam Store BUKAN satu-satunya sumber kebenaran App ID" +
+    // "gunakan fallback source yang SUDAH ADA di project, jangan bikin
+    // sistem baru"): pakai HubCap Library API (/api/v1/library) — endpoint
+    // GRATIS yang SUDAH DIPAKAI di fetchRequestGameBrowsePage() untuk hal
+    // yang SAMA PERSIS (name + gambar per App ID) — SATU-SATUNYA yang
+    // BERBEDA di sini adalah query 1 App ID spesifik, bukan daftar/browse.
+    // HubCap TIDAK PERNAH punya deskripsi/developer/publisher/release date/
+    // genre/Metacritic (itu bukan data yang mereka simpan sama sekali) —
+    // field-field itu TETAP kosong di sini, BUKAN dikarang/di-null-kan
+    // paksa jadi string kosong (poin "jangan membuat data palsu").
+    try {
+      const keyDoc = await hubcapKeyManager.getKeyForFreeEndpoint();
+      if (keyDoc) {
+        const hcRes = await axios.get(`${HUBCAP_BASE_URL}/api/v1/library`, {
+          headers: { Authorization: `Bearer ${keyDoc.key}` },
+          params: { limit: 25, offset: 0, search: appId },
+          timeout: 12000,
+          validateStatus: () => true
+        });
+        if (hcRes.status === 200) {
+          const rawItems = hcRes.data?.games || hcRes.data?.results || hcRes.data?.data || (Array.isArray(hcRes.data) ? hcRes.data : []);
+          const match = rawItems.find(raw => String(raw.game_id ?? raw.appid ?? raw.app_id ?? raw.id ?? '').trim() === String(appId));
+          if (match) {
+            result.name = match.game_name || match.name || null;
+            const hubcapImage = pickHubcapImage(match);
+            if (hubcapImage) {
+              // imageUrl adalah field yang dibaca preview & "Header/Main Image"
+              // form — capsule/library/hero TETAP kosong (HubCap tidak punya
+              // varian ukuran itu, beda dari Steam yang punya beberapa ukuran).
+              result.imageUrl = hubcapImage;
+            }
+            if (result.name || result.imageUrl) result.metadataSource = 'hubcap';
+          }
+        } else if (hcRes.status === 429) {
+          hubcapKeyManager.markFreeEndpointRateLimited(keyDoc);
+        }
+      }
+    } catch (e) {
+      // Best-effort — kalau HubCap Library API juga gagal/timeout, biarkan
+      // metadataSource tetap null (admin isi manual), JANGAN gagalkan
+      // seluruh lookup App ID hanya karena fallback-nya bermasalah.
+    }
   }
 
   // 1b) Library (portrait 600x900) & Hero/Banner — TIDAK dikembalikan appdetails,

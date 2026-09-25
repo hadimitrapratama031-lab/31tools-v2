@@ -2095,11 +2095,29 @@ async function doAppIdLookup() {
     //   'error'     — kuning juga (bukan merah — ini BUKAN berarti App ID-
     //                 nya salah), tegaskan ini masalah Steam sesaat, bukan
     //                 masalah App ID, dan sarankan coba lagi/isi manual.
+    // Pesan status dibedakan sesuai `data.steamStatus` DAN `data.metadataSource`
+    // (poin permintaan #7 — jangan menyatukan semua kegagalan Steam jadi satu
+    // pesan generik, dan bedakan "App ID tidak valid" dari "metadata tidak
+    // bisa diambil otomatis"):
+    //   steamStatus 'ok'                              — hijau, Steam berhasil.
+    //   steamStatus bukan 'ok', metadataSource 'hubcap' — biru, App ID valid
+    //     (dikonfirmasi HubCap) & nama/gambar SUDAH otomatis terisi dari
+    //     HubCap, tapi deskripsi/developer/publisher/dll tidak tersedia dari
+    //     sumber manapun — beda jelas dari "auto-fill benar-benar gagal".
+    //   steamStatus bukan 'ok', metadataSource null    — kuning, App ID tetap
+    //     boleh dipakai tapi TIDAK ADA satupun sumber (Steam maupun HubCap)
+    //     yang berhasil mengisi metadata otomatis — isi manual.
+    //   steamStatus 'error'                             — kuning terpisah,
+    //     ini masalah Steam sesaat (network/rate-limit), BUKAN soal App ID.
     let statusHtml;
-    if (data.steamStatus === 'not_found') {
-      statusHtml = `<span style="color:var(--yellow,#ffd76a);"><svg class="icon icon-18"><use href="#ic-triangle-alert"></use></svg> Steam Store tidak punya halaman untuk App ID ini — App ID tetap valid, silakan isi Nama/Gambar/dll secara manual di bawah lalu Simpan seperti biasa.</span>`;
+    if (data.steamStatus === 'ok') {
+      statusHtml = `<span style="color:var(--green,#4ade80);"><svg class="icon icon-18"><use href="#ic-check"></use></svg> Data ditemukan &amp; berhasil diisi otomatis.</span>`;
+    } else if (data.metadataSource === 'hubcap') {
+      statusHtml = `<span style="color:var(--blue,#60a5fa);"><svg class="icon icon-18"><use href="#ic-check"></use></svg> Game ditemukan (nama &amp; gambar dari HubCap), tetapi deskripsi/developer/publisher/rilis tidak tersedia otomatis — lengkapi sisanya secara manual di bawah lalu Simpan.</span>`;
     } else if (data.steamStatus === 'error') {
       statusHtml = `<span style="color:var(--yellow,#ffd76a);"><svg class="icon icon-18"><use href="#ic-triangle-alert"></use></svg> Steam Store API sedang tidak bisa dihubungi (bukan berarti App ID salah) — coba klik Search sekali lagi, atau isi form manual dulu lalu Simpan.</span>`;
+    } else if (data.steamStatus === 'not_found') {
+      statusHtml = `<span style="color:var(--yellow,#ffd76a);"><svg class="icon icon-18"><use href="#ic-triangle-alert"></use></svg> Game ditemukan, tetapi metadata tidak dapat diambil otomatis. Silakan lengkapi data secara manual di bawah lalu Simpan.</span>`;
     } else if (data.warnings?.length) {
       statusHtml = `<span style="color:var(--yellow,#ffd76a);"><svg class="icon icon-18"><use href="#ic-triangle-alert"></use></svg> ${escapeHtml(data.warnings.join(' · '))}</span>`;
     } else {
