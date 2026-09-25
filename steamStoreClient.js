@@ -34,6 +34,16 @@
 // kawasan Asia Tenggara lainnya — TIDAK menghapus 2 variant lama, cuma
 // nambah satu percobaan lagi sebelum benar-benar dianggap "tidak ditemukan".
 //
+// ROOT CAUSE KEDUA (ditemukan dari log diagnostik langsung — appId=599140):
+// Steam appdetails KADANG membalas `res.data` dengan key App ID KANONIK,
+// BUKAN App ID yang dikirim di query `appids` — terjadi untuk App ID yang
+// sudah di-alias/redirect internal ke App ID lain oleh Steam (mis. App ID
+// versi lama/duplikat sebuah game). httpStatus 200 & `success:true` beneran
+// ada, cuma di key yang berbeda — kode lama yang baca `res.data[appId]`
+// secara harfiah selalu dapat `undefined` untuk App ID jenis ini, salah
+// disimpulkan jadi 'not_found' padahal Steam sudah menjawab lengkap. Lihat
+// fallback "key satu-satunya di response" di requestVariant() bawah.
+//
 // PENTING — pemisahan status HASIL (dipakai SEMUA pemanggil untuk membedakan
 // "App ID memang tidak ada" dari "Steam API lagi bermasalah", sesuai
 // permintaan: jangan menyatukan semua kegagalan jadi satu pesan generik):
@@ -130,12 +140,23 @@ async function fetchSteamAppDetails(appId) {
       continue; // timeout/network/5xx -> coba variant berikutnya, BUKAN not_found
     }
 
-    const candidate = res.data?.[String(appId)];
+    const responseKeys = Object.keys(res.data || {});
+    // BUG FIX (dikonfirmasi log: appId=599140 -> Steam balas key '1788370')
+    // — untuk sejumlah App ID yang sudah di-alias/digabung Steam ke App ID
+    // lain, `res.data` dibalas dengan key App ID KANONIK, BUKAN App ID yang
+    // kita kirim di query `appids`. Sebelumnya kode ini cuma baca
+    // `res.data[String(appId)]` secara harfiah -> selalu `undefined` untuk
+    // App ID jenis ini walau Steam SEBENARNYA sudah menjawab sukses dengan
+    // data lengkap (httpStatus 200, `success:true`) -> salah dianggap
+    // 'not_found'. Karena kita SELALU cuma minta 1 App ID per request (tidak
+    // pernah batch beberapa appids sekaligus), aman untuk fallback ke
+    // key satu-satunya yang ada kalau key App ID yang diminta tidak cocok.
+    const candidate = res.data?.[String(appId)] || (responseKeys.length === 1 ? res.data[responseKeys[0]] : null);
     if (candidate?.success && candidate.data) {
-      logSteamAttempt(appId, variant, { httpStatus: res.status, steamSuccess: true });
+      logSteamAttempt(appId, variant, { httpStatus: res.status, steamSuccess: true, resolvedViaAliasKey: !res.data?.[String(appId)] });
       return { status: STEAM_STATUS.OK, data: candidate.data, errorReason: null };
     }
-    logSteamAttempt(appId, variant, { httpStatus: res.status, steamSuccess: candidate?.success ?? null, rawKeys: candidate ? Object.keys(candidate) : (res.data ? Object.keys(res.data) : null) });
+    logSteamAttempt(appId, variant, { httpStatus: res.status, steamSuccess: candidate?.success ?? null, rawKeys: responseKeys.length ? responseKeys : null });
     // `success:false` eksplisit dari Steam -> tetap lanjut coba variant lain
     // (cc/age-gate berikutnya) sebelum benar-benar menyerah.
   }
