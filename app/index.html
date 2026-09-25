@@ -5,7 +5,21 @@
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>Games — Game Launcher</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cinzel:wght@600;800&display=swap" rel="stylesheet">
+<!-- PERF FIX (restart setelah App Update terasa lama): 2 <link rel="stylesheet">
+     Google Fonts di bawah ini SEBELUMNYA render-blocking — browser (Chromium
+     di Electron) menahan cat pertama sampai request ke fonts.googleapis.com
+     ini selesai, PADAHAL styles.css lokal saja sudah cukup untuk app tampil
+     (komentar asli di bawah juga sudah menyebutkan applyAppBranding() selalu
+     punya fallback font sistem kalau font ini gagal/lambat dimuat — jadi App
+     memang sudah didesain TIDAK bergantung penuh ke internet untuk ini).
+     Diganti ke pola preload+swap: stylesheet di-fetch tanpa menahan render,
+     lalu diterapkan begitu selesai (event onload) — begitu juga kalau
+     offline/lambat, tidak ada bedanya secara visual, cuma render pertama
+     tidak lagi ikut menunggu network. <noscript> dipertahankan sebagai
+     fallback normal kalau JS belum jalan. Daftar font, weight, dan
+     display=swap semuanya tetap identik, tidak ada satupun yang dihapus. -->
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cinzel:wght@600;800&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&family=Cinzel:wght@600;800&display=swap" rel="stylesheet"></noscript>
 <!-- APP CUSTOMIZATION — Font Style (Brand Text): whitelist font tambahan yang
      bisa dipilih Admin lewat Admin Web (lihat FONT_WHITELIST di
      appCustomizationManager.js). Dipasang sebagai <link> Google Fonts SAMA
@@ -15,7 +29,8 @@
      App kebetulan offline saat font ini gagal dimuat, teks branding TETAP
      tampil (tidak pernah blank/gagal render) — App tidak bergantung penuh ke
      internet untuk fitur ini. -->
-<link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Roboto:wght@400;500;700&family=Montserrat:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&family=Orbitron:wght@400;500;600;700;800&family=Rajdhani:wght@400;500;600;700&family=Bebas+Neue&family=Oswald:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Roboto:wght@400;500;700&family=Montserrat:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&family=Orbitron:wght@400;500;600;700;800&family=Rajdhani:wght@400;500;600;700&family=Bebas+Neue&family=Oswald:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" onload="this.onload=null;this.rel='stylesheet'">
+<noscript><link href="https://fonts.googleapis.com/css2?family=Poppins:wght@400;500;600;700;800&family=Roboto:wght@400;500;700&family=Montserrat:wght@400;500;600;700;800&family=Space+Grotesk:wght@400;500;600;700&family=Orbitron:wght@400;500;600;700;800&family=Rajdhani:wght@400;500;600;700&family=Bebas+Neue&family=Oswald:wght@400;500;600;700&family=Plus+Jakarta+Sans:wght@400;500;600;700;800&display=swap" rel="stylesheet"></noscript>
 <link rel="stylesheet" href="styles.css">
 <!-- LIVE CHAT — CSS terpisah (livechat.css), TIDAK menyentuh styles.css utama
      sama sekali (lihat catatan di livechat.css/livechat.js). Dimuat SETELAH
@@ -269,11 +284,11 @@
   <!-- Nav bar -->
   <div class="navbar">
     <div class="nav-items" role="tablist">
-      <button class="nav-item" data-page="home" onclick="setNav('home')">
+      <button class="nav-item active" data-page="home" onclick="setNav('home')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="9" rx="1.5"/><rect x="14" y="3" width="7" height="5" rx="1.5"/><rect x="14" y="12" width="7" height="9" rx="1.5"/><rect x="3" y="16" width="7" height="5" rx="1.5"/></svg>
         <span>Dashboard</span>
       </button>
-      <button class="nav-item active" data-page="mygames" onclick="setNav('mygames')">
+      <button class="nav-item" data-page="mygames" onclick="setNav('mygames')">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M17.3 5H6.7a4 4 0 0 0-4 3.6c-.3 2.7-.7 6.7-.7 7.4a3 3 0 0 0 3 3c1 0 1.5-.5 2-1l1.4-1.4A2 2 0 0 1 9.8 16h4.4a2 2 0 0 1 1.4.6L17 18c.5.5 1 1 2 1a3 3 0 0 0 3-3c0-.7-.4-4.7-.7-7.4a4 4 0 0 0-4-3.6z"/><line x1="6.2" y1="10.2" x2="6.2" y2="13.2"/><line x1="4.7" y1="11.7" x2="7.7" y2="11.7"/><circle cx="14.5" cy="10.8" r=".55" fill="currentColor" stroke="none"/><circle cx="16.8" cy="9" r=".55" fill="currentColor" stroke="none"/><circle cx="16.8" cy="12.6" r=".55" fill="currentColor" stroke="none"/><circle cx="19.1" cy="10.8" r=".55" fill="currentColor" stroke="none"/></svg>
         <span>Games</span>
       </button>
@@ -406,7 +421,7 @@
 
   <!-- Home page — Dashboard: Banner + Top Installer Mingguan (1 row, sejajar,
        tinggi sama), lalu New Games di bawahnya. -->
-  <section class="page" id="page-home">
+  <section class="page active" id="page-home">
     <div class="page-header">
       <h1 class="page-title">Dashboard</h1>
     </div>
@@ -493,7 +508,7 @@
   </section>
 
   <!-- Games page -->
-  <section class="page active" id="page-mygames">
+  <section class="page" id="page-mygames">
     <div class="page-header">
       <h1 class="page-title">Games</h1>
     </div>

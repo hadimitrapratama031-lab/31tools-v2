@@ -255,7 +255,7 @@ function createWindow() {
   mainWindow = new BrowserWindow({
     // Default launch size. Width dinaikkan +5% lagi dari baseline
     // sebelumnya (1180 -> 1239 -> 1301); height diturunkan -2% dari
-    // baseline sebelumnya (760 -> 745). Ini murni ukuran window saat APP
+    // baseline sebelumnya (760 ->745). Ini murni ukuran window saat APP
     // pertama kali dibuka — resize manual oleh user selama APP berjalan
     // TIDAK ditulis balik ke sini (tidak ada sistem save-bounds/electron-store
     // di app ini), jadi close lalu launch ulang selalu kembali ke 1301x745,
@@ -273,6 +273,15 @@ function createWindow() {
     minHeight: 745,
     frame: false, // custom title bar dibikin sendiri di app.html/app.js
     backgroundColor: '#0a0713',
+    // PERF FIX (restart setelah App Update terasa lama): window sebelumnya
+    // langsung `show` begitu di-construct, jadi ada jeda window kosong/putih
+    // kelihatan dulu sebelum index.html+CSS selesai render — ini yang bikin
+    // "buka ulang app" terasa lama padahal proses Electron-nya sendiri sudah
+    // jalan. `show:false` + reveal di event 'ready-to-show' (di bawah)
+    // membuat window baru muncul PERSIS saat konten pertama sudah siap
+    // digambar, jadi tidak ada frame kosong yang kelihatan. Ukuran, posisi,
+    // frame, dan seluruh webPreferences TIDAK berubah sama sekali.
+    show: false,
     webPreferences: {
       preload: path.join(__dirname, 'preload.js'),
       contextIsolation: true,
@@ -281,6 +290,23 @@ function createWindow() {
       webviewTag: true
     }
   });
+
+  // Tampilkan window begitu konten pertama siap di-render (lihat catatan
+  // show:false di atas). Fallback: kalau event ini karena alasan apapun
+  // tidak pernah terpanggil (mis. edge-case rendering tertentu), window
+  // tetap dipaksa muncul setelah 3 detik supaya app TIDAK PERNAH kelihatan
+  // "tidak terbuka sama sekali".
+  let _shownFallback = false;
+  mainWindow.once('ready-to-show', () => {
+    if (_shownFallback) return;
+    _shownFallback = true;
+    mainWindow.show();
+  });
+  setTimeout(() => {
+    if (_shownFallback || !mainWindow || mainWindow.isDestroyed()) return;
+    _shownFallback = true;
+    mainWindow.show();
+  }, 3000);
 
   // Matikan Menu default Electron — sumber accelerator zoom liar/tidak
   // konsisten sebelumnya (lihat catatan di setupZoomHandlers di atas). Zoom
@@ -320,11 +346,15 @@ function createWindow() {
 // dihapus semua karena folder ini CUMA berisi backup temporary buat rollback
 // SATU sesi install yang sudah pasti tidak lagi berjalan (app baru saja start
 // ulang) — bukan file game/bypass asli milik user.
-function cleanupStaleRollbackSessions() {
+// PERF FIX: sama seperti cleanupStaleUpdateTempFiles() di atas — diganti ke
+// async (fs.promises.rm) supaya tidak memblokir Main Process kalau folder
+// rollback kebetulan berisi banyak file backup sisa (mis. dari inject game
+// yang terputus). Logika penghapusan (hapus total folder root) tidak berubah.
+async function cleanupStaleRollbackSessions() {
   try {
     const root = get31ToolsRollbackRoot();
     if (!fs.existsSync(root)) return;
-    fs.rmSync(root, { recursive: true, force: true });
+    await fs.promises.rm(root, { recursive: true, force: true });
   } catch (e) { /* best-effort */ }
 }
 
@@ -335,13 +365,24 @@ app.whenReady().then(() => {
   });
   // Steam & Discord Detection — watcher status realtime (lihat definisi di bawah).
   startSystemDetectionWatcher();
-  // Auto Update — bersihkan file installer/script sementara yang mungkin
-  // tertinggal dari proses update sebelumnya (crash, force-close user, dst).
-  cleanupStaleUpdateTempFiles();
-  // Rollback Bypass/Game — bersihkan sesi backup temporary yang tertinggal
-  // dari proses install sebelumnya yang tidak sempat selesai (lihat catatan
-  // di atas cleanupStaleRollbackSessions).
-  cleanupStaleRollbackSessions();
+  // PERF FIX (restart setelah App Update terasa lama): dua cleanup di bawah
+  // ini TIDAK PERNAH dibutuhkan sebelum window kelihatan — keduanya cuma
+  // beres-beres file sisa proses SEBELUMNYA, tidak ada satupun state yang
+  // dibutuhkan createWindow()/index.html untuk render pertama. Sebelumnya
+  // dipanggil di sini secara sinkron (blocking) tepat saat startup paling
+  // kritis; sekarang digeser jalan di background 2 detik SETELAH proses
+  // whenReady() ini selesai (window sudah tampil & interaktif), pakai versi
+  // async-nya (lihat definisi masing-masing fungsi) supaya sama sekali tidak
+  // menahan window muncul. Tidak ada logika hapus/kondisi yang berubah.
+  setTimeout(() => {
+    // Auto Update — bersihkan file installer/script sementara yang mungkin
+    // tertinggal dari proses update sebelumnya (crash, force-close user, dst).
+    cleanupStaleUpdateTempFiles();
+    // Rollback Bypass/Game — bersihkan sesi backup temporary yang tertinggal
+    // dari proses install sebelumnya yang tidak sempat selesai (lihat catatan
+    // di atas cleanupStaleRollbackSessions).
+    cleanupStaleRollbackSessions();
+  }, 2000);
 });
 
 app.on('window-all-closed', () => {
@@ -424,7 +465,7 @@ function downloadFileWithProgress(url, destPath, onProgress, redirectCount = 0, 
     // jadi url yang sampai ke sini seharusnya selalu server sendiri. Allowlist ini jaga-jaga
     // supaya kalau suatu saat ada bug/kebocoran URL mentah, app tetap menolak download-nya
     // alih-alih diam-diam download dari host sembarangan.
-    const OWN_SERVER_HOST = '31store-production.up.railway.app'; // domain server sendiri — WAJIB, semua stream lewat sini
+    const OWN_SERVER_HOST = '31store-production-299d.up.railway.app'; // domain server sendiri — WAJIB, semua stream lewat sini
     const ALLOWED_DOWNLOAD_HOSTS = [
       OWN_SERVER_HOST,
       'hubcapmanifest.com',                   // HubCap manifest API — untuk game inject
@@ -675,17 +716,28 @@ function compareSemverSimple(a, b) {
 // gagal di tengah jalan) — dipanggil sekali tiap app.whenReady(). Cuma
 // menghapus file yang lebih tua dari 10 menit, supaya tidak bentrok dengan
 // proses update yang MUNGKIN sedang berjalan (jarang, tapi aman dijaga).
-function cleanupStaleUpdateTempFiles() {
+// PERF FIX (restart setelah App Update terasa lama): fungsi ini SEBELUMNYA
+// dipanggil sinkron di dalam app.whenReady().then() (lihat pemanggilnya di
+// bawah) memakai fs.readdirSync/statSync/unlinkSync — semuanya BLOCKING,
+// artinya seluruh Main Process (termasuk proses createWindow() yang baru
+// saja jalan) ikut berhenti sejenak sampai OS temp folder selesai di-scan.
+// Ini persis skenario yang paling terasa PAS SETELAH UPDATE: folder temp
+// OS sedang berisi sisa installer/script (.bat/.vbs/.exe) dari proses
+// restart yang baru saja terjadi, jadi scan-nya kebetulan tidak kosong.
+// Diganti total ke versi ASYNC (fs.promises) TANPA mengubah logika apapun
+// (pola nama file yang dicari, ambang umur 10 menit, cara hapus — semua
+// sama persis) — cuma cara bacanya yang tidak lagi memblokir proses lain.
+async function cleanupStaleUpdateTempFiles() {
   try {
     const tempDir = app.getPath('temp');
-    const files = fs.readdirSync(tempDir);
+    const files = await fs.promises.readdir(tempDir);
     const now = Date.now();
     for (const f of files) {
       if (!/^31tools_update_/.test(f)) continue;
       const full = path.join(tempDir, f);
       try {
-        const stat = fs.statSync(full);
-        if (now - stat.mtimeMs > 10 * 60 * 1000) fs.unlinkSync(full);
+        const stat = await fs.promises.stat(full);
+        if (now - stat.mtimeMs > 10 * 60 * 1000) await fs.promises.unlink(full);
       } catch (e) { /* file mungkin lagi dipakai proses lain, skip */ }
     }
   } catch (e) { /* best-effort */ }
@@ -843,7 +895,12 @@ ipcMain.handle('install-app-update', async (event, { installerPath, targetVersio
       'goto waitloop',
       ':proceed',
       '"%INSTALLER%" /S',
-      'start "" "%APPEXE%"',
+      // PERF FIX: tambah /ABOVENORMAL — cuma menaikkan priority proses baru
+      // ini sedikit di atas default saat pertama kali start (murni hint ke
+      // Windows scheduler agar startup Electron-nya kebagian jatah CPU lebih
+      // dulu di sistem yang sedang banyak proses lain jalan), TIDAK mengubah
+      // apa yang dijalankan atau urutannya sama sekali.
+      'start "" /ABOVENORMAL "%APPEXE%"',
       'del /f /q "%INSTALLER%" >nul 2>&1',
       'del /f /q "%VBS%" >nul 2>&1',
       'del /f /q "%~f0" >nul 2>&1'

@@ -1,4 +1,4 @@
-const SERVER_URL = 'https://31store-production.up.railway.app';
+const SERVER_URL = 'https://31store-production-299d.up.railway.app';
 const WS_URL = SERVER_URL.replace(/^http/, 'ws') + '/ws';
 
 // ── FIX AKAR MASALAH "image tidak diterapkan ke Banner (& fitur relative-
@@ -213,8 +213,13 @@ function buildLoginOverlay() {
       btn.textContent = 'Memverifikasi...';
       if (loginStatusEl) { loginStatusEl.textContent = ''; }
       try {
-        const user = await api('/api/me');
-        const deviceCheck = await verifyDeviceLock();
+        // PERF FIX: /api/me dan verifyDeviceLock() tidak saling bergantung
+        // (satu ambil profil user, satu lagi verifikasi device) — dijalankan
+        // PARALEL (Promise.all) daripada berurutan, supaya total waktu
+        // tunggu = yang PALING LAMA di antara keduanya, bukan jumlah
+        // keduanya. Tidak mengubah urutan pengecekan sama sekali: deviceCheck
+        // tetap divalidasi SEBELUM enterApp() dipanggil, sama seperti sebelumnya.
+        const [user, deviceCheck] = await Promise.all([api('/api/me'), verifyDeviceLock()]);
         if (!deviceCheck.ok) {
           btn.disabled = false;
           btn.innerHTML = '<svg class="icon icon-16"><use href="#ic-zap"></use></svg> Masuk Sekarang';
@@ -3035,13 +3040,42 @@ function handleAccountUpdate(freshUser) {
 let allGames = [];
 let _detailFetchToken = 0; // biar response steam-details yang telat/kebalap gak nimpa detail yang lagi dibuka
 
+// PERF FIX (Games muncul telat di Dashboard/New Games dibanding Banner/Top
+// Installer): loadBanners() sudah pakai cache localStorage (baca cache dulu
+// -> tampil instan -> fetch ulang di background -> update kalau ada
+// perubahan), sedangkan loadGames() dulu HARUS nunggu network request
+// /api/games selesai dulu baru ada apa pun yang tampil (baik di halaman Games
+// maupun New Games Dashboard, karena keduanya sumbernya sama -- lihat
+// populateDashboardNewGames()). Katalog game juga jauh lebih besar/berat
+// daripada payload Banner/Leaderboard, jadi bedanya makin kerasa. Pola SWR
+// yang SAMA PERSIS dengan _readDashBannerCache()/_writeDashBannerCache() di
+// atas sekarang dipakai di sini juga -- bukan sistem cache baru.
+const GAMES_CACHE_KEY = 'gamesCache';
+function _readGamesCache() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(GAMES_CACHE_KEY) || 'null');
+    return Array.isArray(cached) ? cached : null;
+  } catch (e) { return null; }
+}
+function _writeGamesCache(items) {
+  try { localStorage.setItem(GAMES_CACHE_KEY, JSON.stringify(items || [])); } catch (e) {}
+}
+
 async function loadGames() {
+  // Tampilkan dulu katalog game dari cache lokal (kalau ada) supaya Games /
+  // New Games Dashboard langsung terisi TANPA nunggu /api/games selesai --
+  // sama pola dengan loadBanners(). Database tetap source of truth: begitu
+  // fetch di bawah selesai, applyGamesUpdate() dipanggil ULANG dengan data
+  // asli terbaru (menimpa apa pun yang sempat tampil dari cache).
+  const cached = _readGamesCache();
+  if (cached) applyGamesUpdate(cached);
   try {
     const games = await api('/api/games');
+    _writeGamesCache(games);
     applyGamesUpdate(games);
   } catch (e) {
     console.warn('[Games] Gagal memuat daftar game:', e.message);
-    if (typeof showToast === 'function') showToast('error', 'Gagal memuat daftar game dari server.');
+    if (!cached && typeof showToast === 'function') showToast('error', 'Gagal memuat daftar game dari server.');
   }
 }
 
@@ -3287,13 +3321,29 @@ function openRealGameDetailById(id) {
    ══════════════════════════════════════════════════════════════════════════ */
 let allBypasses = [];
 
+// PERF FIX (sama alasan dengan loadGames() di atas -- Bypass sumbernya
+// sama-sama katalog besar, pola cache SWR yang SAMA dipakai di sini juga).
+const BYPASSES_CACHE_KEY = 'bypassesCache';
+function _readBypassesCache() {
+  try {
+    const cached = JSON.parse(localStorage.getItem(BYPASSES_CACHE_KEY) || 'null');
+    return Array.isArray(cached) ? cached : null;
+  } catch (e) { return null; }
+}
+function _writeBypassesCache(items) {
+  try { localStorage.setItem(BYPASSES_CACHE_KEY, JSON.stringify(items || [])); } catch (e) {}
+}
+
 async function loadBypasses() {
+  const cached = _readBypassesCache();
+  if (cached) applyBypassesUpdate(cached);
   try {
     const bypasses = await api('/api/bypasses');
+    _writeBypassesCache(bypasses);
     applyBypassesUpdate(bypasses);
   } catch (e) {
     console.warn('[Bypass] Gagal memuat daftar bypass:', e.message);
-    if (typeof showToast === 'function') showToast('error', 'Gagal memuat daftar bypass dari server.');
+    if (!cached && typeof showToast === 'function') showToast('error', 'Gagal memuat daftar bypass dari server.');
   }
 }
 
@@ -9938,6 +9988,14 @@ function openRealBypassDetailById(id) {
   // selalu mendarat di layar Login dulu seperti APP LAMA, bukan langsung ke
   // shell dengan data dummy.
   function initAppShellDemo() {
+    // INITIAL ROUTE — Dashboard adalah halaman pertama setelah login/launch
+    // (BUKAN Games lagi). Class "active" default di index.html sudah
+    // disesuaikan (page-home + nav-item[data-page="home"]), panggilan
+    // setNav('home') di sini murni JARING PENGAMAN supaya state nav/page
+    // selalu konsisten apa pun kondisi awal markup — aman dipanggil karena
+    // page 'home' tidak memicu fetch apapun di setNav() (lihat definisinya
+    // di bawah). Tidak mengubah routing halaman lain sama sekali.
+    if (typeof setNav === 'function') setNav('home');
     document.querySelectorAll('.page').forEach(page=>{
       if(page.querySelector('.grid')) initGameListPage(page);
     });
