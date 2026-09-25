@@ -231,6 +231,16 @@ const GENERIC_DOWNLOAD_ERROR_MSG = 'Download Server sedang mengalami gangguan. C
 const GENERIC_BUSY_ERROR_MSG = 'Download Server sedang sibuk, coba lagi sebentar lagi.';
 
 // ══════════════════════════════════════════════════════════════════════════
+// STEAM STORE CLIENT — SATU-SATUNYA pemanggil Steam Store appdetails API di
+// seluruh project (lihat steamStoreClient.js untuk penjelasan lengkap ROOT
+// CAUSE bug "App ID ditemukan Hubcap tapi Steam Store bilang tidak
+// ditemukan" & fix age-gate cookie-nya). fetchSteamDetailsForAppId(),
+// lookupAppIdInfo(), dan fetchSteamAppSummary() di bawah SEMUA memakai
+// helper ini alih-alih menulis ulang logic request/retry-nya sendiri.
+// ══════════════════════════════════════════════════════════════════════════
+const { fetchSteamAppDetails, STEAM_STATUS } = require('./steamStoreClient');
+
+// ══════════════════════════════════════════════════════════════════════════
 // HUBCAP API KEY MANAGER — API Key HubCap sekarang dikelola dari Admin Web
 // (halaman "Hubcap API" > API Key Management), disimpan di database, BUKAN
 // lagi cuma dari .env. Admin bisa Tambah/Edit/Hapus/Aktifkan/Nonaktifkan key
@@ -3984,13 +3994,14 @@ async function fetchSteamDetailsForAppId(appId) {
   const cached = _steamDetailsCache.get(appId);
   if (cached && cached.expiresAt > Date.now()) return cached.data;
 
-  const steamRes = await axios.get('https://store.steampowered.com/api/appdetails', {
-    params: { appids: appId, l: 'english', cc: 'us' },
-    timeout: 12000
-  });
-  const entry = steamRes.data?.[appId];
-  if (!entry?.success || !entry.data) return null;
-  const d = entry.data;
+  // Dulu fungsi ini punya implementasi Steam appdetails-nya SENDIRI (1x
+  // percobaan, TANPA variasi cc/locale, TANPA User-Agent browser, TANPA
+  // cookie age-gate) — beda & lebih lemah dari lookupAppIdInfo()/
+  // fetchSteamAppSummary(), sehingga App ID yang sama bisa "berhasil" di
+  // Add Game tapi "gagal" di halaman Game Detail. Sekarang SEMUA jalur
+  // sama-sama lewat fetchSteamAppDetails() (steamStoreClient.js).
+  const { status, data: d } = await fetchSteamAppDetails(appId);
+  if (status !== STEAM_STATUS.OK) return null;
 
   // Harga dalam sen USD (price_overview.final) — dipakai KHUSUS untuk fitur
   // "Tambah Banyak Sekaligus" di Steam Account (urutkan game termahal di
@@ -12701,62 +12712,47 @@ async function lookupAppIdInfo(appId, provider, opts = {}) {
     // case-insensitive. Dipakai simpan `game.categories` (array, maks 4 —
     // dipotong di pemanggil) supaya App bisa nampilkan multi-kategori/genre.
     categorySlugs: [],
+    // Status hasil lookup Steam Store, TERPISAH dari "App ID valid untuk
+    // sistem kita atau tidak" (poin permintaan: Steam Store BUKAN satu-
+    // satunya sumber kebenaran App ID — lihat pemakaian steamStatus di
+    // endpoint /api/admin/appid-lookup/:appId & POST /api/admin/games,
+    // TIDAK PERNAH dipakai untuk menggagalkan Add Game, murni informasi
+    // buat admin & buat error message yang akurat di frontend):
+    //   'ok'        — Steam Store punya metadata untuk App ID ini, `result.name`/
+    //                 dkk terisi dari Steam.
+    //   'not_found' — Steam Store SECARA EKSPLISIT bilang App ID ini tidak
+    //                 punya Store page (bukan berarti App ID invalid untuk
+    //                 Hubcap/sistem kita — App ID tetap boleh dipakai, admin
+    //                 tinggal isi nama/gambar/dll secara manual).
+    //   'error'     — Steam Store API sedang bermasalah (timeout/rate-limit/
+    //                 5xx) — BUKAN informasi tentang App ID-nya sama sekali,
+    //                 cuma Steam yang lagi tidak bisa dihubungi.
+    steamStatus: null,
     warnings: []
 
   };
 
-  // 1) Steam Store API (publik, GRATIS, tanpa key) — SUMBER UTAMA nama/deskripsi/
-  // kategori/genre/developer/publisher/tanggal rilis/gambar untuk KEDUA provider
-  // (HubCap/Ryu sama sekali tidak dipakai untuk data-data ini, cuma dipakai buat
-  // cek ketersediaan file manifest kalau opts.verify eksplisit di-set — lihat bawah).
-  // BUG FIX (App ID selalu dianggap "tidak ditemukan" walau valid — termasuk
-  // App ID yang SEBELUMNYA berhasil ditambahkan): axios call di bawah ini
-  // SEBELUMNYA cuma 1x percobaan (`l: 'english'` saja, TANPA parameter `cc`
-  // / country-code, TANPA header User-Agent browser-like, TANPA retry saat
-  // kena rate-limit 429) — persis bug yang sama yang sudah diperbaiki di
-  // fetchSteamDetailsForAppId() (dipakai halaman Detail Request Game, lihat
-  // komentar lengkap di fungsi itu). Steam appdetails TERBUKTI kadang
-  // membalas `success:false` untuk App ID yang SAH kalau dipanggil tanpa
-  // `cc` atau kalau User-Agent-nya kelihatan seperti bot/script (default
-  // axios) — dan begitu kena rate-limit, Steam bisa membalas `success:false`
-  // untuk SEMUA App ID (bukan cuma satu) sampai limit-nya reset. Diterapkan
-  // pola yang sama di sini: 2 percobaan (varian cc `us`/`id`) + User-Agent
-  // browser-like + retry sekali kalau 429 — TIDAK ada logika lain (manifest/
-  // HubCap/Ryu verify di bawah) yang diubah.
-  const STEAM_REQUEST_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Accept': 'application/json'
-  };
-  const STEAM_PARAM_VARIANTS = [
-    { appids: appId, cc: 'us', l: 'english' },
-    { appids: appId, cc: 'id', l: 'indonesian' }
-  ];
+  // 1) Steam Store API (publik, GRATIS, tanpa key) — SUMBER metadata nama/
+  // deskripsi/kategori/genre/developer/publisher/tanggal rilis/gambar KALAU
+  // TERSEDIA (HubCap/Ryu sama sekali tidak dipakai untuk data-data ini, cuma
+  // dipakai buat cek ketersediaan file manifest kalau opts.verify eksplisit
+  // di-set — lihat bawah).
+  //
+  // PENTING (poin permintaan — Steam Store BUKAN satu-satunya sumber
+  // kebenaran App ID): kalau Steam Store tidak punya metadata untuk App ID
+  // ini (steamStatus 'not_found' ATAU 'error'), `lookupAppIdInfo()` TETAP
+  // mengembalikan hasil NORMAL (result.name dkk cuma tetap `null`, TIDAK
+  // throw/gagal) — App ID tetap valid untuk dipakai Hubcap/sistem kita,
+  // admin cukup isi field yang kosong secara manual di form. Lihat
+  // steamStoreClient.js untuk detail ROOT CAUSE & fix-nya (age-gate cookie),
+  // dan endpoint POST /api/admin/games (tidak pernah memvalidasi ke Steam
+  // sama sekali) untuk konfirmasi Add Game memang tidak pernah digagalkan
+  // hanya karena Steam Store kosong.
   try {
-    let entry = null;
-    for (const params of STEAM_PARAM_VARIANTS) {
-      let steamRes;
-      try {
-        steamRes = await axios.get('https://store.steampowered.com/api/appdetails', {
-          params, headers: STEAM_REQUEST_HEADERS, timeout: 10000
-        });
-      } catch (reqErr) {
-        if (reqErr.response?.status === 429) {
-          await new Promise(r => setTimeout(r, 600));
-          try {
-            steamRes = await axios.get('https://store.steampowered.com/api/appdetails', {
-              params, headers: STEAM_REQUEST_HEADERS, timeout: 10000
-            });
-          } catch (e2) { continue; }
-        } else {
-          continue;
-        }
-      }
-      const candidate = steamRes.data?.[String(appId)];
-      if (candidate?.success && candidate.data) { entry = candidate; break; }
-    }
-    if (entry?.success && entry.data) {
-      const d = entry.data;
+    const { status, data: d, errorReason } = await fetchSteamAppDetails(appId);
+    result.steamStatus = status;
+
+    if (status === STEAM_STATUS.OK) {
       result.name = d.name || null;
       result.imageUrl = d.header_image || null;
       result.description = (d.short_description || '').slice(0, 300) || null;
@@ -12795,10 +12791,14 @@ async function lookupAppIdInfo(appId, provider, opts = {}) {
         result.suggestedCategorySlug = result.categorySlugs[0] || null;
       }
     } else {
-      result.warnings.push('App ID tidak ditemukan di Steam Store.');
+      // 'not_found' atau 'error' — beda pesan supaya admin tahu ini masalah
+      // Steam (coba lagi) atau memang App ID tanpa Store page (isi manual),
+      // BUKAN disamakan jadi satu pesan generik (poin permintaan #7).
+      result.warnings.push(errorReason);
     }
   } catch (e) {
-    result.warnings.push('Gagal mengambil data dari Steam Store.');
+    result.steamStatus = STEAM_STATUS.ERROR;
+    result.warnings.push('Gagal mengambil data dari Steam Store: ' + e.message);
   }
 
   // 1b) Library (portrait 600x900) & Hero/Banner — TIDAK dikembalikan appdetails,
@@ -12968,10 +12968,18 @@ async function runAutoFillJob({ jobId, kind, targetCollection, getAppId, getProv
       if (lastError) throw lastError; // 3x percobaan tetap gagal semua -> masuk hitungan "failed"
 
       if (!info.name) {
-        // Steam appdetails balik success:false — App ID ini genuinely gak ada/invalid,
-        // beda dari "gagal proses" (error jaringan/API down).
+        // BUG FIX (poin permintaan #7 — jangan menyatukan semua kegagalan jadi
+        // satu pesan generik): `info.steamStatus` membedakan Steam Store
+        // BENAR-BENAR bilang App ID tidak ada ('not_found') dari Steam Store
+        // sedang bermasalah/rate-limit ('error') — SEBELUMNYA keduanya sama-
+        // sama masuk hitungan "notFound" (App ID dianggap tidak valid) walau
+        // 'error' semestinya masuk "failed" (App ID-nya sendiri belum tentu
+        // bermasalah, cuma Steam yang lagi tidak bisa dihubungi).
+        if (info.steamStatus === STEAM_STATUS.ERROR) {
+          throw new Error(info.warnings[0] || 'Steam Store API sedang tidak bisa dihubungi.');
+        }
         notFound++;
-        entry = { id: String(item._id), name: item.name, status: 'not_found', reason: info.warnings[0] || 'App ID tidak ditemukan di Steam Store.' };
+        entry = { id: String(item._id), name: item.name, status: 'not_found', reason: info.warnings[0] || 'App ID tidak memiliki Store page di Steam.' };
       } else if (kind === 'info') {
         const update = {}; const fields = [];
         // Nama HANYA diganti kalau field-nya masih kosong ATAU nama dari Steam jelas
@@ -13609,54 +13617,15 @@ async function fetchSteamAppSummary(appId, force = false) {
     } catch (e) { /* best-effort — kalau DB gagal, tetap lanjut fetch dari Steam */ }
   }
 
-  // PENTING (bug fix): sebelumnya cuma 1x percobaan (`l: 'english'`, TANPA
-  // parameter `cc` / country-code, TANPA header User-Agent browser-like) — Steam
-  // appdetails TERBUKTI kadang membalas `success: false` untuk App ID yang
-  // SAH/valid kalau dipanggil tanpa `cc`, atau kalau User-Agent-nya terlihat
-  // seperti bot/script (default axios). Ini yang menyebabkan game yang
-  // sebenarnya valid & ada di HubCap malah muncul "Gagal memuat" di halaman
-  // Detail App. Sekarang dicoba 2 kombinasi cc/locale berbeda (sesuai kode
-  // referensi yang terbukti stabil) sebelum benar-benar dianggap tidak tersedia.
-  const STEAM_REQUEST_HEADERS = {
-    'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-    'Accept-Language': 'en-US,en;q=0.9',
-    'Accept': 'application/json'
-  };
-  const STEAM_PARAM_VARIANTS = [
-    { appids: appId, cc: 'us', l: 'english' },
-    { appids: appId, cc: 'id', l: 'indonesian' }
-  ];
-
+  // Konsolidasi ke steamStoreClient.js (SATU implementasi dipakai di seluruh
+  // project, lihat catatan ROOT CAUSE age-gate cookie di file itu) — logic
+  // retry/variasi cc-locale yang SEBELUMNYA ditulis ulang di sini sendiri
+  // sekarang cuma tinggal manggil fetchSteamAppDetails().
   let result = null;
   try {
-    let entry = null;
-    for (const params of STEAM_PARAM_VARIANTS) {
-      let res;
-      try {
-        res = await axios.get('https://store.steampowered.com/api/appdetails', {
-          params, headers: STEAM_REQUEST_HEADERS, timeout: 10000
-        });
-      } catch (e) {
-        // Retry sekali kalau kena rate limit (429) sebelum lanjut ke varian berikutnya.
-        if (e.response?.status === 429) {
-          await new Promise(r => setTimeout(r, 600));
-          try {
-            res = await axios.get('https://store.steampowered.com/api/appdetails', {
-              params, headers: STEAM_REQUEST_HEADERS, timeout: 10000
-            });
-          } catch (e2) { continue; }
-        } else {
-          continue; // error jaringan/timeout -> coba varian cc/locale berikutnya
-        }
-      }
-      const candidate = res.data?.[String(appId)];
-      if (candidate?.success && candidate.data) { entry = candidate; break; }
-      // `success: false` atau entry kosong -> lanjut coba varian berikutnya
-      // (bukan langsung menyerah di percobaan pertama).
-    }
+    const { status, data: d } = await fetchSteamAppDetails(appId);
 
-    if (entry?.success && entry.data) {
-      const d = entry.data;
+    if (status === STEAM_STATUS.OK) {
       result = {
         appId: String(appId),
         name: d.name || null,

@@ -2053,25 +2053,27 @@ async function doAppIdLookup() {
       document.getElementById('itemManifestUrl').value = '';
     }
 
-    // Preview card
-    if (data.name || data.imageUrl) {
-      previewEl.style.display = 'flex';
-      document.getElementById('appIdPreviewImg').src = data.imageUrl || '';
-      document.getElementById('appIdPreviewImg').style.display = data.imageUrl ? 'block' : 'none';
-      document.getElementById('appIdPreviewName').textContent = data.name || `App ID ${appId}`;
-      document.getElementById('appIdPreviewSize').textContent = 'Ukuran: ' + (data.sizeLabel || 'belum diverifikasi');
-      renderManifestChip(data.hasManifest);
-      document.getElementById('appIdPreviewLink').href = data.storeUrl || '#';
+    // Preview card — SELALU ditampilkan setelah Search selesai (bukan cuma
+    // kalau Steam berhasil kasih nama/gambar), supaya App ID yang Steam-nya
+    // 'not_found'/'error' tetap kelihatan jelas kartunya sebagai pengingat
+    // "lanjut isi manual di bawah" (poin permintaan #4 — Add Game harus
+    // tetap berhasil walau Steam Store tidak punya data untuk App ID ini).
+    previewEl.style.display = 'flex';
+    document.getElementById('appIdPreviewImg').src = data.imageUrl || '';
+    document.getElementById('appIdPreviewImg').style.display = data.imageUrl ? 'block' : 'none';
+    document.getElementById('appIdPreviewName').textContent = data.name || `App ID ${appId} (isi nama manual di bawah)`;
+    document.getElementById('appIdPreviewSize').textContent = 'Ukuran: ' + (data.sizeLabel || 'belum diverifikasi');
+    renderManifestChip(data.hasManifest);
+    document.getElementById('appIdPreviewLink').href = data.storeUrl || '#';
 
-      // Chip tipe game (Online/Offline) — hasil deteksi otomatis dari kategori Steam
-      const onlineChip = document.getElementById('appIdPreviewOnline');
-      if (data.isOnlineSuggested !== null && data.isOnlineSuggested !== undefined) {
-        onlineChip.style.display = 'inline-block';
-        onlineChip.innerHTML = 'Tipe: ' + (data.isOnlineSuggested ? '<svg class="icon icon-16"><use href="#ic-globe"></use></svg> Online Multiplayer' : '<svg class="icon icon-16"><use href="#ic-power-off"></use></svg> Offline / Singleplayer');
-        onlineChip.className = 'chip ' + (data.isOnlineSuggested ? 'chip-ok' : '');
-      } else {
-        onlineChip.style.display = 'none';
-      }
+    // Chip tipe game (Online/Offline) — hasil deteksi otomatis dari kategori Steam
+    const onlineChip = document.getElementById('appIdPreviewOnline');
+    if (data.isOnlineSuggested !== null && data.isOnlineSuggested !== undefined) {
+      onlineChip.style.display = 'inline-block';
+      onlineChip.innerHTML = 'Tipe: ' + (data.isOnlineSuggested ? '<svg class="icon icon-16"><use href="#ic-globe"></use></svg> Online Multiplayer' : '<svg class="icon icon-16"><use href="#ic-power-off"></use></svg> Offline / Singleplayer');
+      onlineChip.className = 'chip ' + (data.isOnlineSuggested ? 'chip-ok' : '');
+    } else {
+      onlineChip.style.display = 'none';
     }
 
     // Auto-set toggle Online/Offline sesuai hasil deteksi kategori Steam — admin tetap
@@ -2083,9 +2085,27 @@ async function doAppIdLookup() {
       hintEl.className = 'segmented-hint is-suggested';
     }
 
-    statusEl.innerHTML = data.warnings?.length
-      ? `<span style="color:var(--yellow,#ffd76a);"><svg class="icon icon-18"><use href="#ic-triangle-alert"></use></svg> ${escapeHtml(data.warnings.join(' · '))}</span>`
-      : `<span style="color:var(--green,#4ade80);"><svg class="icon icon-18"><use href="#ic-check"></use></svg> Data ditemukan &amp; berhasil diisi otomatis.</span>`;
+    // Pesan status dibedakan sesuai `data.steamStatus` (poin permintaan #7 —
+    // jangan menyatukan semua kegagalan Steam jadi satu pesan generik):
+    //   'ok'        — hijau, data Steam berhasil diisi otomatis.
+    //   'not_found' — kuning, TAPI TEGAS bilang App ID tetap valid & form
+    //                 tetap bisa disimpan manual (poin #4 — Steam Store
+    //                 BUKAN satu-satunya sumber kebenaran App ID, jangan
+    //                 bikin admin mengira Add Game gagal total).
+    //   'error'     — kuning juga (bukan merah — ini BUKAN berarti App ID-
+    //                 nya salah), tegaskan ini masalah Steam sesaat, bukan
+    //                 masalah App ID, dan sarankan coba lagi/isi manual.
+    let statusHtml;
+    if (data.steamStatus === 'not_found') {
+      statusHtml = `<span style="color:var(--yellow,#ffd76a);"><svg class="icon icon-18"><use href="#ic-triangle-alert"></use></svg> Steam Store tidak punya halaman untuk App ID ini — App ID tetap valid, silakan isi Nama/Gambar/dll secara manual di bawah lalu Simpan seperti biasa.</span>`;
+    } else if (data.steamStatus === 'error') {
+      statusHtml = `<span style="color:var(--yellow,#ffd76a);"><svg class="icon icon-18"><use href="#ic-triangle-alert"></use></svg> Steam Store API sedang tidak bisa dihubungi (bukan berarti App ID salah) — coba klik Search sekali lagi, atau isi form manual dulu lalu Simpan.</span>`;
+    } else if (data.warnings?.length) {
+      statusHtml = `<span style="color:var(--yellow,#ffd76a);"><svg class="icon icon-18"><use href="#ic-triangle-alert"></use></svg> ${escapeHtml(data.warnings.join(' · '))}</span>`;
+    } else {
+      statusHtml = `<span style="color:var(--green,#4ade80);"><svg class="icon icon-18"><use href="#ic-check"></use></svg> Data ditemukan &amp; berhasil diisi otomatis.</span>`;
+    }
+    statusEl.innerHTML = statusHtml;
   } catch (e) {
     statusEl.innerHTML = `<span style="color:var(--red);"><svg class="icon icon-18"><use href="#ic-x"></use></svg> ${escapeHtml(e.message)}</span>`;
   } finally {
@@ -3909,7 +3929,13 @@ async function lookupBypassAppId() {
     const data = await api(`/api/admin/appid-lookup/${encodeURIComponent(appId)}`);
 
     if (!data.name) {
-      statusEl.innerHTML = '<span style="color:var(--danger);"><svg class="icon icon-18"><use href="#ic-triangle-alert"></use></svg> App ID tidak ditemukan di Steam.</span>';
+      // Bypass TIDAK butuh data Steam sama sekali (link diisi manual admin) —
+      // ini murni auto-fill nama/cover yang opsional, jadi status "kuning
+      // info", BUKAN merah (poin permintaan #4/#7 — Steam Store tidak
+      // ditemukan bukan berarti ada yang salah/gagal).
+      statusEl.innerHTML = data.steamStatus === 'error'
+        ? '<span style="color:var(--yellow,#ffd76a);"><svg class="icon icon-18"><use href="#ic-triangle-alert"></use></svg> Steam Store sedang tidak bisa dihubungi — nama/cover tidak ke-auto-fill, isi manual saja.</span>'
+        : '<span style="color:var(--yellow,#ffd76a);"><svg class="icon icon-18"><use href="#ic-triangle-alert"></use></svg> App ID ini tidak punya halaman di Steam Store — nama/cover tidak ke-auto-fill, isi manual saja (tidak masalah untuk Bypass).</span>';
       return;
     }
 
