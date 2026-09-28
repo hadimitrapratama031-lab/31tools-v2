@@ -19,9 +19,9 @@
 // ══════════════════════════════════════════════════════════════════════════
 
 const crypto = require('crypto');
-let S3Client, PutObjectCommand, DeleteObjectCommand;
+let S3Client, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectsV2Command, GetObjectCommand;
 try {
-  ({ S3Client, PutObjectCommand, DeleteObjectCommand } = require('@aws-sdk/client-s3'));
+  ({ S3Client, PutObjectCommand, DeleteObjectCommand, HeadObjectCommand, ListObjectsV2Command, GetObjectCommand } = require('@aws-sdk/client-s3'));
 } catch (e) {
   // Dependency belum ter-install (`npm install`) — biarkan module tetap bisa
   // di-require (isConfigured() akan selalu false, upload akan throw pesan
@@ -54,7 +54,9 @@ function client() {
   return _client;
 }
 
-const EXT_BY_MIME = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/webp': 'webp' };
+const EXT_BY_MIME = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/jpg': 'jpg', 'image/webp': 'webp', 'image/gif': 'gif' };
+// Key object selalu unik (timestamp/uuid), jadi aman di-cache selamanya di CDN/browser.
+const IMMUTABLE_CACHE = 'public, max-age=31536000, immutable';
 
 function dataUriMime(dataUri) {
   const m = /^data:([^;,]+)/i.exec(dataUri);
@@ -84,7 +86,8 @@ async function uploadDataUri(dataUri, prefix) {
     Bucket: BUCKET_NAME,
     Key: key,
     Body: buffer,
-    ContentType: mime || 'application/octet-stream'
+    ContentType: mime || 'application/octet-stream',
+    CacheControl: IMMUTABLE_CACHE
   }));
   return { url: `${PUBLIC_URL}/${key}`, key, mimeType: mime, size: buffer.length };
 }
@@ -104,4 +107,88 @@ async function deleteObject(key) {
   }
 }
 
-module.exports = { isConfigured, uploadDataUri, deleteObject };
+// ── Tambahan untuk Marketplace Product Images (lihat marketplaceImages.js) ──
+// Semua tetap lewat client()/credential di atas — TIDAK ada R2 client kedua.
+
+function getPublicBaseUrl() { return PUBLIC_URL; }
+function getBucketName() { return BUCKET_NAME; }
+
+// Canonical public URL dari key. Tidak pernah memakai endpoint S3 API.
+function publicUrlForKey(key) {
+  if (!key || !PUBLIC_URL) return null;
+  return `${PUBLIC_URL}/${String(key).replace(/^\/+/, '')}`;
+}
+
+// Kebalikan: kalau URL memang milik R2_PUBLIC_URL kita, kembalikan key-nya.
+function keyFromPublicUrl(url) {
+  if (!url || !PUBLIC_URL || typeof url !== 'string') return null;
+  if (!url.startsWith(PUBLIC_URL + '/')) return null;
+  try { return decodeURIComponent(url.slice(PUBLIC_URL.length + 1).split(/[?#]/)[0]) || null; }
+  catch (e) { return null; }
+}
+
+// Upload buffer biner langsung (bukan data URI). THROW kalau gagal, supaya
+// pemanggil bisa membatalkan alur sebelum menyentuh database.
+async function uploadBuffer(buffer, key, { contentType, cacheControl } = {}) {
+  if (!isConfigured()) throw new Error('Cloudflare R2 belum dikonfigurasi di server.');
+  if (!Buffer.isBuffer(buffer) || !buffer.length) throw new Error('Data gambar kosong.');
+  await client().send(new PutObjectCommand({
+    Bucket: BUCKET_NAME, Key: key, Body: buffer,
+    ContentType: contentType || 'application/octet-stream',
+    CacheControl: cacheControl || IMMUTABLE_CACHE
+  }));
+  return { key, url: publicUrlForKey(key), size: buffer.length, contentType };
+}
+
+// Cek object benar-benar ada di bucket (via API S3, butuh credential).
+async function headObject(key) {
+  if (!isConfigured() || !key) return { exists: false, error: 'not-configured' };
+  try {
+    const r = await client().send(new HeadObjectCommand({ Bucket: BUCKET_NAME, Key: key }));
+    return { exists: true, size: r.ContentLength, contentType: r.ContentType, cacheControl: r.CacheControl };
+  } catch (e) {
+    const status = e && e.$metadata && e.$metadata.httpStatusCode;
+    if (status === 404 || e.name === 'NotFound' || e.name === 'NoSuchKey') return { exists: false };
+    return { exists: false, error: e.message };
+  }
+}
+
+async function getObjectBuffer(key) {
+  if (!isConfigured()) throw new Error('Cloudflare R2 belum dikonfigurasi di server.');
+  const r = await client().send(new GetObjectCommand({ Bucket: BUCKET_NAME, Key: key }));
+  const chunks = [];
+  for await (const c of r.Body) chunks.push(c);
+  return Buffer.concat(chunks);
+}
+
+// List semua key di bawah prefix (paging otomatis) — dipakai audit orphan.
+async function listKeys(prefix) {
+  if (!isConfigured()) throw new Error('Cloudflare R2 belum dikonfigurasi di server.');
+  const out = [];
+  let token;
+  do {
+    const r = await client().send(new ListObjectsV2Command({ Bucket: BUCKET_NAME, Prefix: prefix, ContinuationToken: token }));
+    for (const o of (r.Contents || [])) out.push({ key: o.Key, size: o.Size, lastModified: o.LastModified });
+    token = r.IsTruncated ? r.NextContinuationToken : undefined;
+  } while (token);
+  return out;
+}
+
+// Seperti deleteObject tapi mengembalikan true/false (tidak silent) — dipakai
+// alur yang perlu tahu hasil cleanup. Tetap tidak throw.
+async function deleteObjectStrict(key) {
+  if (!key || !isConfigured()) return false;
+  try {
+    await client().send(new DeleteObjectCommand({ Bucket: BUCKET_NAME, Key: key }));
+    return true;
+  } catch (e) {
+    console.warn('[R2] Gagal hapus object', key, '-', e.message);
+    return false;
+  }
+}
+
+module.exports = {
+  isConfigured, uploadDataUri, deleteObject,
+  getPublicBaseUrl, getBucketName, publicUrlForKey, keyFromPublicUrl,
+  uploadBuffer, headObject, getObjectBuffer, listKeys, deleteObjectStrict, IMMUTABLE_CACHE
+};

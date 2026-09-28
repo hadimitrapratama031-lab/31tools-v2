@@ -305,6 +305,8 @@ const steamAccountOrderManager = require('./steamAccountOrderManager')({ getDb: 
 // Marketplace TIDAK memakai hierarki role/paket sama sekali untuk kontennya —
 // lihat hasCatalogAccess() di bawah.
 const marketplaceManager = require('./marketplaceManager')({ getDb: () => db });
+const marketplaceImages = require('./marketplaceImages');
+const r2Storage = require('./r2Storage');
 const marketplaceOrderManager = require('./marketplaceOrderManager')({ getDb: () => db });
 
 // Website Settings (Landing Page Netlify) — lihat websiteSettingsManager.js.
@@ -6690,7 +6692,10 @@ app.post('/api/marketplace/purchase', requireUser, async (req, res) => {
       discordId, username, productId, productName: product.name, amount: product.price, method, payment,
       productSnapshot: {
         name: product.name, description: product.description, price: product.price,
-        imageUrl: product.imageUrl, imageData: product.imageData, badge: product.badge
+        // Snapshot cuma menyimpan referensi gambar (URL publik R2), TIDAK base64.
+        imageUrl: marketplaceImages.publicImageFields(product).imageUrl,
+        imageKey: product.image && product.image.key ? product.image.key : null,
+        badge: product.badge
       }
     });
 
@@ -7088,9 +7093,9 @@ app.post('/api/admin/steam-accounts/orders/:orderId/cancel', requireAdmin, async
 // <img> lazy-load lewat /:id/image, pola sama seperti Steam Account) supaya
 // payload list tidak membengkak kalau produknya banyak (requirement #33).
 function adminProductLite(p, extra = {}) {
-  const full = marketplaceManager.publicProduct(p, extra);
-  const { imageData, ...lite } = full;
-  return { ...lite, hasImage: !!p.imageData || !!p.imageUrl };
+  // publicProduct TIDAK PERNAH memuat imageData; gambar = URL publik R2 (imageUrl).
+  const lite = marketplaceManager.publicProduct(p, extra);
+  return { ...lite, hasImage: !!lite.imageUrl };
 }
 
 app.get('/api/admin/marketplace/stats', requireAdmin, async (req, res) => {
@@ -7170,22 +7175,149 @@ app.get('/api/admin/marketplace/products', requireAdmin, async (req, res) => {
 // (decodeImageDataForServing didefinisikan di bawah file ini). HARUS
 // didaftar SEBELUM /:id di bawah — pola Express yang sama seperti tempat
 // lain di file ini (route statis menang duluan kalau didaftar lebih dulu).
+// LEGACY (kompat selama migrasi): Admin Web versi lama masih memanggil route
+// ini. Produk yang sudah di R2 -> redirect ke URL publik canonical. Produk
+// yang belum dimigrasi -> serve imageData lama. Setelah
+// `npm run migrate:marketplace-images` selesai, cabang legacy tidak terpakai.
 app.get('/api/admin/marketplace/products/:id/image', requireAdmin, async (req, res) => {
   try {
     const product = await marketplaceManager.getProductById(req.params.id);
     if (!product) return res.status(404).end();
-    if (product.imageData) {
-      const decoded = decodeImageDataForServing(product.imageData);
-      if (!decoded) return res.status(404).end();
-      res.set('Content-Type', `image/${decoded.mime}`);
-      res.set('Cache-Control', 'private, max-age=31536000, immutable');
-      return res.end(decoded.buffer);
-    }
-    if (product.imageUrl) return res.redirect(product.imageUrl);
-    return res.status(404).end();
+    if (product.image && product.image.key) return res.redirect(marketplaceImages.publicImageFields(product).imageUrl);
+    return serveLegacyMarketplaceImage(product, res);
   } catch (e) {
     res.status(500).end();
   }
+});
+
+function serveLegacyMarketplaceImage(product, res) {
+  if (product && product.imageData) {
+    const decoded = decodeImageDataForServing(product.imageData);
+    if (!decoded) return res.status(404).end();
+    res.set('Content-Type', `image/${decoded.mime}`);
+    res.set('Cache-Control', 'public, max-age=300');
+    return res.end(decoded.buffer);
+  }
+  if (product && product.imageUrl && marketplaceImages.validatePublicImageUrl(product.imageUrl).ok) return res.redirect(product.imageUrl);
+  return res.status(404).end();
+}
+
+// LEGACY & SEMENTARA: URL publik (tanpa login) untuk produk yang gambarnya
+// belum dimigrasi ke R2, supaya App tetap menampilkan gambar SAMPAI migration
+// dijalankan. Setelah migrasi, produk tidak lagi punya imageData -> 404.
+app.get('/api/marketplace/legacy-image/:id', async (req, res) => {
+  try {
+    const product = await marketplaceManager.getProductById(req.params.id);
+    if (!product || product.status === 'deleted') return res.status(404).end();
+    return serveLegacyMarketplaceImage(product, res);
+  } catch (e) {
+    res.status(500).end();
+  }
+});
+
+// ── PRODUCT IMAGES → Cloudflare R2 ─────────────────────────────────────
+// Upload = body biner mentah (Content-Type: image/*), BUKAN base64 di JSON.
+// Urutan aman: upload+verify object baru -> verify URL publik -> update DB
+// -> verify DB -> baru hapus object lama. Kalau langkah manapun sebelum DB
+// gagal, gambar lama tetap utuh; object baru yang yatim dibersihkan.
+const mktRawImage = express.raw({ type: () => true, limit: '6mb' });
+
+async function mktHandleImageUpload(req, res, kind) {
+  let uploaded = null;
+  try {
+    const product = await marketplaceManager.getProductById(req.params.id);
+    if (!product || product.status === 'deleted') return res.status(404).json({ error: 'Produk tidak ditemukan.' });
+    if (!r2Storage.isConfigured()) return res.status(503).json({ error: 'Cloudflare R2 belum dikonfigurasi di server.', code: 'R2_NOT_CONFIGURED' });
+    const replaceId = kind === 'additional' ? (req.query.replaceId || null) : null;
+    if (kind === 'additional' && !replaceId && (product.additionalImages || []).length >= marketplaceImages.MAX_ADDITIONAL_IMAGES) {
+      return res.status(400).json({ error: `Maksimal ${marketplaceImages.MAX_ADDITIONAL_IMAGES} gambar tambahan per produk.`, code: 'MAX_ADDITIONAL_REACHED' });
+    }
+
+    uploaded = await marketplaceImages.uploadProductImage(String(product._id), kind, req.body);
+    if (!uploaded.publicVerified) {
+      // Object ada di R2 tapi TIDAK bisa diakses publik -> bukan sukses penuh.
+      // DB tidak disentuh (gambar lama tetap), object baru dibersihkan.
+      await r2Storage.deleteObjectStrict(uploaded.ref.key);
+      console.warn('[Marketplace] UPLOAD_SUCCESS_PUBLIC_VERIFY_FAILED', product._id, uploaded.publicCheck && uploaded.publicCheck.reason);
+      return res.status(502).json({
+        error: `Gambar ter-upload ke R2 tetapi URL publiknya tidak bisa diakses (${uploaded.publicCheck && uploaded.publicCheck.reason}). Cek R2_PUBLIC_URL / Custom Domain / Public Access bucket.`,
+        code: 'UPLOAD_SUCCESS_PUBLIC_VERIFY_FAILED',
+        detail: uploaded.publicCheck
+      });
+    }
+
+    let result;
+    try {
+      result = kind === 'main'
+        ? await marketplaceManager.setMainImage(product._id, uploaded.ref)
+        : await marketplaceManager.addAdditionalImage(product._id, uploaded.ref, { replaceId });
+      // Verifikasi DB benar-benar menunjuk ke object baru.
+      const check = await marketplaceManager.getProductById(product._id);
+      const ok = kind === 'main'
+        ? check && check.image && check.image.key === uploaded.ref.key
+        : check && (check.additionalImages || []).some(a => a.key === uploaded.ref.key);
+      if (!ok) throw new Error('Verifikasi database gagal setelah update gambar.');
+    } catch (dbErr) {
+      await r2Storage.deleteObjectStrict(uploaded.ref.key); // gambar lama TIDAK disentuh
+      const isMax = /Maksimal/.test(dbErr.message);
+      return res.status(isMax ? 400 : 500).json({ error: dbErr.message, code: isMax ? 'MAX_ADDITIONAL_REACHED' : 'DB_UPDATE_FAILED' });
+    }
+
+    // DB sudah benar -> baru boleh hapus object lama (best-effort).
+    if (result.previous && result.previous.key && result.previous.key !== uploaded.ref.key) {
+      await r2Storage.deleteObjectStrict(result.previous.key);
+    }
+    logActivity({
+      type: 'marketplace_product_updated',
+      username: req.admin?.username || 'Admin', admin: req.admin?.username || 'Admin', status: 'success', ip: getReqIp(req),
+      description: `Admin ${kind === 'main' ? 'mengganti gambar utama' : (replaceId ? 'mengganti gambar tambahan' : 'menambah gambar tambahan')} produk Marketplace "${product.name}".`,
+      meta: { productId: String(product._id), key: uploaded.ref.key }
+    }).catch(() => {});
+    broadcastMarketplaceProductsUpdate().catch(() => {});
+    return res.json({ product: adminProductLite(result.product), image: { id: uploaded.ref.id, key: uploaded.ref.key, url: uploaded.ref.url }, publicVerified: true });
+  } catch (e) {
+    if (uploaded && uploaded.ref) await r2Storage.deleteObjectStrict(uploaded.ref.key).catch(() => {});
+    const clientErr = /Format gambar|Ukuran gambar|File gambar kosong/.test(e.message);
+    console.error('[Marketplace] Upload gambar gagal:', e.message);
+    return res.status(clientErr ? 400 : 500).json({ error: e.message });
+  }
+}
+
+app.post('/api/admin/marketplace/products/:id/image/main', requireAdmin, mktRawImage, (req, res) => mktHandleImageUpload(req, res, 'main'));
+app.post('/api/admin/marketplace/products/:id/images', requireAdmin, mktRawImage, (req, res) => mktHandleImageUpload(req, res, 'additional'));
+
+app.delete('/api/admin/marketplace/products/:id/image/main', requireAdmin, async (req, res) => {
+  try {
+    const { product, previous } = await marketplaceManager.clearMainImage(req.params.id);
+    if (previous && previous.key) await r2Storage.deleteObjectStrict(previous.key);
+    broadcastMarketplaceProductsUpdate().catch(() => {});
+    res.json({ product: adminProductLite(product) });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+app.delete('/api/admin/marketplace/products/:id/images/:imageId', requireAdmin, async (req, res) => {
+  try {
+    const { product, previous } = await marketplaceManager.removeAdditionalImage(req.params.id, req.params.imageId);
+    if (previous && previous.key) await r2Storage.deleteObjectStrict(previous.key);
+    broadcastMarketplaceProductsUpdate().catch(() => {});
+    res.json({ product: adminProductLite(product) });
+  } catch (e) { res.status(400).json({ error: e.message }); }
+});
+
+// Diagnostic admin-only: DB ↔ R2 ↔ URL publik. ?public=0 = lewati request
+// HTTP ke URL publik (lebih cepat). Tidak pernah mengembalikan credential.
+app.get('/api/admin/marketplace/image-health', requireAdmin, async (req, res) => {
+  try {
+    const products = await marketplaceManager.listAllProductsRaw();
+    const { summary, problems } = await marketplaceImages.auditProducts(products, { checkPublic: req.query.public !== '0' });
+    res.json({
+      r2Configured: r2Storage.isConfigured(),
+      publicBase: r2Storage.getPublicBaseUrl() || null,
+      publicBaseCheck: marketplaceImages.validatePublicImageUrl((r2Storage.getPublicBaseUrl() || '') + '/'),
+      ...summary,
+      problems: problems.slice(0, 200)
+    });
+  } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
 app.get('/api/admin/marketplace/products/:id', requireAdmin, async (req, res) => {
@@ -7297,6 +7429,8 @@ app.delete('/api/admin/marketplace/products/:id', requireAdmin, async (req, res)
       softDeleted = true;
     } else {
       deletedContent = await marketplaceManager.deleteProduct(req.params.id);
+      // DB sudah terhapus -> bersihkan HANYA object R2 milik produk ini.
+      for (const k of (deletedContent.imageKeys || [])) await r2Storage.deleteObjectStrict(k);
     }
 
     logActivity({

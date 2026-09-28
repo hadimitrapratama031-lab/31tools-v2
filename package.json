@@ -12,7 +12,11 @@
     "migrate:images": "node migrate-images-to-r2.js",
     "app": "electron .",
     "dev": "concurrently \"npm run server\" \"npm run app\"",
-    "build:win": "electron-builder --win"
+    "build:win": "electron-builder --win",
+    "migrate:marketplace-images": "node migrate-marketplace-images.js",
+    "repair:marketplace-images": "node repair-marketplace-images.js",
+    "audit:marketplace-r2": "node audit-marketplace-r2.js",
+    "cleanup:marketplace-r2": "node cleanup-marketplace-r2.js"
   },
   "build": {
     "appId": "com.31tools.app",

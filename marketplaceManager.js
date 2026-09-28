@@ -14,9 +14,12 @@
 // sama; keduanya cukup diwakili satu record (source terakhir yang berlaku).
 //
 // Koleksi:
-//   marketplaceProducts — { name, price, description, badge, status, imageUrl,
-//                            imageData, salesCount, requiredProductId, createdAt,
-//                            updatedAt }
+//   marketplaceProducts — { name, price, description, badge, status,
+//                            image, additionalImages, imageUrl (kompat),
+//                            salesCount, requiredProductId, createdAt, updatedAt }
+//                          Gambar: file di Cloudflare R2, DB cuma referensi —
+//                          lihat marketplaceImages.js. `imageData` (base64)
+//                          LEGACY, dihapus oleh migrate-marketplace-images.js.
 //   marketplaceContent  — { productId, contentType: 'game'|'bypass', itemId, createdAt }
 //                          (tabel relasi many-to-many Product <-> Game/Bypass)
 //   marketplaceAccess   — { discordId, username, productId, productName,
@@ -50,6 +53,7 @@
 // ══════════════════════════════════════════════════════════════════════════
 
 const { ObjectId } = require('mongodb');
+const marketplaceImages = require('./marketplaceImages');
 
 const PRODUCTS_COLLECTION = 'marketplaceProducts';
 const CONTENT_COLLECTION = 'marketplaceContent';
@@ -94,8 +98,8 @@ module.exports = function createMarketplaceManager({ getDb }) {
       description: p.description || '',
       badge: p.badge || null,
       status: p.status || 'active',
-      imageUrl: p.imageUrl || null,
-      imageData: p.imageData || null,
+      // Canonical image reference (URL publik R2). TIDAK ADA imageData di sini.
+      ...marketplaceImages.publicImageFields(p),
       salesCount: p.salesCount || 0,
       requiredProductId: p.requiredProductId ? String(p.requiredProductId) : null,
       createdAt: p.createdAt || null,
@@ -165,7 +169,7 @@ module.exports = function createMarketplaceManager({ getDb }) {
     return String(reqId);
   }
 
-  async function createProduct({ name, price, description, badge, status, imageUrl, imageData, requiredProductId }) {
+  async function createProduct({ name, price, description, badge, status, requiredProductId }) {
     const db = getDb();
     if (!db) throw new Error('Database belum siap, coba lagi sebentar.');
     const n = String(name || '').trim();
@@ -180,8 +184,9 @@ module.exports = function createMarketplaceManager({ getDb }) {
       description: String(description || '').trim(),
       badge: badge ? String(badge).trim().slice(0, 24) : null,
       status: PRODUCT_STATUSES.includes(status) ? status : 'active',
-      imageUrl: imageUrl || null,
-      imageData: imageData || null,
+      image: null,
+      additionalImages: [],
+      imageUrl: null,
       salesCount: 0,
       requiredProductId: reqProductId || null,
       createdAt: now,
@@ -192,7 +197,7 @@ module.exports = function createMarketplaceManager({ getDb }) {
     return doc;
   }
 
-  async function updateProduct(id, { name, price, description, badge, status, imageUrl, imageData, requiredProductId }) {
+  async function updateProduct(id, { name, price, description, badge, status, requiredProductId }) {
     const db = getDb();
     const _id = oid(id);
     if (!db || !_id) throw new Error('Produk tidak ditemukan.');
@@ -213,8 +218,8 @@ module.exports = function createMarketplaceManager({ getDb }) {
       if (!PRODUCT_STATUSES.includes(status)) throw new Error('Status produk tidak valid.');
       set.status = status;
     }
-    if (imageUrl !== undefined) set.imageUrl = imageUrl || null;
-    if (imageData !== undefined) set.imageData = imageData || null;
+    // Gambar TIDAK diubah lewat updateProduct — pakai setMainImage/
+    // addAdditionalImage/... di bawah (upload ke R2 dulu, baru DB).
     if (requiredProductId !== undefined) {
       set.requiredProductId = await validateRequiredProductId(requiredProductId, _id);
     }
@@ -234,6 +239,117 @@ module.exports = function createMarketplaceManager({ getDb }) {
       ).catch(() => {});
     }
     return doc;
+  }
+
+
+  // ────────────────────────────────────────────────────────────────────────
+  // PRODUCT IMAGES (R2) — urutan aman: object BARU sudah ada di R2 (di-upload
+  // & diverifikasi marketplaceImages.uploadProductImage) → baru update DB →
+  // baru pemanggil menghapus object LAMA. Method di sini murni update DB dan
+  // mengembalikan referensi lama supaya object lama bisa dibersihkan.
+  // ────────────────────────────────────────────────────────────────────────
+
+  function unwrap(result) {
+    return (result && typeof result === 'object' && 'value' in result) ? result.value : result;
+  }
+
+  // Ganti main image. Mengembalikan { product, previous } — `previous` =
+  // referensi main lama (key R2 kalau ada) untuk dihapus SETELAH ini sukses.
+  async function setMainImage(id, ref) {
+    const db = getDb();
+    const _id = oid(id);
+    if (!db || !_id) throw new Error('Produk tidak ditemukan.');
+    const before = await db.collection(PRODUCTS_COLLECTION).findOne({ _id });
+    if (!before) throw new Error('Produk tidak ditemukan.');
+    const res = await db.collection(PRODUCTS_COLLECTION).findOneAndUpdate(
+      { _id },
+      { $set: { image: ref, imageUrl: ref.url, updatedAt: new Date() }, $unset: { imageData: '' } },
+      { returnDocument: 'after' }
+    );
+    const product = unwrap(res);
+    if (!product) throw new Error('Produk tidak ditemukan.');
+    return { product, previous: before.image || null };
+  }
+
+  async function clearMainImage(id) {
+    const db = getDb();
+    const _id = oid(id);
+    if (!db || !_id) throw new Error('Produk tidak ditemukan.');
+    const before = await db.collection(PRODUCTS_COLLECTION).findOne({ _id });
+    if (!before) throw new Error('Produk tidak ditemukan.');
+    const res = await db.collection(PRODUCTS_COLLECTION).findOneAndUpdate(
+      { _id },
+      { $set: { image: null, imageUrl: null, updatedAt: new Date() }, $unset: { imageData: '' } },
+      { returnDocument: 'after' }
+    );
+    return { product: unwrap(res), previous: before.image || null };
+  }
+
+  // Tambah additional image. Batas maks dijaga ATOMIC di query update (bukan
+  // percaya frontend, dan aman dari race dua upload bersamaan). Kalau
+  // replaceId diberikan, entri itu diganti di tempat (tidak menambah jumlah).
+  async function addAdditionalImage(id, ref, { replaceId } = {}) {
+    const db = getDb();
+    const _id = oid(id);
+    if (!db || !_id) throw new Error('Produk tidak ditemukan.');
+    const max = marketplaceImages.MAX_ADDITIONAL_IMAGES;
+    if (replaceId) {
+      const res = await db.collection(PRODUCTS_COLLECTION).findOneAndUpdate(
+        { _id, 'additionalImages.id': replaceId },
+        { $set: { 'additionalImages.$': ref, updatedAt: new Date() } },
+        { returnDocument: 'before' }
+      );
+      const beforeDoc = unwrap(res);
+      if (!beforeDoc) throw new Error('Gambar tambahan yang mau diganti tidak ditemukan.');
+      const previous = (beforeDoc.additionalImages || []).find(a => a.id === replaceId) || null;
+      return { product: await getProductById(id), previous };
+    }
+    const res = await db.collection(PRODUCTS_COLLECTION).findOneAndUpdate(
+      { _id, $expr: { $lt: [{ $size: { $ifNull: ['$additionalImages', []] } }, max] } },
+      { $push: { additionalImages: ref }, $set: { updatedAt: new Date() } },
+      { returnDocument: 'after' }
+    );
+    const product = unwrap(res);
+    if (!product) {
+      const exists = await db.collection(PRODUCTS_COLLECTION).findOne({ _id }, { projection: { _id: 1 } });
+      throw new Error(exists ? `Maksimal ${max} gambar tambahan per produk.` : 'Produk tidak ditemukan.');
+    }
+    return { product, previous: null };
+  }
+
+  async function removeAdditionalImage(id, imageId) {
+    const db = getDb();
+    const _id = oid(id);
+    if (!db || !_id) throw new Error('Produk tidak ditemukan.');
+    const res = await db.collection(PRODUCTS_COLLECTION).findOneAndUpdate(
+      { _id, 'additionalImages.id': imageId },
+      { $pull: { additionalImages: { id: imageId } }, $set: { updatedAt: new Date() } },
+      { returnDocument: 'before' }
+    );
+    const beforeDoc = unwrap(res);
+    if (!beforeDoc) throw new Error('Gambar tambahan tidak ditemukan.');
+    const previous = (beforeDoc.additionalImages || []).find(a => a.id === imageId) || null;
+    return { product: await getProductById(id), previous };
+  }
+
+  // Dipakai script migration/health/audit: semua produk (termasuk deleted).
+  async function listAllProductsRaw() {
+    const db = getDb();
+    return db.collection(PRODUCTS_COLLECTION).find({}).toArray();
+  }
+
+  // Set field hasil migration/repair secara atomic per produk.
+  async function applyImageMigration(id, { image, additionalImages }) {
+    const db = getDb();
+    const _id = oid(id);
+    const set = { updatedAt: new Date() };
+    if (image) { set.image = image; set.imageUrl = image.url; }
+    if (additionalImages) set.additionalImages = additionalImages;
+    await db.collection(PRODUCTS_COLLECTION).updateOne({ _id }, { $set: set });
+  }
+  async function removeLegacyImageFields(id) {
+    const db = getDb();
+    await db.collection(PRODUCTS_COLLECTION).updateOne({ _id: oid(id) }, { $unset: { imageData: '' } });
   }
 
   // Cek dependency sebelum hard-delete (requirement #8: jangan sampai
@@ -273,6 +389,8 @@ module.exports = function createMarketplaceManager({ getDb }) {
     const _id = oid(id);
     if (!db || !_id) throw new Error('Produk tidak ditemukan.');
     const productId = String(_id);
+    const existing = await db.collection(PRODUCTS_COLLECTION).findOne({ _id });
+    const imageKeys = marketplaceImages.ownedKeys(existing);
     const links = await db.collection(CONTENT_COLLECTION).find({ productId }).toArray();
 
     const deletedGameIds = [];
@@ -298,7 +416,9 @@ module.exports = function createMarketplaceManager({ getDb }) {
     await db.collection(CONTENT_COLLECTION).deleteMany({ productId });
     await db.collection(ACCESS_COLLECTION).deleteMany({ productId });
     await db.collection(PRODUCTS_COLLECTION).deleteOne({ _id });
-    return { deletedGameIds, deletedBypassIds };
+    // imageKeys dikembalikan supaya pemanggil menghapus object R2 SETELAH
+    // dokumen produk benar-benar terhapus (DB dulu, R2 kemudian).
+    return { deletedGameIds, deletedBypassIds, imageKeys };
   }
 
   // ROOT CAUSE FIX: dipanggil server.js untuk SEMUA produk (lama maupun baru)
@@ -581,7 +701,10 @@ module.exports = function createMarketplaceManager({ getDb }) {
     PRODUCT_STATUSES, CONTENT_TYPES,
     ensureIndexes,
     publicProduct, listProducts, listActiveProducts, getProductById,
-    createProduct, updateProduct, getProductDependency, deleteProduct, softDeleteProduct, restoreProduct, incrementSalesCount,
+    createProduct, updateProduct,
+    setMainImage, clearMainImage, addAdditionalImage, removeAdditionalImage,
+    listAllProductsRaw, applyImageMigration, removeLegacyImageFields,
+    getProductDependency, deleteProduct, softDeleteProduct, restoreProduct, incrementSalesCount,
     listContent, addContent, removeContent,
     getRequirementInfoMap, getRequirementInfo,
     publicAccess, grantAccess, getAccess, revokeAccess,

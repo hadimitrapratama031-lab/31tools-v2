@@ -7652,7 +7652,29 @@ function openRealBypassDetailById(id) {
   let _mktCountdownTimer = null;
   let _mktPollTimer = null;
 
-  function mktProductImage(p) { return p?.imageData || p?.imageUrl || ''; }
+  // Sumber gambar TUNGGAL untuk semua tampilan produk Marketplace di App:
+  // URL publik R2 dari backend (imageUrl). TIDAK membaca imageData / base64.
+  // Hanya menerima http(s) — bukan file://, localhost, atau data: URI.
+  function mktSafeImageUrl(u) {
+    if (typeof u !== 'string' || !/^https?:\/\//i.test(u)) return '';
+    try {
+      const h = new URL(u).hostname;
+      if (/^(localhost|127\.|0\.0\.0\.0|10\.|192\.168\.)/i.test(h) || /\.(local|internal)$/i.test(h)) return '';
+    } catch (e) { return ''; }
+    return u;
+  }
+  function mktProductImage(p) { return mktSafeImageUrl(p?.imageUrl); }
+  // Galeri detail: main + additional (urut), tanpa duplikat, hanya URL valid.
+  function mktProductGallery(p) {
+    const out = [];
+    const main = mktProductImage(p);
+    if (main) out.push(main);
+    for (const a of (p?.additionalImages || [])) {
+      const u = mktSafeImageUrl(a?.url);
+      if (u && !out.includes(u)) out.push(u);
+    }
+    return out;
+  }
 
   function mktBadgeHtml(badge) {
     if (!badge) return '';
@@ -7715,7 +7737,7 @@ function openRealBypassDetailById(id) {
   function renderMktCardHtml(p) {
     const img = mktProductImage(p);
     const imgTag = img
-      ? `<img src="${escapeHtml(img)}" alt="${escapeHtml(p.name)}" loading="lazy">`
+      ? `<img src="${escapeHtml(img)}" alt="${escapeHtml(p.name)}" loading="lazy" onerror="this.onerror=null;this.replaceWith(Object.assign(document.createElement('div'),{className:'mkt-card-art-empty'}))">`
       : `<div class="mkt-card-art-empty"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><use href="#ic-package"></use></svg></div>`;
     const unavailable = p.status !== 'active';
     return `
@@ -7790,18 +7812,43 @@ function openRealBypassDetailById(id) {
     if (content) content.style.display = 'grid';
   }
 
+  // Hero = gambar aktif + galeri thumbnail (klik thumbnail = ganti hero, tanpa autoplay).
+  // Semua gambar dimuat lewat <img>/background dari URL publik R2 (bukan fetch+blob),
+  // jadi tidak butuh CORS.
   function renderMktHero(p) {
     const wrap = document.getElementById('mktHeroWrap');
     if (!wrap) return;
-    const img = mktProductImage(p);
     const badgeSlot = document.getElementById('mktHeroBadgeSlot');
     if (badgeSlot) badgeSlot.innerHTML = mktBadgeHtml(p.badge);
-    if (!img) { wrap.style.backgroundImage = ''; return; }
-    // Probe dulu supaya gambar rusak/URL invalid tidak jadi background pecah.
-    const probe = new Image();
-    probe.onload = () => { wrap.style.backgroundImage = `url('${img}')`; };
-    probe.onerror = () => { wrap.style.backgroundImage = ''; };
-    probe.src = img;
+    const gallery = mktProductGallery(p);
+    const setHero = (url) => {
+      if (!url) { wrap.style.backgroundImage = ''; return; }
+      // Probe dulu supaya gambar rusak/URL invalid tidak jadi background pecah.
+      const probe = new Image();
+      probe.onload = () => { wrap.style.backgroundImage = `url("${url}")`; };
+      probe.onerror = () => { wrap.style.backgroundImage = ''; console.warn('[Marketplace] Gambar gagal dimuat:', url); };
+      probe.src = url;
+    };
+    setHero(gallery[0] || '');
+
+    let strip = document.getElementById('mktGalleryStrip');
+    if (!strip) {
+      strip = document.createElement('div');
+      strip.id = 'mktGalleryStrip';
+      strip.className = 'mkt-gallery-strip';
+      wrap.insertAdjacentElement('afterend', strip);
+    }
+    if (gallery.length < 2) { strip.innerHTML = ''; strip.style.display = 'none'; return; }
+    strip.style.display = 'flex';
+    strip.innerHTML = gallery.map((u, i) =>
+      `<button type="button" class="mkt-gallery-thumb${i === 0 ? ' active' : ''}" data-url="${escapeHtml(u)}"><img src="${escapeHtml(u)}" alt="" loading="lazy"></button>`
+    ).join('');
+    strip.onclick = (e) => {
+      const btn = e.target.closest('.mkt-gallery-thumb');
+      if (!btn) return;
+      strip.querySelectorAll('.mkt-gallery-thumb').forEach(b => b.classList.toggle('active', b === btn));
+      setHero(btn.dataset.url);
+    };
   }
 
   function renderMktHeadline(p) {

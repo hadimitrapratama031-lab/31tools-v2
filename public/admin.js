@@ -8392,7 +8392,19 @@ const MKT_BADGE_PRESETS = ['HOT', 'NEW', 'SALE'];
 let _mktWired = false;
 let _mktProducts = [];
 let _mktEditId = null;
-let _mktImagePayload = { imageUrl: '', imageData: '' };
+// State gambar di modal Add/Edit Product. TIDAK ada base64 di sini: file dipilih
+// disimpan sebagai File (preview pakai object URL lokal) dan baru di-upload
+// biner ke backend -> R2 SETELAH product tersimpan.
+const MKT_MAX_ADDITIONAL = 5;
+const MKT_IMG_MAX_BYTES = 5 * 1024 * 1024;
+const MKT_IMG_TYPES = ['image/png', 'image/jpeg', 'image/webp', 'image/gif'];
+let _mktImg = null;
+function mktImgReset() {
+  (_mktImg?.additional || []).forEach(a => a.preview && a.file && URL.revokeObjectURL(a.preview));
+  if (_mktImg?.mainPreview) URL.revokeObjectURL(_mktImg.mainPreview);
+  _mktImg = { mainExistingUrl: null, mainFile: null, mainPreview: null, mainRemove: false, additional: [], removedAdditionalIds: [] };
+}
+mktImgReset();
 let _mktSearchDebounce = null;
 let _mktDrawerProductId = null;
 let _mktDrawerProduct = null;
@@ -8440,28 +8452,29 @@ function wireMarketplacePageOnce() {
   document.getElementById('mktProductImageFile').addEventListener('change', (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    if (file.size > 4 * 1024 * 1024) {
-      showToast('Ukuran gambar maksimal 4MB.', 'error');
-      e.target.value = '';
-      return;
-    }
-    const reader = new FileReader();
-    reader.onload = () => {
-      _mktImagePayload = { imageUrl: '', imageData: reader.result };
-      document.getElementById('mktProductImageUrl').value = '';
-      showMktImagePreview(reader.result);
-    };
-    reader.readAsDataURL(file);
+    const err = mktValidateImageFile(file);
+    if (err) { showToast(err, 'error'); e.target.value = ''; return; }
+    if (_mktImg.mainPreview) URL.revokeObjectURL(_mktImg.mainPreview);
+    _mktImg.mainFile = file;
+    _mktImg.mainRemove = false;
+    _mktImg.mainPreview = URL.createObjectURL(file);
+    showMktImagePreview(_mktImg.mainPreview);
   });
-  document.getElementById('mktProductImageUrl').addEventListener('input', (e) => {
-    const url = e.target.value.trim();
-    if (url) {
-      _mktImagePayload = { imageUrl: url, imageData: '' };
-      document.getElementById('mktProductImageFile').value = '';
-      showMktImagePreview(url);
-    } else if (!document.getElementById('mktProductImageFile').files?.length) {
-      clearMktImage();
+  document.getElementById('mktAddImageFile').addEventListener('change', (e) => {
+    for (const file of Array.from(e.target.files || [])) {
+      if (_mktImg.additional.length >= MKT_MAX_ADDITIONAL) { showToast(`Maksimal ${MKT_MAX_ADDITIONAL} gambar tambahan.`, 'error'); break; }
+      const err = mktValidateImageFile(file);
+      if (err) { showToast(err, 'error'); continue; }
+      _mktImg.additional.push({ id: null, url: null, file, preview: URL.createObjectURL(file), replaceId: null });
     }
+    e.target.value = '';
+    renderMktAdditionalImages();
+  });
+  document.getElementById('mktAddImageList').addEventListener('click', (e) => {
+    const rm = e.target.closest('[data-mkt-add-remove]');
+    const rp = e.target.closest('[data-mkt-add-replace]');
+    if (rm) mktRemoveAdditional(Number(rm.dataset.mktAddRemove));
+    if (rp) mktReplaceAdditional(Number(rp.dataset.mktAddReplace));
   });
 
   document.getElementById('btnMktWhitelistSearch').addEventListener('click', searchMktWhitelistUser);
@@ -8473,12 +8486,11 @@ function wireMarketplacePageOnce() {
   });
 }
 
-function setMktImageType(type) {
-  document.querySelectorAll('.mkt-image-type-btn').forEach(b => b.classList.toggle('active', b.dataset.type === type));
-  document.getElementById('mktProductImageFile').style.display = type === 'file' ? '' : 'none';
-  document.getElementById('mktProductImageUrl').style.display = type === 'url' ? '' : 'none';
+function mktValidateImageFile(file) {
+  if (!MKT_IMG_TYPES.includes(file.type)) return 'Format gambar harus JPG, PNG, WEBP, atau GIF.';
+  if (file.size > MKT_IMG_MAX_BYTES) return 'Ukuran gambar maksimal 5MB.';
+  return null;
 }
-window.setMktImageType = setMktImageType;
 
 function showMktImagePreview(src) {
   const img = document.getElementById('mktImagePreviewImg');
@@ -8486,13 +8498,73 @@ function showMktImagePreview(src) {
   img.src = src;
   document.getElementById('mktImagePreviewWrap').style.display = 'block';
 }
+// "Hapus" pada gambar utama: tandai untuk dihapus saat Simpan (R2 dibersihkan backend).
 function clearMktImage() {
-  _mktImagePayload = { imageUrl: '', imageData: '' };
-  document.getElementById('mktProductImageUrl').value = '';
+  if (_mktImg.mainPreview) URL.revokeObjectURL(_mktImg.mainPreview);
+  _mktImg.mainFile = null;
+  _mktImg.mainPreview = null;
+  _mktImg.mainRemove = !!_mktImg.mainExistingUrl;
   document.getElementById('mktProductImageFile').value = '';
   document.getElementById('mktImagePreviewWrap').style.display = 'none';
 }
 window.clearMktImage = clearMktImage;
+
+function renderMktAdditionalImages() {
+  const list = document.getElementById('mktAddImageList');
+  const items = _mktImg.additional;
+  document.getElementById('mktAddCount').textContent = `(${items.length}/${MKT_MAX_ADDITIONAL})`;
+  document.getElementById('mktAddImageFile').disabled = items.length >= MKT_MAX_ADDITIONAL;
+  list.innerHTML = items.map((a, i) => `
+    <div style="position:relative;border:1px solid var(--line-hi);border-radius:10px;overflow:hidden;background:var(--navy-900,#0b1020);">
+      <img src="${escapeHtml(a.preview || a.url)}" ${IMG_ONERROR_ATTR} style="width:100%;aspect-ratio:16/9;object-fit:cover;display:block;">
+      <div style="display:flex;gap:4px;padding:4px;justify-content:space-between;">
+        <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px;" data-mkt-add-replace="${i}">Ganti</button>
+        <button type="button" class="btn btn-secondary btn-sm" style="padding:2px 8px;font-size:11px;" data-mkt-add-remove="${i}">Hapus</button>
+      </div>
+      ${a.file ? '<span style="position:absolute;top:4px;left:4px;font-size:10px;padding:1px 6px;border-radius:6px;background:#7b5cff;color:#fff;">baru</span>' : ''}
+    </div>`).join('');
+}
+
+function mktRemoveAdditional(i) {
+  const a = _mktImg.additional[i];
+  if (!a) return;
+  if (a.file && a.preview) URL.revokeObjectURL(a.preview);
+  _mktImg.additional.splice(i, 1);
+  const rid = a.id || a.replaceId; // entri hasil "Ganti" yang dihapus = hapus juga gambar aslinya di server
+  if (rid) _mktImg.removedAdditionalIds.push(rid);
+  renderMktAdditionalImages();
+}
+
+function mktReplaceAdditional(i) {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = MKT_IMG_TYPES.join(',');
+  input.onchange = () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    const err = mktValidateImageFile(file);
+    if (err) { showToast(err, 'error'); return; }
+    const a = _mktImg.additional[i];
+    if (a.file && a.preview) URL.revokeObjectURL(a.preview);
+    // Entri existing diganti file baru: upload baru dulu (replaceId), lama dihapus backend SETELAH DB sukses.
+    _mktImg.additional[i] = { id: null, url: null, file, preview: URL.createObjectURL(file), replaceId: a.id || a.replaceId || null };
+    renderMktAdditionalImages();
+  };
+  input.click();
+}
+
+// Upload biner mentah (bukan base64/JSON) ke backend -> R2.
+async function apiUploadMktImage(path, file) {
+  const token = localStorage.getItem('adminToken');
+  const res = await fetch(SERVER_URL + path, {
+    method: 'POST',
+    headers: { 'Content-Type': file.type, ...(token ? { Authorization: `Bearer ${token}` } : {}) },
+    body: file
+  });
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) { const err = new Error(data.error || 'Upload gambar gagal.'); err.code = data.code; throw err; }
+  return data;
+}
 
 async function loadMktStats() {
   try {
@@ -8559,7 +8631,7 @@ function renderMktProductGrid(list) {
 }
 
 function mktProductCardHtml(p) {
-  const imgSrc = p.hasImage ? adminImageUrl(`/api/admin/marketplace/products/${p.id}/image`) : IMG_FALLBACK_SRC;
+  const imgSrc = p.imageUrl || IMG_FALLBACK_SRC; // URL publik R2 (canonical)
   const isDeleted = p.status === 'deleted';
   const statusCls = p.status === 'active' ? 'active' : isDeleted ? 'deleted' : 'inactive';
   const statusLabel = p.status === 'active' ? 'Aktif' : isDeleted ? 'Dihapus' : 'Nonaktif';
@@ -8617,12 +8689,15 @@ function openMktProductModal(p) {
     badgeCustom.style.display = 'none';
   }
 
-  setMktImageType('file');
-  clearMktImage();
-  if (p && p.hasImage) {
-    _mktImagePayload = { imageUrl: '', imageData: '' }; // biarkan kosong = tidak diubah kecuali user upload baru
-    showMktImagePreview(adminImageUrl(`/api/admin/marketplace/products/${p.id}/image`));
+  mktImgReset();
+  document.getElementById('mktProductImageFile').value = '';
+  document.getElementById('mktImagePreviewWrap').style.display = 'none';
+  if (p && p.imageUrl) {
+    _mktImg.mainExistingUrl = p.imageUrl;
+    showMktImagePreview(p.imageUrl);
   }
+  _mktImg.additional = (p?.additionalImages || []).map(a => ({ id: a.id, url: a.url, file: null, preview: null, replaceId: null }));
+  renderMktAdditionalImages();
 
   document.getElementById('mktProductModalBackdrop').style.display = 'flex';
 }
@@ -8669,18 +8744,48 @@ async function saveMktProduct() {
   btn.disabled = true;
   btn.textContent = 'Menyimpan...';
   try {
-    const payload = {
-      name, price, status, description, badge: badge || null, requiredProductId,
-      ...( _mktImagePayload.imageData ? { imageData: _mktImagePayload.imageData, imageUrl: null } : {} ),
-      ...( _mktImagePayload.imageUrl ? { imageUrl: _mktImagePayload.imageUrl, imageData: null } : {} )
-    };
-    if (_mktEditId) {
-      await api(`/api/admin/marketplace/products/${_mktEditId}`, { method: 'PUT', body: JSON.stringify(payload) });
-      showToast('Product berhasil diperbarui.', 'success');
+    const payload = { name, price, status, description, badge: badge || null, requiredProductId };
+    let productId = _mktEditId;
+    if (productId) {
+      await api(`/api/admin/marketplace/products/${productId}`, { method: 'PUT', body: JSON.stringify(payload) });
     } else {
-      await api('/api/admin/marketplace/products', { method: 'POST', body: JSON.stringify(payload) });
-      showToast('Product berhasil ditambahkan.', 'success');
+      const created = await api('/api/admin/marketplace/products', { method: 'POST', body: JSON.stringify(payload) });
+      productId = created.product.id;
+      _mktEditId = productId; // kalau upload gambar gagal, Simpan berikutnya = edit produk yang sama (tidak duplikat)
     }
+
+    // Gambar: hapus dulu (bebaskan slot), lalu upload. Backend memvalidasi ulang
+    // maks 5, format, ukuran, dan memverifikasi URL publik R2 tiap upload.
+    const failures = [];
+    const base = `/api/admin/marketplace/products/${productId}`;
+    const step = async (label, fn) => { try { await fn(); } catch (e) { failures.push(`${label}: ${e.message}`); } };
+    for (const id of _mktImg.removedAdditionalIds.splice(0)) {
+      await step('Hapus gambar tambahan', () => api(`${base}/images/${id}`, { method: 'DELETE' }));
+    }
+    if (_mktImg.mainRemove && !_mktImg.mainFile) {
+      await step('Hapus gambar utama', () => api(`${base}/image/main`, { method: 'DELETE' }));
+      _mktImg.mainExistingUrl = null; _mktImg.mainRemove = false;
+    }
+    if (_mktImg.mainFile) {
+      await step('Gambar utama', async () => {
+        await apiUploadMktImage(`${base}/image/main`, _mktImg.mainFile);
+        _mktImg.mainFile = null;
+      });
+    }
+    for (const a of _mktImg.additional.filter(x => x.file)) {
+      await step('Gambar tambahan', async () => {
+        await apiUploadMktImage(`${base}/images${a.replaceId ? `?replaceId=${encodeURIComponent(a.replaceId)}` : ''}`, a.file);
+        a.uploaded = true;
+      });
+    }
+    if (failures.length) {
+      showToast('Product tersimpan, tetapi ada gambar yang gagal: ' + failures.join(' | '), 'error');
+      await loadMktProducts();
+      const fresh = _mktProducts.find(x => x.id === productId);
+      if (fresh) openMktProductModal(fresh); // muat ulang state dari server supaya bisa dicoba lagi
+      return;
+    }
+    showToast(_mktEditId && !failures.length ? 'Product berhasil disimpan.' : 'Product berhasil ditambahkan.', 'success');
     closeMktProductModal();
     await Promise.all([loadMktStats(), loadMktProducts()]);
   } catch (e) {

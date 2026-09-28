@@ -2253,18 +2253,17 @@
 
           <div class="modal-divider">Gambar Product</div>
           <div class="form-group">
-            <div style="display:flex;gap:8px;margin-bottom:10px;">
-              <button type="button" class="btn btn-secondary btn-sm mkt-image-type-btn active" data-type="file" onclick="setMktImageType('file')">Upload File</button>
-              <button type="button" class="btn btn-secondary btn-sm mkt-image-type-btn" data-type="url" onclick="setMktImageType('url')">Dari URL</button>
-            </div>
-            <div id="mktImageFields">
-              <input class="form-input" type="file" id="mktProductImageFile" accept="image/png,image/jpeg,image/gif,image/webp">
-              <input class="form-input" type="text" id="mktProductImageUrl" placeholder="https://..." style="display:none;">
-            </div>
+            <label class="form-label">Gambar Utama <span style="color:var(--text-faint);font-weight:400;">(JPG/PNG/WEBP/GIF, maks 5MB — disimpan di Cloudflare R2)</span></label>
+            <input class="form-input" type="file" id="mktProductImageFile" accept="image/png,image/jpeg,image/gif,image/webp">
             <div id="mktImagePreviewWrap" style="display:none;margin-top:10px;position:relative;">
               <img id="mktImagePreviewImg" style="width:100%;max-height:160px;object-fit:cover;border-radius:12px;border:1px solid var(--line-hi);">
               <button type="button" class="btn btn-secondary btn-sm" style="position:absolute;top:8px;right:8px;" onclick="clearMktImage()">Hapus</button>
             </div>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Gambar Tambahan <span id="mktAddCount" style="color:var(--text-faint);font-weight:400;">(0/5)</span></label>
+            <input class="form-input" type="file" id="mktAddImageFile" accept="image/png,image/jpeg,image/gif,image/webp" multiple>
+            <div id="mktAddImageList" style="display:grid;grid-template-columns:repeat(auto-fill,minmax(96px,1fr));gap:8px;margin-top:10px;"></div>
           </div>
         </div>
         <div class="modal-footer">

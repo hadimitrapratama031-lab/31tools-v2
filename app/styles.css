@@ -4621,3 +4621,12 @@
   .mnt-card{ padding:28px 20px 24px; }
   .mnt-title{ font-size:18px; }
 }
+/* Marketplace — galeri thumbnail detail produk (main + maks 5 tambahan) */
+.mkt-gallery-strip{ display:flex;gap:8px;overflow-x:auto;padding:2px 0 4px;flex:none; }
+.mkt-gallery-thumb{
+  flex:0 0 auto;width:88px;aspect-ratio:16/9;border-radius:10px;overflow:hidden;padding:0;cursor:pointer;
+  border:2px solid var(--border-subtle);background:#0c1420;opacity:.7;transition:opacity .15s,border-color .15s;
+}
+.mkt-gallery-thumb img{ width:100%;height:100%;object-fit:cover;display:block; }
+.mkt-gallery-thumb:hover{ opacity:1; }
+.mkt-gallery-thumb.active{ opacity:1;border-color:var(--accent); }
